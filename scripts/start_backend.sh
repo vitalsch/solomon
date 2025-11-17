@@ -27,8 +27,12 @@ fi
 # Launch MongoDB container
 # -----------------------------------------------------------------------------
 
-echo "Starting MongoDB via docker compose..."
-$compose_cmd up -d mongo
+if [ -z "${SKIP_MONGO:-}" ] && [ -z "${MONGODB_URI:-}" ]; then
+    echo "Starting MongoDB via docker compose..."
+    $compose_cmd up -d mongo
+else
+    echo "Skipping local MongoDB container (SKIP_MONGO or MONGODB_URI is set)."
+fi
 
 # -----------------------------------------------------------------------------
 # Environment setup

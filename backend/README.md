@@ -4,10 +4,10 @@ Dieses Backend stellt REST Endpunkte bereit, um Nutzer, Szenarien, Assets und Tr
 
 ## Setup
 
-1. Stelle sicher, dass ein MongoDB Server läuft und setze die Verbindungsdaten:
+1. Stelle sicher, dass ein MongoDB Server läuft **oder** nutze die gegebene Atlas-Instanz und setze die Verbindungsdaten:
 
 ```bash
-export MONGODB_URI="mongodb://localhost:27017"
+export MONGODB_URI="mongodb+srv://eugen:<db_password>@cluster0.ohdjwwo.mongodb.net/"
 export MONGODB_DB="wealth_planner"
 ```
 
@@ -41,6 +41,7 @@ Statt die oben stehenden Kommandos einzeln auszuführen kannst du alles über da
 # Optional:
 #   VENV_PATH="$HOME/.virtualenvs/solomon" ./scripts/start_backend.sh
 #   MONGODB_URI="mongodb://..." ./scripts/start_backend.sh
+#   SKIP_MONGO=1 MONGODB_URI="mongodb+srv://eugen:<db_password>@cluster0.ohdjwwo.mongodb.net/" ./scripts/start_backend.sh
 ```
 
 Das Skript führt `docker compose up -d mongo` aus, setzt Standard-Umgebungsvariablen (`MONGODB_URI`, `MONGODB_DB`) und startet `uvicorn backend.api:app --reload`. Per `SKIP_VENV=1` überspringst du das automatische Aktivieren des localen Virtual Environments.
