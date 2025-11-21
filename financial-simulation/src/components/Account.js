@@ -25,22 +25,6 @@ const Account = ({
         setIsEditing(false);
     };
 
-    const annualLabel = (tx) => {
-        if (tx.type === 'mortgage_interest') {
-            return 'jährlich: variabel';
-        }
-        if (tx.type === 'one_time') {
-            return null;
-        }
-        const freq = tx.frequency || 1;
-        const yearlyFactor = Math.max(1, Math.round(12 / freq));
-        const annualAmount = (tx.amount || 0) * yearlyFactor;
-        return `jährlich: ${annualAmount.toLocaleString('de-CH', {
-            style: 'currency',
-            currency: 'CHF',
-        })}`;
-    };
-
     const typeLabelMap = {
         generic: 'Allgemein',
         bank_account: 'Konto',

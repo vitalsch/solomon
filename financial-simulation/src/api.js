@@ -10,7 +10,7 @@ const API_BASE = (() => {
         return stripTrailingSlash(process.env.REACT_APP_API_BASE);
     }
     if (typeof window !== 'undefined') {
-        const { protocol, hostname, port } = window.location;
+        const { protocol, port } = window.location;
         const isFileProtocol = protocol === 'file:';
         const host = window.location.hostname;
         const isLocalHost = host === 'localhost' || host === '127.0.0.1';
