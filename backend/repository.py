@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import secrets
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -7,6 +11,30 @@ from bson import ObjectId
 from pymongo import ReturnDocument
 
 from .database import get_database
+
+
+def _hash_password(password: str) -> str:
+    """Return PBKDF2 salted hash."""
+    salt = secrets.token_bytes(16)
+    iterations = 100_000
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return f"{iterations}${base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
+
+
+def _verify_password(password: str, encoded: str) -> bool:
+    try:
+        iterations_str, salt_b64, digest_b64 = encoded.split("$")
+        iterations = int(iterations_str)
+        salt = base64.b64decode(salt_b64)
+        expected = base64.b64decode(digest_b64)
+    except (ValueError, TypeError, base64.binascii.Error):
+        return False
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return hmac.compare_digest(expected, digest)
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _ensure_object_id(value: Any) -> ObjectId:
@@ -26,6 +54,14 @@ def _serialize(document: Dict[str, Any]) -> Dict[str, Any]:
     return doc
 
 
+def _serialize_user(document: Dict[str, Any]) -> Dict[str, Any]:
+    doc = _serialize(document)
+    if doc:
+        doc.pop("password_hash", None)
+        doc.pop("auth_token_hash", None)
+    return doc
+
+
 class WealthRepository:
     """Data access layer for users, assets, transactions, and scenarios."""
 
@@ -33,18 +69,74 @@ class WealthRepository:
         self.db = db or get_database()
 
     # Users -----------------------------------------------------------------
-    def create_user(self, name: str, email: str) -> Dict[str, Any]:
-        doc = {"name": name, "email": email, "created_at": datetime.utcnow()}
+    def create_user(self, username: str, password: str, name: str | None, email: str | None) -> Dict[str, Any]:
+        if self.db.users.find_one({"username": username}):
+            raise ValueError("Username already exists")
+        doc = {
+            "username": username,
+            "password_hash": _hash_password(password),
+            "name": name,
+            "email": email,
+            "created_at": datetime.utcnow(),
+        }
         result = self.db.users.insert_one(doc)
         doc["_id"] = result.inserted_id
-        return _serialize(doc)
+        return _serialize_user(doc)
 
     def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         doc = self.db.users.find_one({"_id": _ensure_object_id(user_id)})
-        return _serialize(doc) if doc else None
+        return _serialize_user(doc) if doc else None
+
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        doc = self.db.users.find_one({"username": username})
+        return _serialize_user(doc) if doc else None
+
+    def get_user_with_secret_fields(self, username: str) -> Optional[Dict[str, Any]]:
+        """Internal helper to retrieve user with password/token hashes."""
+        doc = self.db.users.find_one({"username": username})
+        if not doc:
+            return None
+        doc = _serialize(doc)
+        return doc
 
     def list_users(self) -> List[Dict[str, Any]]:
-        return [_serialize(doc) for doc in self.db.users.find()]
+        # Expose only sanitized data; callers should additionally scope to current user.
+        return [_serialize_user(doc) for doc in self.db.users.find()]
+
+    def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
+        record = self.get_user_with_secret_fields(username)
+        if not record:
+            return None
+        password_hash = record.pop("password_hash", None)
+        if not password_hash or not _verify_password(password, password_hash):
+            return None
+        record.pop("auth_token_hash", None)
+        return record
+
+    def issue_auth_token(self, user_id: str) -> str:
+        token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(token)
+        updated = self.db.users.find_one_and_update(
+            {"_id": _ensure_object_id(user_id)},
+            {"$set": {"auth_token_hash": token_hash}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise ValueError("User not found")
+        return token
+
+    def get_user_by_token(self, token: str) -> Optional[Dict[str, Any]]:
+        token_hash = _hash_token(token)
+        doc = self.db.users.find_one({"auth_token_hash": token_hash})
+        return _serialize_user(doc) if doc else None
+
+    def delete_user(self, user_id: str) -> bool:
+        user_oid = _ensure_object_id(user_id)
+        scenarios = list(self.db.scenarios.find({"user_id": user_oid}, {"_id": 1}))
+        for scenario in scenarios:
+            self.delete_scenario(str(scenario["_id"]))
+        result = self.db.users.delete_one({"_id": user_oid})
+        return result.deleted_count > 0
 
     # Scenarios -------------------------------------------------------------
     def create_scenario(
@@ -280,6 +372,10 @@ class WealthRepository:
             _serialize(doc)
             for doc in self.db.transactions.find({"asset_id": _ensure_object_id(asset_id)})
         ]
+
+    def get_transaction(self, transaction_id: str) -> Optional[Dict[str, Any]]:
+        doc = self.db.transactions.find_one({"_id": _ensure_object_id(transaction_id)})
+        return _serialize(doc) if doc else None
 
     def update_transaction(self, transaction_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         converted_updates = {

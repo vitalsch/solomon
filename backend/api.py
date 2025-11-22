@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, validator
 
 from .repository import WealthRepository
@@ -18,6 +19,8 @@ if allowed_origins == "*":
 else:
     origins = [origin.strip() for origin in allowed_origins.split(",")]
 
+print(f"[CORS] allow_origins={origins}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -27,15 +30,22 @@ app.add_middleware(
 )
 
 repo = WealthRepository()
+auth_scheme = HTTPBearer()
 
 
 class UserCreate(BaseModel):
-    name: str
-    email: str
+    username: str
+    password: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
 
 
 class ScenarioCreate(BaseModel):
-    user_id: str = Field(..., description="Owner of the scenario")
     name: str
     description: Optional[str] = None
     start_year: int = Field(..., ge=1900)
@@ -132,23 +142,52 @@ class TransactionUpdate(BaseModel):
     annual_interest_rate: Optional[float] = None
 
 
-@app.post("/users")
-def create_user(user: UserCreate):
-    return repo.create_user(user.name, user.email)
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(auth_scheme)):
+    if not credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    user = repo.get_user_by_token(credentials.credentials)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    return user
 
 
-@app.get("/users")
-def list_users():
-    return repo.list_users()
+@app.post("/auth/register")
+def register(user: UserCreate):
+    try:
+        created = repo.create_user(user.username, user.password, user.name, user.email)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    token = repo.issue_auth_token(created["id"])
+    return {"user": created, "token": token}
+
+
+@app.post("/auth/login")
+def login(user: UserLogin):
+    auth_user = repo.authenticate_user(user.username, user.password)
+    if not auth_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    token = repo.issue_auth_token(auth_user["id"])
+    safe_user = repo.get_user(auth_user["id"])
+    return {"user": safe_user, "token": token}
+
+
+@app.get("/me")
+def read_me(current_user=Depends(get_current_user)):
+    return current_user
+
+
+@app.delete("/me")
+def delete_me(current_user=Depends(get_current_user)):
+    deleted = repo.delete_user(current_user["id"])
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return {"status": "deleted"}
 
 
 @app.post("/scenarios")
-def create_scenario(payload: ScenarioCreate):
-    user = repo.get_user(payload.user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+def create_scenario(payload: ScenarioCreate, current_user=Depends(get_current_user)):
     return repo.create_scenario(
-        payload.user_id,
+        current_user["id"],
         payload.name,
         payload.start_year,
         payload.start_month,
@@ -159,31 +198,48 @@ def create_scenario(payload: ScenarioCreate):
 
 
 @app.get("/users/{user_id}/scenarios")
-def list_user_scenarios(user_id: str):
-    return repo.list_scenarios_for_user(user_id)
+def list_user_scenarios(user_id: str, current_user=Depends(get_current_user)):
+    if user_id != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to view other users")
+    return repo.list_scenarios_for_user(current_user["id"])
+
+
+@app.get("/scenarios")
+def list_my_scenarios(current_user=Depends(get_current_user)):
+    return repo.list_scenarios_for_user(current_user["id"])
 
 
 @app.get("/scenarios/{scenario_id}")
-def get_scenario(scenario_id: str):
+def get_scenario(scenario_id: str, current_user=Depends(get_current_user)):
     scenario = repo.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to access this scenario")
     return scenario
 
 
 @app.patch("/scenarios/{scenario_id}")
-def update_scenario(scenario_id: str, payload: ScenarioUpdate):
+def update_scenario(scenario_id: str, payload: ScenarioUpdate, current_user=Depends(get_current_user)):
     updates = {k: v for k, v in payload.dict().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No updates supplied")
-    scenario = repo.update_scenario(scenario_id, updates)
+    scenario = repo.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to modify this scenario")
+    scenario = repo.update_scenario(scenario_id, updates)
     return scenario
 
 
 @app.delete("/scenarios/{scenario_id}")
-def delete_scenario(scenario_id: str):
+def delete_scenario(scenario_id: str, current_user=Depends(get_current_user)):
+    scenario = repo.get_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to delete this scenario")
     deleted = repo.delete_scenario(scenario_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Scenario not found")
@@ -191,10 +247,12 @@ def delete_scenario(scenario_id: str):
 
 
 @app.post("/scenarios/{scenario_id}/assets")
-def create_asset(scenario_id: str, payload: AssetCreate):
+def create_asset(scenario_id: str, payload: AssetCreate, current_user=Depends(get_current_user)):
     scenario = repo.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to modify this scenario")
     return repo.add_asset(
         scenario_id,
         payload.name,
@@ -209,23 +267,42 @@ def create_asset(scenario_id: str, payload: AssetCreate):
 
 
 @app.get("/scenarios/{scenario_id}/assets")
-def list_assets(scenario_id: str):
+def list_assets(scenario_id: str, current_user=Depends(get_current_user)):
+    scenario = repo.get_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to view this scenario")
     return repo.list_assets_for_scenario(scenario_id)
 
 
 @app.patch("/assets/{asset_id}")
-def update_asset(asset_id: str, payload: AssetUpdate):
+def update_asset(asset_id: str, payload: AssetUpdate, current_user=Depends(get_current_user)):
     updates = {k: v for k, v in payload.dict().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No updates supplied")
-    asset = repo.update_asset(asset_id, updates)
+    asset = repo.get_asset(asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
+    scenario = repo.get_scenario(asset["scenario_id"])
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to modify this asset")
+    asset = repo.update_asset(asset_id, updates)
     return asset
 
 
 @app.delete("/assets/{asset_id}")
-def delete_asset(asset_id: str):
+def delete_asset(asset_id: str, current_user=Depends(get_current_user)):
+    asset = repo.get_asset(asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    scenario = repo.get_scenario(asset["scenario_id"])
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to delete this asset")
     deleted = repo.delete_asset(asset_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -233,10 +310,12 @@ def delete_asset(asset_id: str):
 
 
 @app.post("/scenarios/{scenario_id}/transactions")
-def create_transaction(scenario_id: str, payload: TransactionCreate):
+def create_transaction(scenario_id: str, payload: TransactionCreate, current_user=Depends(get_current_user)):
     scenario = repo.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to modify this scenario")
     asset = repo.get_asset(payload.asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -331,15 +410,28 @@ def create_transaction(scenario_id: str, payload: TransactionCreate):
 
 
 @app.get("/scenarios/{scenario_id}/transactions")
-def list_transactions(scenario_id: str):
+def list_transactions(scenario_id: str, current_user=Depends(get_current_user)):
+    scenario = repo.get_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to view this scenario")
     return repo.list_transactions_for_scenario(scenario_id)
 
 
 @app.patch("/transactions/{transaction_id}")
-def update_transaction(transaction_id: str, payload: TransactionUpdate):
+def update_transaction(transaction_id: str, payload: TransactionUpdate, current_user=Depends(get_current_user)):
     updates = {k: v for k, v in payload.dict().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No updates supplied")
+    transaction = repo.get_transaction(transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    scenario = repo.get_scenario(transaction["scenario_id"])
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to modify this transaction")
     transaction = repo.update_transaction(transaction_id, updates)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -347,7 +439,15 @@ def update_transaction(transaction_id: str, payload: TransactionUpdate):
 
 
 @app.delete("/transactions/{transaction_id}")
-def delete_transaction(transaction_id: str):
+def delete_transaction(transaction_id: str, current_user=Depends(get_current_user)):
+    transaction = repo.get_transaction(transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    scenario = repo.get_scenario(transaction["scenario_id"])
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to delete this transaction")
     deleted = repo.delete_transaction(transaction_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -355,7 +455,12 @@ def delete_transaction(transaction_id: str):
 
 
 @app.post("/scenarios/{scenario_id}/simulate")
-def simulate_scenario(scenario_id: str):
+def simulate_scenario(scenario_id: str, current_user=Depends(get_current_user)):
+    scenario = repo.get_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to view this scenario")
     try:
         return run_scenario_simulation(scenario_id, repo)
     except ValueError as exc:
