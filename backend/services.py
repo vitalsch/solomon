@@ -70,18 +70,14 @@ def _build_transactions(transaction_docs, account_map, income_tax_rate: float = 
         account = account_map.get(tx.get("asset_id"))
         if not account:
             continue
-        # Apply income tax to taxable transactions to get net amount for simulation
+        transaction = _create_transaction_instance(tx)
         if tx.get("taxable"):
             taxable_amount = tx.get("taxable_amount", tx.get("amount", 0.0))
             tax_effect = taxable_amount * (income_tax_rate or 0.0)
-            net_amount = (tx.get("amount", 0.0) or 0.0) - tax_effect
-            transaction = _create_transaction_instance(tx, amount_override=net_amount)
-            setattr(transaction, "tax_effect", -tax_effect)  # negative expense
+            setattr(transaction, "tax_effect", -tax_effect)  # negative expense for tax column
             setattr(transaction, "taxable_amount", taxable_amount)
             setattr(transaction, "tax_rate", income_tax_rate or 0.0)
             setattr(transaction, "gross_amount", tx.get("amount", 0.0) or 0.0)
-        else:
-            transaction = _create_transaction_instance(tx)
         account_transactions[account].append(transaction)
     return account_transactions, mortgage_interest_transactions
 
