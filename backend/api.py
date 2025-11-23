@@ -404,26 +404,26 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
             payload.taxable_amount if payload.taxable_amount is not None else None,
         )
 
-        return repo.add_transaction(
-            scenario_id,
-            payload.asset_id,
-            payload.name,
-            payload.amount,
-            payload.type,
-            payload.start_year,
-            payload.start_month,
-            payload.end_year or payload.start_year,
-            payload.end_month or payload.start_month,
-            payload.frequency,
-            payload.annual_growth_rate,
-            payload.counter_asset_id,
-            None,
-            payload.double_entry,
-            None,
-            None,
-            payload.taxable,
-            payload.taxable_amount if payload.taxable_amount is not None else payload.amount if payload.taxable else None,
-        )
+    return repo.add_transaction(
+        scenario_id,
+        payload.asset_id,
+        payload.name,
+        payload.amount,
+        payload.type,
+        payload.start_year,
+        payload.start_month,
+        payload.end_year or payload.start_year,
+        payload.end_month or payload.start_month,
+        payload.frequency,
+        payload.annual_growth_rate,
+        payload.counter_asset_id,
+        None,
+        payload.double_entry,
+        None,
+        None,
+        payload.taxable,
+        payload.taxable_amount if payload.taxable_amount is not None else payload.amount if payload.taxable else None,
+    )
 
 
 @app.get("/scenarios/{scenario_id}/transactions")
