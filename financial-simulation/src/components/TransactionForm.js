@@ -148,13 +148,11 @@ const TransactionForm = ({
             delete payload.counter_asset_id;
         }
 
-        if (type !== 'mortgage_interest') {
-            payload.taxable = taxable;
-            if (taxable) {
-                payload.taxable_amount = parseFloatSafe(taxableAmount === '' ? amount : taxableAmount);
-            } else {
-                payload.taxable_amount = undefined;
-            }
+        payload.taxable = taxable;
+        if (taxable) {
+            payload.taxable_amount = parseFloatSafe(taxableAmount === '' ? amount : taxableAmount);
+        } else {
+            payload.taxable_amount = undefined;
         }
 
         onSave(transaction ? transaction.id : null, payload);
@@ -177,35 +175,33 @@ const TransactionForm = ({
                         ))}
                     </select>
                 </label>
-                {type !== 'mortgage_interest' && (
-                    <>
-                        <label className="checkbox">
+                <>
+                    <label className="checkbox">
+                        <input
+                            type="checkbox"
+                            checked={taxable}
+                            onChange={(e) => {
+                                const next = e.target.checked;
+                                setTaxable(next);
+                                if (next && (taxableAmount === '' || taxableAmount === undefined)) {
+                                    setTaxableAmount(amount || 0);
+                                }
+                            }}
+                        />
+                        <span>Steuerbar</span>
+                    </label>
+                    {taxable && (
+                        <label>
+                            <span>Anrechenbarer Amount</span>
                             <input
-                                type="checkbox"
-                                checked={taxable}
-                                onChange={(e) => {
-                                    const next = e.target.checked;
-                                    setTaxable(next);
-                                    if (next && (taxableAmount === '' || taxableAmount === undefined)) {
-                                        setTaxableAmount(amount);
-                                    }
-                                }}
+                                type="number"
+                                value={taxableAmount}
+                                onChange={(e) => setTaxableAmount(e.target.value)}
+                                step="0.01"
                             />
-                            <span>Steuerbar</span>
                         </label>
-                        {taxable && (
-                            <label>
-                                <span>Anrechenbarer Amount</span>
-                                <input
-                                    type="number"
-                                    value={taxableAmount}
-                                    onChange={(e) => setTaxableAmount(e.target.value)}
-                                    step="0.01"
-                                />
-                            </label>
-                        )}
-                    </>
-                )}
+                    )}
+                </>
                 <label>
                     <span>Name</span>
                     <input
