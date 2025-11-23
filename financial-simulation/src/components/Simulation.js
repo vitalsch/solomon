@@ -87,8 +87,11 @@ const Simulation = () => {
     const [chartRange, setChartRange] = useState({ start: 0, end: null });
     const [expandedYears, setExpandedYears] = useState([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-    const formatCurrency = (value) =>
-        (value ?? 0).toLocaleString('de-CH', { style: 'currency', currency: 'CHF' });
+    const formatCurrency = (value) => {
+        const num = Number(value);
+        const safe = Number.isFinite(num) ? num : 0;
+        return safe.toLocaleString('de-CH', { style: 'currency', currency: 'CHF' });
+    };
 
     const currentScenario = useMemo(
         () => scenarios.find((scenario) => normalizeId(scenario.id) === normalizeId(currentScenarioId)),
@@ -1343,9 +1346,11 @@ const Simulation = () => {
                                             ? accountNameMap[tx.counter_asset_id]
                                             : null;
                                         const taxRate = scenarioDetails?.income_tax_rate || 0;
-                                        const grossAmount = Number.isFinite(tx.amount) ? tx.amount : 0;
+                                        const grossAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount) || 0;
                                         const taxableAmount = tx.taxable
-                                            ? (Number.isFinite(tx.taxable_amount) ? tx.taxable_amount : grossAmount)
+                                            ? (Number.isFinite(tx.taxable_amount)
+                                                  ? tx.taxable_amount
+                                                  : Number(tx.taxable_amount) || grossAmount)
                                             : 0;
                                         const taxEffect = tx.taxable ? taxableAmount * taxRate : 0;
                                         const netAmount = tx.type === 'mortgage_interest' ? 0 : grossAmount - taxEffect;
@@ -1387,33 +1392,14 @@ const Simulation = () => {
                                                         </span>
                                                     ) : (
                                                         <div className="amount tax-breakdown">
-                                                            <div>
-                                                                Brutto{' '}
-                                                                {grossAmount.toLocaleString('de-CH', {
-                                                                    style: 'currency',
-                                                                    currency: 'CHF',
-                                                                })}
-                                                            </div>
+                                                            <div>Brutto {formatCurrency(grossAmount)}</div>
                                                             {tx.taxable && (
                                                                 <div className="muted small">
                                                                     Steuer ({(taxRate * 100).toFixed(2)}% auf{' '}
-                                                                    {taxableAmount.toLocaleString('de-CH', {
-                                                                        style: 'currency',
-                                                                        currency: 'CHF',
-                                                                    })}
-                                                                    ): -{taxEffect.toLocaleString('de-CH', {
-                                                                        style: 'currency',
-                                                                        currency: 'CHF',
-                                                                    })}
+                                                                    {formatCurrency(taxableAmount)}): -{formatCurrency(taxEffect)}
                                                                 </div>
                                                             )}
-                                                            <div>
-                                                                Netto{' '}
-                                                                {netAmount.toLocaleString('de-CH', {
-                                                                    style: 'currency',
-                                                                    currency: 'CHF',
-                                                                })}
-                                                            </div>
+                                                            <div>Netto {formatCurrency(netAmount)}</div>
                                                         </div>
                                                     )}
                                                 </div>
