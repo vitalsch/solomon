@@ -1687,30 +1687,30 @@ const Simulation = () => {
                                                                                     </td>
                                                                                 </tr>
                                                                             )}
-                                                                            {row.showTax && row.tax_details?.length > 0 && (
-                                                                                <tr className="cashflow-subrow">
-                                                                                    <td></td>
-                                                                                    <td colSpan={4}>
-                                                                                        <ul className="cashflow-items">
-                                                                                            {row.tax_details.map((item, idx) => (
-                                                                                                <li key={`tax-${row.date}-${idx}`}>
-                                                                                                    <span>{item.name}</span>
-                                                                                                    <span className="muted">{item.account}</span>
-                                                                                                    <span className="amount">
-                                                                                                        {item.amount.toLocaleString('de-CH', {
-                                                                                                            style: 'currency',
-                                                                                                            currency: 'CHF',
-                                                                                                        })}
-                                                                                                    </span>
-                                                                                                </li>
-                                                                                            ))}
-                                                                                        </ul>
-                                                                                    </td>
-                                                                                </tr>
-                                                                            )}
-                                                                        </>
-                                                                    ))}
-                                                                <tr>
+                                                                    {row.showTax && row.tax_details?.length > 0 && (
+                                                                        <tr className="cashflow-subrow">
+                                                                            <td></td>
+                                                                            <td colSpan={4}>
+                                                                                <ul className="cashflow-items">
+                                                                                    {row.tax_details.map((item, idx) => (
+                                                                                        <li key={`tax-${row.date}-${idx}`}>
+                                                                                            <span>{item.name}</span>
+                                                                                            <span className="muted">{item.account}</span>
+                                                                                            <span className="amount">
+                                                                                                {item.amount.toLocaleString('de-CH', {
+                                                                                                    style: 'currency',
+                                                                                                    currency: 'CHF',
+                                                                                                })}
+                                                                                            </span>
+                                                                                        </li>
+                                                                                    ))}
+                                                                                </ul>
+                                                                            </td>
+                                                                        </tr>
+                                                                    )}
+                                                                </React.Fragment>
+                                                            ))}
+                                                        <tr>
                                                                     <td>
                                                                         <button
                                                                             className="link-button"
