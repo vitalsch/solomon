@@ -327,19 +327,6 @@ const Simulation = () => {
         loadCurrentUser();
     }, [loadCurrentUser]);
 
-    const handleUserSelect = useCallback(
-        async (userIdentifier) => {
-            if (!userIdentifier) {
-                setSelectedUserId('');
-                await loadScenariosForUser('');
-                return;
-            }
-            setSelectedUserId(userIdentifier);
-            await loadScenariosForUser(userIdentifier);
-        },
-        [loadScenariosForUser]
-    );
-
     const handleRegister = async () => {
         if (!newUsername || !newUserPassword) {
             setError('Bitte Benutzername und Passwort angeben.');
