@@ -71,6 +71,9 @@ const Simulation = () => {
     const [cloneScenarioId, setCloneScenarioId] = useState('');
     const [newScenarioStart, setNewScenarioStart] = useState('2024-05');
     const [newScenarioEnd, setNewScenarioEnd] = useState('2044-09');
+    const [inflationRate, setInflationRate] = useState('');
+    const [incomeTaxRate, setIncomeTaxRate] = useState('');
+    const [wealthTaxRate, setWealthTaxRate] = useState('');
     const [selectedScenarios, setSelectedScenarios] = useState([]);
     const [simulationCache, setSimulationCache] = useState({});
     const [cashFlows, setCashFlows] = useState([]);
@@ -233,6 +236,26 @@ const Simulation = () => {
             fetchScenarioDetails(currentScenarioId);
         }
     }, [currentScenarioId, fetchScenarioDetails]);
+
+    useEffect(() => {
+        if (scenarioDetails) {
+            setInflationRate(
+                scenarioDetails.inflation_rate === null || scenarioDetails.inflation_rate === undefined
+                    ? ''
+                    : scenarioDetails.inflation_rate
+            );
+            setIncomeTaxRate(
+                scenarioDetails.income_tax_rate === null || scenarioDetails.income_tax_rate === undefined
+                    ? ''
+                    : scenarioDetails.income_tax_rate
+            );
+            setWealthTaxRate(
+                scenarioDetails.wealth_tax_rate === null || scenarioDetails.wealth_tax_rate === undefined
+                    ? ''
+                    : scenarioDetails.wealth_tax_rate
+            );
+        }
+    }, [scenarioDetails]);
 
     useEffect(() => {
         const validIds = new Set(scenarios.map((s) => normalizeId(s.id)));
@@ -590,6 +613,9 @@ const Simulation = () => {
                 start_month: startMonth,
                 end_year: endYear,
                 end_month: endMonth,
+                inflation_rate: inflationRate === '' ? undefined : parseFloat(inflationRate),
+                income_tax_rate: incomeTaxRate === '' ? undefined : parseFloat(incomeTaxRate),
+                wealth_tax_rate: wealthTaxRate === '' ? undefined : parseFloat(wealthTaxRate),
             });
 
             if (cloneScenarioId) {
@@ -639,6 +665,27 @@ const Simulation = () => {
                 delete next[cacheKey(selectedUserId, scenarioKey)];
                 return next;
             });
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleUpdateScenarioSettings = async () => {
+        if (!currentScenarioId) {
+            setError('Kein Szenario ausgewählt.');
+            return;
+        }
+        setLoading(true);
+        setError(null);
+        try {
+            const updated = await updateScenario(currentScenarioId, {
+                inflation_rate: inflationRate === '' ? null : parseFloat(inflationRate),
+                income_tax_rate: incomeTaxRate === '' ? null : parseFloat(incomeTaxRate),
+                wealth_tax_rate: wealthTaxRate === '' ? null : parseFloat(wealthTaxRate),
+            });
+            setScenarioDetails(updated);
         } catch (err) {
             setError(err.message);
         } finally {
@@ -1089,6 +1136,36 @@ const Simulation = () => {
                                             />
                                         </label>
                                         <label className="stacked">
+                                            <span>Inflation p.a.</span>
+                                            <input
+                                                type="number"
+                                                placeholder="z.B. 0.02 für 2%"
+                                                value={inflationRate}
+                                                onChange={(e) => setInflationRate(e.target.value)}
+                                                step="0.0001"
+                                            />
+                                        </label>
+                                        <label className="stacked">
+                                            <span>Einkommensteuersatz</span>
+                                            <input
+                                                type="number"
+                                                placeholder="z.B. 0.25"
+                                                value={incomeTaxRate}
+                                                onChange={(e) => setIncomeTaxRate(e.target.value)}
+                                                step="0.0001"
+                                            />
+                                        </label>
+                                        <label className="stacked">
+                                            <span>Vermögenssteuersatz</span>
+                                            <input
+                                                type="number"
+                                                placeholder="z.B. 0.005"
+                                                value={wealthTaxRate}
+                                                onChange={(e) => setWealthTaxRate(e.target.value)}
+                                                step="0.0001"
+                                            />
+                                        </label>
+                                        <label className="stacked">
                                             <span>Start</span>
                                             <input
                                                 type="month"
@@ -1180,6 +1257,41 @@ const Simulation = () => {
                                             <strong>{allTransactions.length}</strong>
                                         </div>
                                     </div>
+                                    <div className="scenario-settings">
+                                        <p className="eyebrow">Einstellungen</p>
+                                        <div className="scenario-form-grid">
+                                            <label className="stacked">
+                                                <span>Inflation p.a.</span>
+                                                <input
+                                                    type="number"
+                                                    value={inflationRate}
+                                                    onChange={(e) => setInflationRate(e.target.value)}
+                                                    step="0.0001"
+                                                />
+                                            </label>
+                                            <label className="stacked">
+                                                <span>Einkommensteuer</span>
+                                                <input
+                                                    type="number"
+                                                    value={incomeTaxRate}
+                                                    onChange={(e) => setIncomeTaxRate(e.target.value)}
+                                                    step="0.0001"
+                                                />
+                                            </label>
+                                            <label className="stacked">
+                                                <span>Vermögenssteuer</span>
+                                                <input
+                                                    type="number"
+                                                    value={wealthTaxRate}
+                                                    onChange={(e) => setWealthTaxRate(e.target.value)}
+                                                    step="0.0001"
+                                                />
+                                            </label>
+                                        </div>
+                                        <button onClick={handleUpdateScenarioSettings} disabled={!currentScenarioId}>
+                                            Einstellungen speichern
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1225,6 +1337,13 @@ const Simulation = () => {
                                         const counterName = tx.counter_asset_id
                                             ? accountNameMap[tx.counter_asset_id]
                                             : null;
+                                        const taxRate = scenarioDetails?.income_tax_rate || 0;
+                                        const grossAmount = tx.amount || 0;
+                                        const taxableAmount = tx.taxable
+                                            ? tx.taxable_amount ?? grossAmount
+                                            : 0;
+                                        const taxEffect = tx.taxable ? taxableAmount * taxRate : 0;
+                                        const netAmount = tx.type === 'mortgage_interest' ? 0 : grossAmount - taxEffect;
                                         return (
                                             <li
                                                 key={tx.id}
@@ -1248,6 +1367,7 @@ const Simulation = () => {
                                                         <span className="badge">{assetName}</span>
                                                         {counterName && <span className="badge secondary">↔ {counterName}</span>}
                                                         {tx.entry && <span className="badge muted">{tx.entry}</span>}
+                                                        {tx.taxable && <span className="badge muted">steuerbar</span>}
                                                     </div>
                                                 </div>
                                                 <div className="transaction-actions">
@@ -1261,12 +1381,35 @@ const Simulation = () => {
                                                             %
                                                         </span>
                                                     ) : (
-                                                        <span className="amount">
-                                                            {tx.amount.toLocaleString('de-CH', {
-                                                                style: 'currency',
-                                                                currency: 'CHF',
-                                                            })}
-                                                        </span>
+                                                        <div className="amount tax-breakdown">
+                                                            <div>
+                                                                Brutto{' '}
+                                                                {grossAmount.toLocaleString('de-CH', {
+                                                                    style: 'currency',
+                                                                    currency: 'CHF',
+                                                                })}
+                                                            </div>
+                                                            {tx.taxable && (
+                                                                <div className="muted small">
+                                                                    Steuer ({(taxRate * 100).toFixed(2)}% auf{' '}
+                                                                    {taxableAmount.toLocaleString('de-CH', {
+                                                                        style: 'currency',
+                                                                        currency: 'CHF',
+                                                                    })}
+                                                                    ): -{taxEffect.toLocaleString('de-CH', {
+                                                                        style: 'currency',
+                                                                        currency: 'CHF',
+                                                                    })}
+                                                                </div>
+                                                            )}
+                                                            <div>
+                                                                Netto{' '}
+                                                                {netAmount.toLocaleString('de-CH', {
+                                                                    style: 'currency',
+                                                                    currency: 'CHF',
+                                                                })}
+                                                            </div>
+                                                        </div>
                                                     )}
                                                 </div>
                                             </li>

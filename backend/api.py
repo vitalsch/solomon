@@ -52,6 +52,9 @@ class ScenarioCreate(BaseModel):
     start_month: int = Field(..., ge=1, le=12)
     end_year: int = Field(..., ge=1900)
     end_month: int = Field(..., ge=1, le=12)
+    inflation_rate: Optional[float] = Field(None, description="Annual inflation (fraction, e.g. 0.02)")
+    income_tax_rate: Optional[float] = Field(None, description="Income tax rate (fraction)")
+    wealth_tax_rate: Optional[float] = Field(None, description="Wealth tax rate (fraction)")
 
     @validator("end_year")
     def validate_years(cls, v, values):
@@ -67,6 +70,9 @@ class ScenarioUpdate(BaseModel):
     start_month: Optional[int] = None
     end_year: Optional[int] = None
     end_month: Optional[int] = None
+    inflation_rate: Optional[float] = None
+    income_tax_rate: Optional[float] = None
+    wealth_tax_rate: Optional[float] = None
 
 
 class AssetCreate(BaseModel):
@@ -106,6 +112,8 @@ class TransactionCreate(BaseModel):
     double_entry: bool = False
     mortgage_asset_id: Optional[str] = None
     annual_interest_rate: Optional[float] = None
+    taxable: bool = False
+    taxable_amount: Optional[float] = None
 
     @validator("frequency", always=True)
     def validate_frequency(cls, v, values):
@@ -140,6 +148,8 @@ class TransactionUpdate(BaseModel):
     counter_asset_id: Optional[str] = None
     mortgage_asset_id: Optional[str] = None
     annual_interest_rate: Optional[float] = None
+    taxable: Optional[bool] = None
+    taxable_amount: Optional[float] = None
 
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(auth_scheme)):
@@ -194,6 +204,9 @@ def create_scenario(payload: ScenarioCreate, current_user=Depends(get_current_us
         payload.end_year,
         payload.end_month,
         payload.description,
+        payload.inflation_rate,
+        payload.income_tax_rate,
+        payload.wealth_tax_rate,
     )
 
 
@@ -387,26 +400,30 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
             False,
             payload.mortgage_asset_id,
             annual_interest_rate,
+            payload.taxable,
+            payload.taxable_amount if payload.taxable_amount is not None else None,
         )
 
-    return repo.add_transaction(
-        scenario_id,
-        payload.asset_id,
-        payload.name,
-        payload.amount,
-        payload.type,
-        payload.start_year,
-        payload.start_month,
-        payload.end_year or payload.start_year,
-        payload.end_month or payload.start_month,
-        payload.frequency,
-        payload.annual_growth_rate,
-        payload.counter_asset_id,
-        None,
-        payload.double_entry,
-        None,
-        None,
-    )
+        return repo.add_transaction(
+            scenario_id,
+            payload.asset_id,
+            payload.name,
+            payload.amount,
+            payload.type,
+            payload.start_year,
+            payload.start_month,
+            payload.end_year or payload.start_year,
+            payload.end_month or payload.start_month,
+            payload.frequency,
+            payload.annual_growth_rate,
+            payload.counter_asset_id,
+            None,
+            payload.double_entry,
+            None,
+            None,
+            payload.taxable,
+            payload.taxable_amount if payload.taxable_amount is not None else payload.amount if payload.taxable else None,
+        )
 
 
 @app.get("/scenarios/{scenario_id}/transactions")

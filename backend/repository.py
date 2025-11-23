@@ -148,6 +148,9 @@ class WealthRepository:
         end_year: int,
         end_month: int,
         description: str | None = None,
+        inflation_rate: float | None = None,
+        income_tax_rate: float | None = None,
+        wealth_tax_rate: float | None = None,
     ) -> Dict[str, Any]:
         doc = {
             "user_id": _ensure_object_id(user_id),
@@ -158,6 +161,9 @@ class WealthRepository:
             "end_year": end_year,
             "end_month": end_month,
             "created_at": datetime.utcnow(),
+            "inflation_rate": inflation_rate,
+            "income_tax_rate": income_tax_rate,
+            "wealth_tax_rate": wealth_tax_rate,
         }
         res = self.db.scenarios.insert_one(doc)
         doc["_id"] = res.inserted_id
@@ -285,6 +291,8 @@ class WealthRepository:
         double_entry: bool = False,
         mortgage_asset_id: Optional[str] = None,
         annual_interest_rate: Optional[float] = None,
+        taxable: bool = False,
+        taxable_amount: Optional[float] = None,
     ) -> Dict[str, Any]:
         doc = {
             "scenario_id": _ensure_object_id(scenario_id),
@@ -301,6 +309,7 @@ class WealthRepository:
             "annual_interest_rate": annual_interest_rate,
             "created_at": datetime.utcnow(),
             "double_entry": double_entry,
+            "taxable": taxable,
         }
         if counter_asset_id:
             doc["counter_asset_id"] = _ensure_object_id(counter_asset_id)
@@ -308,6 +317,8 @@ class WealthRepository:
             doc["link_id"] = link_id
         if mortgage_asset_id:
             doc["mortgage_asset_id"] = _ensure_object_id(mortgage_asset_id)
+        if taxable_amount is not None:
+            doc["taxable_amount"] = taxable_amount
         res = self.db.transactions.insert_one(doc)
         doc["_id"] = res.inserted_id
         return _serialize(doc)
