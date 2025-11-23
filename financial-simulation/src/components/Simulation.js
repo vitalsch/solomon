@@ -22,6 +22,7 @@ import {
     listScenarios,
     createScenario,
     getScenario,
+    updateScenario,
     listAssets,
     createAsset,
     updateAsset,
