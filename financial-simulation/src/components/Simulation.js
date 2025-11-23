@@ -159,7 +159,7 @@ const Simulation = () => {
             agg.expenses += entry.expenses;
             agg.taxes += entry.taxes || 0;
             agg.growth += entry.growth || 0;
-            agg.net += entry.net || entry.income + entry.expenses + (entry.growth || 0);
+            agg.net += entry.net || entry.income + entry.expenses + (entry.taxes || 0);
             agg.months.push(entry);
         });
         const yearlyArray = Array.from(map.values()).sort((a, b) => a.year - b.year);
@@ -1641,7 +1641,7 @@ const Simulation = () => {
                                                                     </td>
                                                                     <td>
                                                                         {(row.net ||
-                                                                            row.income + row.expenses + (row.growth || 0)
+                                                                            row.income + row.expenses + (row.taxes || 0)
                                                                         ).toLocaleString('de-CH', {
                                                                             style: 'currency',
                                                                             currency: 'CHF',
@@ -1748,7 +1748,7 @@ const Simulation = () => {
                                                         </td>
                                                         <td>
                                                             {(yearRow.net ||
-                                                                yearRow.income + yearRow.expenses + (yearRow.growth || 0)
+                                                                yearRow.income + yearRow.expenses + (yearRow.taxes || 0)
                                                             ).toLocaleString('de-CH', {
                                                                 style: 'currency',
                                                                 currency: 'CHF',

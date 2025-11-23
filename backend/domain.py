@@ -242,7 +242,8 @@ def simulate_account_balances_and_total_wealth(
                 "expenses": monthly_expense,
                 "growth": monthly_growth,
                 "taxes": monthly_tax,
-                "net": monthly_income + monthly_expense + monthly_growth,
+                # Net cashflow excludes non-cash growth; includes taxes alongside income/expenses
+                "net": monthly_income + monthly_expense + monthly_tax,
                 "income_details": income_details,
                 "expense_details": expense_details,
                 "growth_details": growth_details,
