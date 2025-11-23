@@ -1343,9 +1343,9 @@ const Simulation = () => {
                                             ? accountNameMap[tx.counter_asset_id]
                                             : null;
                                         const taxRate = scenarioDetails?.income_tax_rate || 0;
-                                        const grossAmount = tx.amount || 0;
+                                        const grossAmount = Number.isFinite(tx.amount) ? tx.amount : 0;
                                         const taxableAmount = tx.taxable
-                                            ? tx.taxable_amount ?? grossAmount
+                                            ? (Number.isFinite(tx.taxable_amount) ? tx.taxable_amount : grossAmount)
                                             : 0;
                                         const taxEffect = tx.taxable ? taxableAmount * taxRate : 0;
                                         const netAmount = tx.type === 'mortgage_interest' ? 0 : grossAmount - taxEffect;

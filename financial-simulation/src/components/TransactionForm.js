@@ -114,7 +114,8 @@ const TransactionForm = ({
         };
 
         if (type !== 'mortgage_interest') {
-            payload.amount = parseFloatSafe(amount);
+            const parsedAmount = parseFloatSafe(amount);
+            payload.amount = Number.isFinite(parsedAmount) ? parsedAmount : 0;
         } else {
             payload.amount = 0;
         }
@@ -150,7 +151,12 @@ const TransactionForm = ({
 
         payload.taxable = taxable;
         if (taxable) {
-            payload.taxable_amount = parseFloatSafe(taxableAmount === '' ? amount : taxableAmount);
+            const parsedTaxable = parseFloatSafe(taxableAmount === '' ? amount : taxableAmount);
+            payload.taxable_amount = Number.isFinite(parsedTaxable)
+                ? parsedTaxable
+                : Number.isFinite(payload.amount)
+                ? payload.amount
+                : 0;
         } else {
             payload.taxable_amount = undefined;
         }
