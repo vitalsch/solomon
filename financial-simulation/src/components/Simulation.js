@@ -16,8 +16,9 @@ import TransactionForm from './TransactionForm';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-    listUsers,
-    createUser,
+    registerUser,
+    loginUser,
+    getCurrentUser,
     listScenarios,
     createScenario,
     getScenario,
@@ -31,6 +32,8 @@ import {
     deleteTransaction,
     deleteScenario,
     simulateScenario,
+    setAuthToken,
+    getAuthToken,
 } from '../api';
 import '../TransactionsList.css';
 
@@ -45,8 +48,6 @@ ChartJS.register(
     Filler
 );
 
-const USERS_PER_PAGE = 10;
-
 const normalizeId = (value) => (value === null || value === undefined ? '' : String(value));
 const cacheKey = (userId, scenarioId) => `${normalizeId(userId)}::${normalizeId(scenarioId)}`;
 
@@ -54,9 +55,9 @@ const Simulation = () => {
     const [users, setUsers] = useState([]);
     const [selectedUserId, setSelectedUserId] = useState('');
     const [newUserName, setNewUserName] = useState('');
+    const [newUsername, setNewUsername] = useState('');
+    const [newUserPassword, setNewUserPassword] = useState('');
     const [newUserEmail, setNewUserEmail] = useState('');
-    const [userSearchTerm, setUserSearchTerm] = useState('');
-    const [userPage, setUserPage] = useState(0);
     const [scenarios, setScenarios] = useState([]);
     const [currentScenarioId, setCurrentScenarioId] = useState('');
     const [scenarioDetails, setScenarioDetails] = useState(null);
@@ -159,34 +160,6 @@ const Simulation = () => {
         });
         return yearlyArray;
     }, [cashFlowData]);
-
-    const filteredUsers = useMemo(() => {
-        if (!userSearchTerm) {
-            return users;
-        }
-        const term = userSearchTerm.toLowerCase();
-        return users.filter(
-            (user) =>
-                user.name?.toLowerCase().includes(term) || user.email?.toLowerCase().includes(term)
-        );
-    }, [users, userSearchTerm]);
-
-    const maxUserPage = Math.max(0, Math.ceil(filteredUsers.length / USERS_PER_PAGE) - 1);
-
-    useEffect(() => {
-        if (userPage > maxUserPage) {
-            setUserPage(maxUserPage);
-        }
-    }, [userPage, maxUserPage]);
-
-    useEffect(() => {
-        setUserPage(0);
-    }, [userSearchTerm, users.length]);
-
-    const paginatedUsers = useMemo(() => {
-        const start = userPage * USERS_PER_PAGE;
-        return filteredUsers.slice(start, start + USERS_PER_PAGE);
-    }, [filteredUsers, userPage]);
 
     const accountNameMap = useMemo(() => {
         const map = {};
@@ -302,7 +275,7 @@ const Simulation = () => {
             setLoading(true);
             setError(null);
             try {
-                const userScenarios = await listScenarios(userIdentifier);
+                const userScenarios = await listScenarios();
                 setScenarios(userScenarios);
                 const firstScenario = normalizeId(userScenarios[0]?.id || '');
                 setCurrentScenarioId(firstScenario);
@@ -325,60 +298,90 @@ const Simulation = () => {
         [closeTransactionModal]
     );
 
-    const loadUsers = useCallback(async () => {
+    const loadCurrentUser = useCallback(async () => {
+        const token = getAuthToken();
+        if (!token) {
+            setUsers([]);
+            setSelectedUserId('');
+            await loadScenariosForUser('');
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
-            const userList = await listUsers();
-            setUsers(userList);
-            if (userList.length > 0) {
-                const existingSelection = userList.find((u) => u.id === selectedUserId);
-                const defaultUserId = existingSelection ? existingSelection.id : userList[0].id;
-                if (!selectedUserId || !existingSelection) {
-                    setSelectedUserId(defaultUserId);
-                    await loadScenariosForUser(defaultUserId);
-                }
-            } else {
+            const user = await getCurrentUser();
+            setUsers([user]);
+            setSelectedUserId(user.id);
+            await loadScenariosForUser(user.id);
+        } catch (err) {
+            setError(err.message || 'Bitte neu einloggen oder registrieren.');
+            setUsers([]);
+            setSelectedUserId('');
+            await loadScenariosForUser('');
+        } finally {
+            setLoading(false);
+        }
+    }, [loadScenariosForUser]);
+
+    useEffect(() => {
+        loadCurrentUser();
+    }, [loadCurrentUser]);
+
+    const handleUserSelect = useCallback(
+        async (userIdentifier) => {
+            if (!userIdentifier) {
                 setSelectedUserId('');
                 await loadScenariosForUser('');
+                return;
             }
+            setSelectedUserId(userIdentifier);
+            await loadScenariosForUser(userIdentifier);
+        },
+        [loadScenariosForUser]
+    );
+
+    const handleRegister = async () => {
+        if (!newUsername || !newUserPassword) {
+            setError('Bitte Benutzername und Passwort angeben.');
+            return;
+        }
+        setLoading(true);
+        setError(null);
+        try {
+            const { user, token } = await registerUser({
+                username: newUsername,
+                password: newUserPassword,
+                name: newUserName,
+                email: newUserEmail,
+            });
+            setAuthToken(token);
+            setUsers([user]);
+            setSelectedUserId(user.id);
+            setNewUsername('');
+            setNewUserPassword('');
+            setNewUserName('');
+            setNewUserEmail('');
+            await loadScenariosForUser(user.id);
         } catch (err) {
             setError(err.message);
         } finally {
             setLoading(false);
         }
-    }, [loadScenariosForUser, selectedUserId]);
+    };
 
-    useEffect(() => {
-        loadUsers();
-    }, [loadUsers]);
-
-    const handleUserSelect = useCallback(
-        async (userIdentifier) => {
-            if (!userIdentifier) {
-            setSelectedUserId('');
-            await loadScenariosForUser('');
-            return;
-        }
-        setSelectedUserId(userIdentifier);
-        await loadScenariosForUser(userIdentifier);
-    },
-    [loadScenariosForUser]
-);
-
-    const handleCreateUser = async () => {
-        if (!newUserName || !newUserEmail) {
-            setError('Bitte Name und E-Mail angeben.');
+    const handleLogin = async () => {
+        if (!newUsername || !newUserPassword) {
+            setError('Bitte Benutzername und Passwort angeben.');
             return;
         }
         setLoading(true);
         setError(null);
         try {
-            const user = await createUser({ name: newUserName, email: newUserEmail });
-            setUsers((prev) => [...prev, user]);
-            setNewUserName('');
-            setNewUserEmail('');
+            const { user, token } = await loginUser({ username: newUsername, password: newUserPassword });
+            setAuthToken(token);
+            setUsers([user]);
             setSelectedUserId(user.id);
+            setNewUserPassword('');
             await loadScenariosForUser(user.id);
         } catch (err) {
             setError(err.message);
@@ -595,7 +598,6 @@ const Simulation = () => {
         setError(null);
         try {
             const scenario = await createScenario({
-                user_id: selectedUserId,
                 name: newScenarioName,
                 start_year: startYear,
                 start_month: startMonth,
@@ -1005,16 +1007,6 @@ const Simulation = () => {
         })}`;
     }, []);
 
-    const handlePrevPage = () => {
-        setUserPage((prev) => Math.max(0, prev - 1));
-    };
-
-    const handleNextPage = () => {
-        setUserPage((prev) => Math.min(maxUserPage, prev + 1));
-    };
-
-    const totalPages = filteredUsers.length === 0 ? 0 : maxUserPage + 1;
-    const currentPageDisplay = filteredUsers.length === 0 ? 0 : userPage + 1;
     const modalAsset = accounts.find((acc) => acc.id === transactionModalAssetId);
 
     return (
@@ -1032,65 +1024,41 @@ const Simulation = () => {
                     </button>
                     <aside id="user-sidebar" className="user-sidebar">
                         <h3>User Management</h3>
-                        <input
-                            type="text"
-                            className="user-search"
-                            placeholder="Search name or email"
-                            value={userSearchTerm}
-                            onChange={(e) => setUserSearchTerm(e.target.value)}
-                        />
-                        <div className="user-list">
-                            {paginatedUsers.length === 0 ? (
-                                <p className="placeholder">No users found.</p>
-                            ) : (
-                                paginatedUsers.map((user) => (
-                                    <button
-                                        key={user.id}
-                                        className={`user-item ${selectedUserId === user.id ? 'active' : ''}`}
-                                        onClick={() => handleUserSelect(user.id)}
-                                    >
-                                        <span className="user-name">{user.name}</span>
-                                        <span className="user-email">{user.email}</span>
-                                    </button>
-                                ))
-                            )}
-                        </div>
-                        <div className="user-pagination">
-                            <button onClick={handlePrevPage} disabled={userPage === 0}>
-                                Prev
-                            </button>
-                            <span>
-                                Page {currentPageDisplay} / {totalPages}
-                            </span>
-                            <button
-                                onClick={handleNextPage}
-                                disabled={paginatedUsers.length === 0 || userPage >= maxUserPage}
-                            >
-                                Next
-                            </button>
-                        </div>
-                        {selectedUserId && (
-                            <p className="active-user">
-                                Active User ID: <code>{selectedUserId}</code>
-                            </p>
-                        )}
                         <div className="new-user">
                             <input
                                 type="text"
-                                placeholder="New User Name"
+                                placeholder="Benutzername"
+                                value={newUsername}
+                                onChange={(e) => setNewUsername(e.target.value)}
+                            />
+                            <input
+                                type="password"
+                                placeholder="Passwort"
+                                value={newUserPassword}
+                                onChange={(e) => setNewUserPassword(e.target.value)}
+                            />
+                            <input
+                                type="text"
+                                placeholder="Anzeigename (optional)"
                                 value={newUserName}
                                 onChange={(e) => setNewUserName(e.target.value)}
                             />
                             <input
                                 type="email"
-                                placeholder="New User Email"
+                                placeholder="E-Mail (optional)"
                                 value={newUserEmail}
                                 onChange={(e) => setNewUserEmail(e.target.value)}
                             />
                             <div className="user-buttons">
-                                <button onClick={handleCreateUser}>Create User</button>
-                                <button onClick={loadUsers}>Refresh Users</button>
+                                <button onClick={handleRegister}>Registrieren</button>
+                                <button onClick={handleLogin}>Login</button>
+                                <button onClick={loadCurrentUser}>Aktualisieren</button>
                             </div>
+                            {selectedUserId && (
+                                <p className="active-user">
+                                    Eingeloggt als: <code>{selectedUser?.name || selectedUser?.username || selectedUserId}</code>
+                                </p>
+                            )}
                         </div>
                     </aside>
 
