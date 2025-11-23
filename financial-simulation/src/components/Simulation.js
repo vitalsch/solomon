@@ -62,6 +62,10 @@ const Simulation = () => {
     const [scenarios, setScenarios] = useState([]);
     const [currentScenarioId, setCurrentScenarioId] = useState('');
     const [scenarioDetails, setScenarioDetails] = useState(null);
+    const [showScenarios, setShowScenarios] = useState(true);
+    const [showAccounts, setShowAccounts] = useState(true);
+    const [showTransactions, setShowTransactions] = useState(true);
+    const [showComparison, setShowComparison] = useState(true);
     const [accounts, setAccounts] = useState([]);
     const [accountTransactions, setAccountTransactions] = useState({});
     const [newAccountName, setNewAccountName] = useState('');
@@ -1116,310 +1120,335 @@ const Simulation = () => {
                         {error && <p className="error">{error}</p>}
                         {loading && <p>Loading...</p>}
 
-                        <div className="scenario-section">
-                            <div className="section-heading">
+                        <div className="panel">
+                            <div className="panel-header">
                                 <div>
                                     <p className="eyebrow">Szenarien</p>
                                     <h3>Planen & vergleichen</h3>
-                                    <p className="muted">
-                                        Lege neue Varianten an oder aktiviere ein Szenario, das du simulieren und
-                                        weiterbearbeiten möchtest.
-                                    </p>
                                 </div>
-                                <div className="scenario-chip">
-                                    <span>Aktiv</span>
-                                    <strong>{currentScenario?.name || 'Kein Szenario'}</strong>
+                                <div className="panel-actions">
+                                    <div className="scenario-chip">
+                                        <span>Aktiv</span>
+                                        <strong>{currentScenario?.name || 'Kein Szenario'}</strong>
+                                    </div>
+                                    <button className="secondary" onClick={() => setShowScenarios((v) => !v)}>
+                                        {showScenarios ? 'Einklappen' : 'Ausklappen'}
+                                    </button>
                                 </div>
                             </div>
 
-                            <div className="scenario-grid">
-                                <div className="scenario-card">
-                                    <div className="scenario-card-header">
-                                        <div>
-                                            <p className="eyebrow">Neu</p>
-                                            <h4>Szenario anlegen</h4>
+                            {showScenarios && (
+                                <div className="scenario-grid">
+                                    <div className="scenario-card">
+                                        <div className="scenario-card-header">
+                                            <div>
+                                                <p className="eyebrow">Neu</p>
+                                                <h4>Szenario anlegen</h4>
+                                            </div>
+                                            <span className="muted small">Optional bestehendes Szenario klonen.</span>
                                         </div>
-                                        <span className="muted small">Optional bestehendes Szenario klonen.</span>
-                                    </div>
-                                    <div className="scenario-form-grid">
-                                        <label className="stacked">
-                                            <span>Name</span>
-                                            <input
-                                                type="text"
-                                                placeholder="Szenario-Name"
-                                                value={newScenarioName}
-                                                onChange={(e) => setNewScenarioName(e.target.value)}
-                                            />
-                                        </label>
-                                        <label className="stacked">
-                                            <span>Inflation p.a.</span>
-                                            <input
-                                                type="number"
-                                                placeholder="z.B. 0.02 für 2%"
-                                                value={inflationRate}
-                                                onChange={(e) => setInflationRate(e.target.value)}
-                                                step="0.0001"
-                                            />
-                                        </label>
-                                        <label className="stacked">
-                                            <span>Einkommensteuersatz</span>
-                                            <input
-                                                type="number"
-                                                placeholder="z.B. 0.25"
-                                                value={incomeTaxRate}
-                                                onChange={(e) => setIncomeTaxRate(e.target.value)}
-                                                step="0.0001"
-                                            />
-                                        </label>
-                                        <label className="stacked">
-                                            <span>Vermögenssteuersatz</span>
-                                            <input
-                                                type="number"
-                                                placeholder="z.B. 0.005"
-                                                value={wealthTaxRate}
-                                                onChange={(e) => setWealthTaxRate(e.target.value)}
-                                                step="0.0001"
-                                            />
-                                        </label>
-                                        <label className="stacked">
-                                            <span>Start</span>
-                                            <input
-                                                type="month"
-                                                value={newScenarioStart}
-                                                onChange={(e) => setNewScenarioStart(e.target.value)}
-                                            />
-                                        </label>
-                                        <label className="stacked">
-                                            <span>Ende</span>
-                                            <input
-                                                type="month"
-                                                value={newScenarioEnd}
-                                                onChange={(e) => setNewScenarioEnd(e.target.value)}
-                                            />
-                                        </label>
-                                        <label className="stacked">
-                                            <span>Vorlage</span>
-                                            <select value={cloneScenarioId} onChange={(e) => setCloneScenarioId(e.target.value)}>
-                                                <option value="">Neu beginnen</option>
-                                                {scenarios.map((scenario) => (
-                                                    <option key={`clone-${scenario.id}`} value={scenario.id}>
-                                                        Klonen: {scenario.name}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </label>
-                                    </div>
-                                    <div className="scenario-actions">
-                                        <div className="muted small">Speichert unter dem aktuell ausgewählten Benutzer.</div>
-                                        <button onClick={handleAddScenario} disabled={!selectedUserId}>
-                                            Szenario erstellen
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div className="scenario-card scenario-current-card">
-                                    <div className="scenario-card-header">
-                                        <div>
-                                            <p className="eyebrow">Aktiv</p>
-                                            <h4>Szenario verwalten</h4>
-                                        </div>
-                                        {scenarioDetails && (
-                                            <div className="scenario-pill">{formatScenarioRange(scenarioDetails)}</div>
-                                        )}
-                                    </div>
-                                    <label className="stacked">
-                                        <span>Szenario wählen</span>
-                                        <select onChange={(e) => setCurrentScenarioId(e.target.value)} value={currentScenarioId}>
-                                            <option value="">Bitte auswählen</option>
-                                            {scenarios.map((scenario) => (
-                                                <option key={scenario.id} value={scenario.id}>
-                                                    {scenario.name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </label>
-
-                                    <div className="scenario-actions">
-                                        <button onClick={handleSimulate} disabled={!currentScenarioId}>
-                                            Szenario simulieren
-                                        </button>
-                                        <button
-                                            className="secondary"
-                                            onClick={handleDownloadPdf}
-                                            disabled={!selectedUserId}
-                                        >
-                                            PDF herunterladen
-                                        </button>
-                                        <button
-                                            className="secondary danger"
-                                            onClick={() => handleDeleteScenario(currentScenarioId)}
-                                            disabled={!currentScenarioId}
-                                        >
-                                            Löschen
-                                        </button>
-                                    </div>
-
-                                    <div className="scenario-detail-grid">
-                                        <div className="scenario-detail">
-                                            <span className="label">Zeitraum</span>
-                                            <strong>{formatScenarioRange(scenarioDetails) || '–'}</strong>
-                                        </div>
-                                        <div className="scenario-detail">
-                                            <span className="label">Assets</span>
-                                            <strong>{accounts.length}</strong>
-                                        </div>
-                                        <div className="scenario-detail">
-                                            <span className="label">Transaktionen</span>
-                                            <strong>{allTransactions.length}</strong>
-                                        </div>
-                                    </div>
-                                    <div className="scenario-settings">
-                                        <p className="eyebrow">Einstellungen</p>
                                         <div className="scenario-form-grid">
+                                            <label className="stacked">
+                                                <span>Name</span>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Szenario-Name"
+                                                    value={newScenarioName}
+                                                    onChange={(e) => setNewScenarioName(e.target.value)}
+                                                />
+                                            </label>
                                             <label className="stacked">
                                                 <span>Inflation p.a.</span>
                                                 <input
                                                     type="number"
+                                                    placeholder="z.B. 0.02 für 2%"
                                                     value={inflationRate}
                                                     onChange={(e) => setInflationRate(e.target.value)}
                                                     step="0.0001"
                                                 />
                                             </label>
                                             <label className="stacked">
-                                                <span>Einkommensteuer</span>
+                                                <span>Einkommensteuersatz</span>
                                                 <input
                                                     type="number"
+                                                    placeholder="z.B. 0.25"
                                                     value={incomeTaxRate}
                                                     onChange={(e) => setIncomeTaxRate(e.target.value)}
                                                     step="0.0001"
                                                 />
                                             </label>
                                             <label className="stacked">
-                                                <span>Vermögenssteuer</span>
+                                                <span>Vermögenssteuersatz</span>
                                                 <input
                                                     type="number"
+                                                    placeholder="z.B. 0.005"
                                                     value={wealthTaxRate}
                                                     onChange={(e) => setWealthTaxRate(e.target.value)}
                                                     step="0.0001"
                                                 />
                                             </label>
+                                            <label className="stacked">
+                                                <span>Start</span>
+                                                <input
+                                                    type="month"
+                                                    value={newScenarioStart}
+                                                    onChange={(e) => setNewScenarioStart(e.target.value)}
+                                                />
+                                            </label>
+                                            <label className="stacked">
+                                                <span>Ende</span>
+                                                <input
+                                                    type="month"
+                                                    value={newScenarioEnd}
+                                                    onChange={(e) => setNewScenarioEnd(e.target.value)}
+                                                />
+                                            </label>
+                                            <label className="stacked">
+                                                <span>Vorlage</span>
+                                                <select value={cloneScenarioId} onChange={(e) => setCloneScenarioId(e.target.value)}>
+                                                    <option value="">Neu beginnen</option>
+                                                    {scenarios.map((scenario) => (
+                                                        <option key={`clone-${scenario.id}`} value={scenario.id}>
+                                                            Klonen: {scenario.name}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </label>
                                         </div>
-                                        <button onClick={handleUpdateScenarioSettings} disabled={!currentScenarioId}>
-                                            Einstellungen speichern
-                                        </button>
+                                        <div className="scenario-actions">
+                                            <div className="muted small">Speichert unter dem aktuell ausgewählten Benutzer.</div>
+                                            <button onClick={handleAddScenario} disabled={!selectedUserId}>
+                                                Szenario erstellen
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="scenario-card scenario-current-card">
+                                        <div className="scenario-card-header">
+                                            <div>
+                                                <p className="eyebrow">Aktiv</p>
+                                                <h4>Szenario verwalten</h4>
+                                            </div>
+                                            {scenarioDetails && (
+                                                <div className="scenario-pill">{formatScenarioRange(scenarioDetails)}</div>
+                                            )}
+                                        </div>
+                                        <label className="stacked">
+                                            <span>Szenario wählen</span>
+                                            <select onChange={(e) => setCurrentScenarioId(e.target.value)} value={currentScenarioId}>
+                                                <option value="">Bitte auswählen</option>
+                                                {scenarios.map((scenario) => (
+                                                    <option key={scenario.id} value={scenario.id}>
+                                                        {scenario.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+
+                                        <div className="scenario-actions">
+                                            <button onClick={handleSimulate} disabled={!currentScenarioId}>
+                                                Szenario simulieren
+                                            </button>
+                                            <button
+                                                className="secondary"
+                                                onClick={handleDownloadPdf}
+                                                disabled={!selectedUserId}
+                                            >
+                                                PDF herunterladen
+                                            </button>
+                                            <button
+                                                className="secondary danger"
+                                                onClick={() => handleDeleteScenario(currentScenarioId)}
+                                                disabled={!currentScenarioId}
+                                            >
+                                                Löschen
+                                            </button>
+                                        </div>
+
+                                        <div className="scenario-detail-grid">
+                                            <div className="scenario-detail">
+                                                <span className="label">Zeitraum</span>
+                                                <strong>{formatScenarioRange(scenarioDetails) || '–'}</strong>
+                                            </div>
+                                            <div className="scenario-detail">
+                                                <span className="label">Assets</span>
+                                                <strong>{accounts.length}</strong>
+                                            </div>
+                                            <div className="scenario-detail">
+                                                <span className="label">Transaktionen</span>
+                                                <strong>{allTransactions.length}</strong>
+                                            </div>
+                                        </div>
+                                        <div className="scenario-settings">
+                                            <p className="eyebrow">Einstellungen</p>
+                                            <div className="scenario-form-grid">
+                                                <label className="stacked">
+                                                    <span>Inflation p.a.</span>
+                                                    <input
+                                                        type="number"
+                                                        value={inflationRate}
+                                                        onChange={(e) => setInflationRate(e.target.value)}
+                                                        step="0.0001"
+                                                    />
+                                                </label>
+                                                <label className="stacked">
+                                                    <span>Einkommensteuer</span>
+                                                    <input
+                                                        type="number"
+                                                        value={incomeTaxRate}
+                                                        onChange={(e) => setIncomeTaxRate(e.target.value)}
+                                                        step="0.0001"
+                                                    />
+                                                </label>
+                                                <label className="stacked">
+                                                    <span>Vermögenssteuer</span>
+                                                    <input
+                                                        type="number"
+                                                        value={wealthTaxRate}
+                                                        onChange={(e) => setWealthTaxRate(e.target.value)}
+                                                        step="0.0001"
+                                                    />
+                                                </label>
+                                            </div>
+                                            <button onClick={handleUpdateScenarioSettings} disabled={!currentScenarioId}>
+                                                Einstellungen speichern
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        </div>
-
-                        <div className="accounts-panel">
-                            <div className="accounts-header">
-                                <h3>Accounts</h3>
-                                <button onClick={openAssetModal} disabled={!currentScenarioId}>
-                                    Neues Asset
-                                </button>
-                            </div>
-                            <div className="accounts-grid">
-                                {accounts.map((account) => (
-                                    <Account
-                                        key={account.id}
-                                        account={account}
-                                        transactions={groupedTransactions[account.id] || []}
-                                        accountNameMap={accountNameMap}
-                                        updateAccount={handleUpdateAccount}
-                                        deleteAccount={handleDeleteAccount}
-                                        onEditTransaction={(transaction) => openTransactionModal(account, transaction)}
-                                    />
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="transactions-panel">
-                            <div className="transactions-header">
-                                <h3>Transaktionen</h3>
-                                <button
-                                    onClick={() => openTransactionModal(null, null)}
-                                    disabled={!currentScenarioId || accounts.length === 0}
-                                >
-                                    Neue Transaktion
-                                </button>
-                            </div>
-                            {allTransactions.length === 0 ? (
-                                <p className="placeholder">Keine Transaktionen.</p>
-                            ) : (
-                                <ul className="transaction-list">
-                                    {allTransactions.map((tx) => {
-                                        const assetName = accountNameMap[tx.asset_id] || 'Unbekannt';
-                                        const counterName = tx.counter_asset_id
-                                            ? accountNameMap[tx.counter_asset_id]
-                                            : null;
-                                        const taxRate = scenarioDetails?.income_tax_rate || 0;
-                                        const grossAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount) || 0;
-                                        const taxableAmount = tx.taxable
-                                            ? (Number.isFinite(tx.taxable_amount)
-                                                  ? tx.taxable_amount
-                                                  : Number(tx.taxable_amount) || grossAmount)
-                                            : 0;
-                                        const taxEffect = tx.taxable ? taxableAmount * taxRate : 0;
-                                        const netAmount = tx.type === 'mortgage_interest' ? 0 : grossAmount - taxEffect;
-                                        return (
-                                            <li
-                                                key={tx.id}
-                                                className="transaction-row"
-                                                onClick={() => openTransactionModal(accounts.find((a) => a.id === tx.asset_id) || null, tx)}
-                                            >
-                                                <div>
-                                                    <div className="tx-title">{tx.name}</div>
-                                                    <div className="tx-subtitle">
-                                                        {tx.type === 'regular'
-                                                            ? 'Regular'
-                                                            : tx.type === 'mortgage_interest'
-                                                            ? 'Mortgage Interest'
-                                                            : 'One-time'}{' '}
-                                                        · {tx.start_month}/{tx.start_year}
-                                                    </div>
-                                                    {annualLabel(tx) && (
-                                                        <div className="txn-annual">{annualLabel(tx)}</div>
-                                                    )}
-                                                    <div className="transaction-meta">
-                                                        <span className="badge">{assetName}</span>
-                                                        {counterName && <span className="badge secondary">↔ {counterName}</span>}
-                                                        {tx.entry && <span className="badge muted">{tx.entry}</span>}
-                                                        {tx.taxable && <span className="badge muted">steuerbar</span>}
-                                                    </div>
-                                                </div>
-                                                <div className="transaction-actions">
-                                                    {tx.type === 'mortgage_interest' ? (
-                                                        <span className="amount muted">
-                                                            Auto · {((
-                                                                tx.annual_interest_rate ??
-                                                                tx.annual_growth_rate ??
-                                                                0
-                                                            ) * 100).toFixed(2)}
-                                                            %
-                                                        </span>
-                                                    ) : (
-                                                        <div className="amount tax-breakdown">
-                                                            <div>Brutto {formatCurrency(grossAmount)}</div>
-                                                            {tx.taxable && (
-                                                                <div className="muted small">
-                                                                    Steuer ({(taxRate * 100).toFixed(2)}% auf{' '}
-                                                                    {formatCurrency(taxableAmount)}): -{formatCurrency(taxEffect)}
-                                                                </div>
-                                                            )}
-                                                            <div>Netto {formatCurrency(netAmount)}</div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
                             )}
                         </div>
 
-                        <div className="scenario-comparison">
-                            <div className="section-heading">
+                        <div className="panel">
+                            <div className="panel-header">
+                                <div>
+                                    <p className="eyebrow">Accounts</p>
+                                    <h3>Vermögen & Schulden</h3>
+                                </div>
+                                <div className="panel-actions">
+                                    <button className="secondary" onClick={() => setShowAccounts((v) => !v)}>
+                                        {showAccounts ? 'Einklappen' : 'Ausklappen'}
+                                    </button>
+                                    <button onClick={openAssetModal} disabled={!currentScenarioId}>
+                                        Neues Asset
+                                    </button>
+                                </div>
+                            </div>
+                            {showAccounts && (
+                                <div className="accounts-grid">
+                                    {accounts.map((account) => (
+                                        <Account
+                                            key={account.id}
+                                            account={account}
+                                            transactions={groupedTransactions[account.id] || []}
+                                            accountNameMap={accountNameMap}
+                                            updateAccount={handleUpdateAccount}
+                                            deleteAccount={handleDeleteAccount}
+                                            onEditTransaction={(transaction) => openTransactionModal(account, transaction)}
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="panel">
+                            <div className="panel-header">
+                                <div>
+                                    <p className="eyebrow">Transaktionen</p>
+                                    <h3>Cashflows</h3>
+                                </div>
+                                <div className="panel-actions">
+                                    <button className="secondary" onClick={() => setShowTransactions((v) => !v)}>
+                                        {showTransactions ? 'Einklappen' : 'Ausklappen'}
+                                    </button>
+                                    <button
+                                        onClick={() => openTransactionModal(null, null)}
+                                        disabled={!currentScenarioId || accounts.length === 0}
+                                    >
+                                        Neue Transaktion
+                                    </button>
+                                </div>
+                            </div>
+                            {showTransactions && (
+                                <div className="panel-body">
+                                    {allTransactions.length === 0 ? (
+                                        <p className="placeholder">Keine Transaktionen.</p>
+                                    ) : (
+                                        <ul className="transaction-list">
+                                            {allTransactions.map((tx) => {
+                                                const assetName = accountNameMap[tx.asset_id] || 'Unbekannt';
+                                                const counterName = tx.counter_asset_id
+                                                    ? accountNameMap[tx.counter_asset_id]
+                                                    : null;
+                                                const taxRate = scenarioDetails?.income_tax_rate || 0;
+                                                const grossAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount) || 0;
+                                                const taxableAmount = tx.taxable
+                                                    ? (Number.isFinite(tx.taxable_amount)
+                                                          ? tx.taxable_amount
+                                                          : Number(tx.taxable_amount) || grossAmount)
+                                                    : 0;
+                                                const taxEffect = tx.taxable ? taxableAmount * taxRate : 0;
+                                                const netAmount = tx.type === 'mortgage_interest' ? 0 : grossAmount - taxEffect;
+                                                return (
+                                                    <li
+                                                        key={tx.id}
+                                                        className="transaction-row"
+                                                        onClick={() => openTransactionModal(accounts.find((a) => a.id === tx.asset_id) || null, tx)}
+                                                    >
+                                                        <div>
+                                                            <div className="tx-title">{tx.name}</div>
+                                                            <div className="tx-subtitle">
+                                                                {tx.type === 'regular'
+                                                                    ? 'Regular'
+                                                                    : tx.type === 'mortgage_interest'
+                                                                    ? 'Mortgage Interest'
+                                                                    : 'One-time'}{' '}
+                                                                · {tx.start_month}/{tx.start_year}
+                                                            </div>
+                                                            {annualLabel(tx) && (
+                                                                <div className="txn-annual">{annualLabel(tx)}</div>
+                                                            )}
+                                                            <div className="transaction-meta">
+                                                                <span className="badge">{assetName}</span>
+                                                                {counterName && <span className="badge secondary">↔ {counterName}</span>}
+                                                                {tx.entry && <span className="badge muted">{tx.entry}</span>}
+                                                                {tx.taxable && <span className="badge muted">steuerbar</span>}
+                                                            </div>
+                                                        </div>
+                                                        <div className="transaction-actions">
+                                                            {tx.type === 'mortgage_interest' ? (
+                                                                <span className="amount muted">
+                                                                    Auto · {((
+                                                                        tx.annual_interest_rate ??
+                                                                        tx.annual_growth_rate ??
+                                                                        0
+                                                                    ) * 100).toFixed(2)}
+                                                                    %
+                                                                </span>
+                                                            ) : (
+                                                                <div className="amount tax-breakdown">
+                                                                    <div>Brutto {formatCurrency(grossAmount)}</div>
+                                                                    {tx.taxable && (
+                                                                        <div className="muted small">
+                                                                            Steuer ({(taxRate * 100).toFixed(2)}% auf{' '}
+                                                                            {formatCurrency(taxableAmount)}): -{formatCurrency(taxEffect)}
+                                                                        </div>
+                                                                    )}
+                                                                    <div>Netto {formatCurrency(netAmount)}</div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </li>
+                                                );
+                                            })}
+                                        </ul>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="panel">
+                            <div className="panel-header">
                                 <div>
                                     <p className="eyebrow">Vergleich</p>
                                     <h3>Szenarien im Chart</h3>
@@ -1427,45 +1456,310 @@ const Simulation = () => {
                                         Wähle die Szenarien aus, die in den Diagrammen gemeinsam angezeigt werden sollen.
                                     </p>
                                 </div>
-                                <div className="scenario-chip subtle">
-                                    <span>Ausgewählt</span>
-                                    <strong>{selectedScenarios.length}</strong>
+                                <div className="panel-actions">
+                                    <div className="scenario-chip subtle">
+                                        <span>Ausgewählt</span>
+                                        <strong>{selectedScenarios.length}</strong>
+                                    </div>
+                                    <button className="secondary" onClick={() => setShowComparison((v) => !v)}>
+                                        {showComparison ? 'Einklappen' : 'Ausklappen'}
+                                    </button>
+                                    <button className="secondary" onClick={() => setSelectedScenarios([])}>
+                                        Auswahl leeren
+                                    </button>
                                 </div>
                             </div>
-                            {scenarios.length === 0 ? (
-                                <p className="placeholder">Keine Szenarien vorhanden.</p>
-                            ) : (
-                                <div className="scenario-comparison-grid">
-                                    {scenarios.map((scenario) => {
-                                        const scenarioKey = normalizeId(scenario.id);
-                                        const checked = selectedScenarios.includes(scenarioKey);
-                                        const rangeLabel = formatScenarioRange(scenario);
-                                        return (
-                                            <label
-                                                key={scenario.id}
-                                                className={`scenario-compare-card ${checked ? 'active' : ''}`}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    value={scenario.id}
-                                                    checked={checked}
-                                                    onChange={handleSelectScenario}
-                                                />
-                                                <div>
-                                                    <div className="scenario-compare-header">
-                                                        <span className="scenario-name">{scenario.name}</span>
-                                                        {scenarioKey === normalizeId(currentScenarioId) && (
-                                                            <span className="badge muted">aktiv</span>
-                                                        )}
-                                                    </div>
-                                                    <div className="scenario-compare-meta">
-                                                        {rangeLabel || 'Zeitraum noch nicht gesetzt'}
-                                                    </div>
-                                                </div>
-                                            </label>
-                                        );
-                                    })}
-                                </div>
+                            {showComparison && (
+                                <>
+                                    {scenarios.length === 0 ? (
+                                        <p className="placeholder">Keine Szenarien vorhanden.</p>
+                                    ) : (
+                                        <div className="scenario-comparison-grid">
+                                            {scenarios.map((scenario) => {
+                                                const scenarioKey = normalizeId(scenario.id);
+                                                const checked = selectedScenarios.includes(scenarioKey);
+                                                const rangeLabel = formatScenarioRange(scenario);
+                                                return (
+                                                    <label
+                                                        key={scenario.id}
+                                                        className={`scenario-compare-card ${checked ? 'active' : ''}`}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            value={scenario.id}
+                                                            checked={checked}
+                                                            onChange={handleSelectScenario}
+                                                        />
+                                                        <div>
+                                                            <div className="scenario-compare-header">
+                                                                <span className="scenario-name">{scenario.name}</span>
+                                                                {scenarioKey === normalizeId(currentScenarioId) && (
+                                                                    <span className="badge muted">aktiv</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="scenario-compare-meta">
+                                                                {rangeLabel || 'Zeitraum noch nicht gesetzt'}
+                                                            </div>
+                                                        </div>
+                                                    </label>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+
+                                    <div className="chart-wrapper">
+                                        <Line
+                                            data={{
+                                                labels: yearlyCashFlow.map((entry) => entry.year),
+                                                datasets: [
+                                                    {
+                                                        label: 'Netto',
+                                                        data: yearlyCashFlow.map((entry) => entry.net),
+                                                        borderColor: '#22d3ee',
+                                                        backgroundColor: 'rgba(34, 211, 238, 0.2)',
+                                                        tension: 0.25,
+                                                        fill: true,
+                                                    },
+                                                ],
+                                            }}
+                                            options={{
+                                                responsive: true,
+                                                maintainAspectRatio: false,
+                                                plugins: {
+                                                    legend: { display: false },
+                                                    tooltip: {
+                                                        callbacks: {
+                                                            label: (ctx) =>
+                                                                `Netto: ${ctx.parsed.y.toLocaleString('de-CH', {
+                                                                    style: 'currency',
+                                                                    currency: 'CHF',
+                                                                })}`,
+                                                        },
+                                                    },
+                                                },
+                                                scales: {
+                                                    x: {
+                                                        stacked: true,
+                                                    },
+                                                    y: {
+                                                        stacked: true,
+                                                        ticks: {
+                                                            callback: (value) =>
+                                                                value.toLocaleString('de-CH', {
+                                                                    style: 'currency',
+                                                                    currency: 'CHF',
+                                                                }),
+                                                        },
+                                                    },
+                                                },
+                                            }}
+                                        />
+                                    </div>
+
+                                    {yearlyCashFlow.length > 0 && (
+                                        <div className="cashflow-table">
+                                            <h3>Cashflow Zusammenfassung</h3>
+                                            <table>
+                                                <thead>
+                                                    <tr>
+                                                        <th>Jahr (Ende)</th>
+                                                        <th>Einnahmen</th>
+                                                        <th>Ausgaben</th>
+                                                        <th>Steuern</th>
+                                                        <th>Netto</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {yearlyCashFlow.map((yearRow) => {
+                                                        const isExpanded = expandedYears.includes(yearRow.year);
+                                                        return (
+                                                            <React.Fragment key={`year-${yearRow.year}`}>
+                                                                {isExpanded &&
+                                                                    yearRow.months.map((row) => (
+                                                                        <React.Fragment key={row.date}>
+                                                                            <tr className="monthly-row">
+                                                                                <td>{row.dateLabel}</td>
+                                                                                <td>
+                                                                                    <button
+                                                                                        className="link-button"
+                                                                                        onClick={() =>
+                                                                                            setCashFlows((prev) =>
+                                                                                                prev.map((cf) =>
+                                                                                                    cf.date === row.date
+                                                                                                        ? { ...cf, showIncome: !cf.showIncome }
+                                                                                                        : cf
+                                                                                                )
+                                                                                            )
+                                                                                        }
+                                                                                    >
+                                                                                        {row.income.toLocaleString('de-CH', {
+                                                                                            style: 'currency',
+                                                                                            currency: 'CHF',
+                                                                                        })}
+                                                                                    </button>
+                                                                                </td>
+                                                                                <td>
+                                                                                    <button
+                                                                                        className="link-button"
+                                                                                        onClick={() =>
+                                                                                            setCashFlows((prev) =>
+                                                                                                prev.map((cf) =>
+                                                                                                    cf.date === row.date
+                                                                                                        ? { ...cf, showExpense: !cf.showExpense }
+                                                                                                        : cf
+                                                                                                )
+                                                                                            )
+                                                                                        }
+                                                                                    >
+                                                                                        {row.expenses.toLocaleString('de-CH', {
+                                                                                            style: 'currency',
+                                                                                            currency: 'CHF',
+                                                                                        })}
+                                                                                    </button>
+                                                                                </td>
+                                                                                <td>
+                                                                                    <button
+                                                                                        className="link-button"
+                                                                                        onClick={() =>
+                                                                                            setCashFlows((prev) =>
+                                                                                                prev.map((cf) =>
+                                                                                                    cf.date === row.date
+                                                                                                        ? { ...cf, showTax: !cf.showTax }
+                                                                                                        : cf
+                                                                                                )
+                                                                                            )
+                                                                                        }
+                                                                                    >
+                                                                                        {(row.taxes || 0).toLocaleString('de-CH', {
+                                                                                            style: 'currency',
+                                                                                            currency: 'CHF',
+                                                                                        })}
+                                                                                    </button>
+                                                                                </td>
+                                                                                <td>
+                                                                                    {(row.net ||
+                                                                                        row.income + row.expenses + (row.taxes || 0)
+                                                                                    ).toLocaleString('de-CH', {
+                                                                                        style: 'currency',
+                                                                                        currency: 'CHF',
+                                                                                    })}
+                                                                                </td>
+                                                                            </tr>
+                                                                            {row.showIncome && row.income_details?.length > 0 && (
+                                                                                <tr className="cashflow-subrow">
+                                                                                    <td></td>
+                                                                                    <td colSpan={4}>
+                                                                                        <ul className="cashflow-items">
+                                                                                            {row.income_details.map((item, idx) => (
+                                                                                                <li key={`inc-${row.date}-${idx}`}>
+                                                                                                    <span>{item.name}</span>
+                                                                                                    <span className="muted">{item.account}</span>
+                                                                                                    <span className="amount">
+                                                                                                        {item.amount.toLocaleString('de-CH', {
+                                                                                                            style: 'currency',
+                                                                                                            currency: 'CHF',
+                                                                                                        })}
+                                                                                                    </span>
+                                                                                                </li>
+                                                                                            ))}
+                                                                                        </ul>
+                                                                                    </td>
+                                                                                </tr>
+                                                                            )}
+                                                                            {row.showExpense && row.expense_details?.length > 0 && (
+                                                                                <tr className="cashflow-subrow">
+                                                                                    <td></td>
+                                                                                    <td colSpan={4}>
+                                                                                        <ul className="cashflow-items">
+                                                                                            {row.expense_details.map((item, idx) => (
+                                                                                                <li key={`exp-${row.date}-${idx}`}>
+                                                                                                    <span>{item.name}</span>
+                                                                                                    <span className="muted">{item.account}</span>
+                                                                                                    <span className="amount">
+                                                                                                        {item.amount.toLocaleString('de-CH', {
+                                                                                                            style: 'currency',
+                                                                                                            currency: 'CHF',
+                                                                                                        })}
+                                                                                                    </span>
+                                                                                                </li>
+                                                                                            ))}
+                                                                                        </ul>
+                                                                                    </td>
+                                                                                </tr>
+                                                                            )}
+                                                                            {row.showTax && row.tax_details?.length > 0 && (
+                                                                                <tr className="cashflow-subrow">
+                                                                                    <td></td>
+                                                                                    <td colSpan={4}>
+                                                                                        <ul className="cashflow-items">
+                                                                                            {row.tax_details.map((item, idx) => (
+                                                                                                <li key={`tax-${row.date}-${idx}`}>
+                                                                                                    <span>{item.name}</span>
+                                                                                                    <span className="muted">{item.account}</span>
+                                                                                                    <span className="amount">
+                                                                                                        {item.amount.toLocaleString('de-CH', {
+                                                                                                            style: 'currency',
+                                                                                                            currency: 'CHF',
+                                                                                                        })}
+                                                                                                    </span>
+                                                                                                </li>
+                                                                                            ))}
+                                                                                        </ul>
+                                                                                    </td>
+                                                                                </tr>
+                                                                            )}
+                                                                        </>
+                                                                    ))}
+                                                                <tr>
+                                                                    <td>
+                                                                        <button
+                                                                            className="link-button"
+                                                                            onClick={() =>
+                                                                                setExpandedYears((prev) =>
+                                                                                    prev.includes(yearRow.year)
+                                                                                        ? prev.filter((y) => y !== yearRow.year)
+                                                                                        : [...prev, yearRow.year]
+                                                                                )
+                                                                            }
+                                                                        >
+                                                                            {new Date(yearRow.year, 11, 31).toLocaleDateString('de-CH')}
+                                                                        </button>
+                                                                    </td>
+                                                                    <td>
+                                                                        {yearRow.income.toLocaleString('de-CH', {
+                                                                            style: 'currency',
+                                                                            currency: 'CHF',
+                                                                        })}
+                                                                    </td>
+                                                                    <td>
+                                                                        {yearRow.expenses.toLocaleString('de-CH', {
+                                                                            style: 'currency',
+                                                                            currency: 'CHF',
+                                                                        })}
+                                                                    </td>
+                                                                    <td>
+                                                                        {(yearRow.taxes || 0).toLocaleString('de-CH', {
+                                                                            style: 'currency',
+                                                                            currency: 'CHF',
+                                                                        })}
+                                                                    </td>
+                                                                    <td>
+                                                                        {(yearRow.net ||
+                                                                            yearRow.income + yearRow.expenses + (yearRow.taxes || 0)
+                                                                        ).toLocaleString('de-CH', {
+                                                                            style: 'currency',
+                                                                            currency: 'CHF',
+                                                                        })}
+                                                                    </td>
+                                                                </tr>
+                                                            </React.Fragment>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </>
                             )}
                         </div>
 
