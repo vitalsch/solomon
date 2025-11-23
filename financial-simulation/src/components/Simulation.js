@@ -132,6 +132,8 @@ const Simulation = () => {
         if (!cashFlows || !cashFlows.length) return [];
         return cashFlows.map((entry) => ({
             ...entry,
+            taxes: entry.taxes || 0,
+            tax_details: entry.tax_details || [],
             dateObj: (() => {
                 const d = new Date(entry.date);
                 return new Date(d.getFullYear(), d.getMonth() + 1, 0); // end of month
@@ -150,16 +152,18 @@ const Simulation = () => {
         cashFlowData.forEach((entry) => {
             const year = entry.year;
             if (!map.has(year)) {
-                map.set(year, { year, income: 0, expenses: 0, months: [] });
+                map.set(year, { year, income: 0, expenses: 0, taxes: 0, growth: 0, net: 0, months: [] });
             }
             const agg = map.get(year);
             agg.income += entry.income;
             agg.expenses += entry.expenses;
+            agg.taxes += entry.taxes || 0;
+            agg.growth += entry.growth || 0;
+            agg.net += entry.net || entry.income + entry.expenses + (entry.growth || 0) + (entry.taxes || 0);
             agg.months.push(entry);
         });
         const yearlyArray = Array.from(map.values()).sort((a, b) => a.year - b.year);
         yearlyArray.forEach((yearEntry) => {
-            yearEntry.net = yearEntry.income + yearEntry.expenses;
             yearEntry.months.sort((a, b) => a.dateObj - b.dateObj);
         });
         return yearlyArray;
@@ -1564,6 +1568,7 @@ const Simulation = () => {
                                             <th>Jahr (Ende)</th>
                                             <th>Einnahmen</th>
                                             <th>Ausgaben</th>
+                                            <th>Steuern</th>
                                             <th>Netto</th>
                                         </tr>
                                     </thead>
@@ -1616,7 +1621,31 @@ const Simulation = () => {
                                                                         </button>
                                                                     </td>
                                                                     <td>
-                                                                        {(row.income + row.expenses).toLocaleString('de-CH', {
+                                                                        <button
+                                                                            className="link-button"
+                                                                            onClick={() =>
+                                                                                setCashFlows((prev) =>
+                                                                                    prev.map((cf) =>
+                                                                                        cf.date === row.date
+                                                                                            ? { ...cf, showTax: !cf.showTax }
+                                                                                            : cf
+                                                                                    )
+                                                                                )
+                                                                            }
+                                                                        >
+                                                                            {(row.taxes || 0).toLocaleString('de-CH', {
+                                                                                style: 'currency',
+                                                                                currency: 'CHF',
+                                                                            })}
+                                                                        </button>
+                                                                    </td>
+                                                                    <td>
+                                                                        {(row.net ||
+                                                                            row.income +
+                                                                                row.expenses +
+                                                                                (row.growth || 0) +
+                                                                                (row.taxes || 0)
+                                                                        ).toLocaleString('de-CH', {
                                                                             style: 'currency',
                                                                             currency: 'CHF',
                                                                         })}
@@ -1664,6 +1693,27 @@ const Simulation = () => {
                                                                         </td>
                                                                     </tr>
                                                                 )}
+                                                                {row.showTax && row.tax_details?.length > 0 && (
+                                                                    <tr className="cashflow-subrow">
+                                                                        <td></td>
+                                                                        <td colSpan={4}>
+                                                                            <ul className="cashflow-items">
+                                                                                {row.tax_details.map((item, idx) => (
+                                                                                    <li key={`tax-${row.date}-${idx}`}>
+                                                                                        <span>{item.name}</span>
+                                                                                        <span className="muted">{item.account}</span>
+                                                                                        <span className="amount">
+                                                                                            {item.amount.toLocaleString('de-CH', {
+                                                                                                style: 'currency',
+                                                                                                currency: 'CHF',
+                                                                                            })}
+                                                                                        </span>
+                                                                                    </li>
+                                                                                ))}
+                                                                            </ul>
+                                                                        </td>
+                                                                    </tr>
+                                                                )}
                                                             </React.Fragment>
                                                         ))}
                                                     <tr>
@@ -1694,7 +1744,18 @@ const Simulation = () => {
                                                             })}
                                                         </td>
                                                         <td>
-                                                            {(yearRow.income + yearRow.expenses).toLocaleString('de-CH', {
+                                                            {(yearRow.taxes || 0).toLocaleString('de-CH', {
+                                                                style: 'currency',
+                                                                currency: 'CHF',
+                                                            })}
+                                                        </td>
+                                                        <td>
+                                                            {(yearRow.net ||
+                                                                yearRow.income +
+                                                                    yearRow.expenses +
+                                                                    (yearRow.growth || 0) +
+                                                                    (yearRow.taxes || 0)
+                                                            ).toLocaleString('de-CH', {
                                                                 style: 'currency',
                                                                 currency: 'CHF',
                                                             })}

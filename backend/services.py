@@ -76,6 +76,10 @@ def _build_transactions(transaction_docs, account_map, income_tax_rate: float = 
             tax_effect = taxable_amount * (income_tax_rate or 0.0)
             net_amount = (tx.get("amount", 0.0) or 0.0) - tax_effect
             transaction = _create_transaction_instance(tx, amount_override=net_amount)
+            setattr(transaction, "tax_effect", -tax_effect)  # negative expense
+            setattr(transaction, "taxable_amount", taxable_amount)
+            setattr(transaction, "tax_rate", income_tax_rate or 0.0)
+            setattr(transaction, "gross_amount", tx.get("amount", 0.0) or 0.0)
         else:
             transaction = _create_transaction_instance(tx)
         account_transactions[account].append(transaction)
@@ -132,10 +136,12 @@ def run_scenario_simulation(scenario_id: str, repo: Optional[WealthRepository] =
             "income": entry["income"],
             "expenses": entry["expenses"],
             "growth": entry["growth"],
+            "taxes": entry.get("taxes", 0.0),
             "net": entry["net"],
             "income_details": entry["income_details"],
             "expense_details": entry["expense_details"],
             "growth_details": entry["growth_details"],
+            "tax_details": entry.get("tax_details", []),
         }
         for entry in cash_flows
     ]

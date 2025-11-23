@@ -166,9 +166,11 @@ def simulate_account_balances_and_total_wealth(
         monthly_income = 0.0
         monthly_expense = 0.0
         monthly_growth = 0.0
+        monthly_tax = 0.0
         growth_details: List[Dict] = []
         income_details: List[Dict] = []
         expense_details: List[Dict] = []
+        tax_details: List[Dict] = []
 
         # Apply growth and track it separately
         for account in accounts:
@@ -186,6 +188,15 @@ def simulate_account_balances_and_total_wealth(
                     account.update_balance(transaction.amount)
                     if getattr(transaction, "internal", False):
                         continue
+                    if getattr(transaction, "tax_effect", 0):
+                        monthly_tax += getattr(transaction, "tax_effect")
+                        tax_details.append(
+                            {
+                                "name": transaction.name,
+                                "amount": getattr(transaction, "tax_effect"),
+                                "account": account.name,
+                            }
+                        )
                     amount = transaction.amount
                     if amount >= 0:
                         monthly_income += amount
@@ -230,10 +241,12 @@ def simulate_account_balances_and_total_wealth(
                 "income": monthly_income,
                 "expenses": monthly_expense,
                 "growth": monthly_growth,
+                "taxes": monthly_tax,
                 "net": monthly_income + monthly_expense + monthly_growth,
                 "income_details": income_details,
                 "expense_details": expense_details,
                 "growth_details": growth_details,
+                "tax_details": tax_details,
             }
         )
         if current_date.month == 12:
