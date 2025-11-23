@@ -38,7 +38,7 @@ def _create_transaction_instance(tx_doc, amount_override=None):
     return tx_instance
 
 
-def _build_transactions(transaction_docs, account_map):
+def _build_transactions(transaction_docs, account_map, income_tax_rate: float = 0.0):
     account_transactions: Dict[Account, List] = {account: [] for account in account_map.values()}
     mortgage_interest_transactions: List[MortgageInterestTransaction] = []
 
@@ -70,7 +70,14 @@ def _build_transactions(transaction_docs, account_map):
         account = account_map.get(tx.get("asset_id"))
         if not account:
             continue
-        transaction = _create_transaction_instance(tx)
+        # Apply income tax to taxable transactions to get net amount for simulation
+        if tx.get("taxable"):
+            taxable_amount = tx.get("taxable_amount", tx.get("amount", 0.0))
+            tax_effect = taxable_amount * (income_tax_rate or 0.0)
+            net_amount = (tx.get("amount", 0.0) or 0.0) - tax_effect
+            transaction = _create_transaction_instance(tx, amount_override=net_amount)
+        else:
+            transaction = _create_transaction_instance(tx)
         account_transactions[account].append(transaction)
     return account_transactions, mortgage_interest_transactions
 
@@ -96,7 +103,10 @@ def run_scenario_simulation(scenario_id: str, repo: Optional[WealthRepository] =
         for asset in assets
     }
 
-    account_transactions, mortgage_interest_transactions = _build_transactions(transactions, account_map)
+    income_tax_rate = scenario.get("income_tax_rate") or 0.0
+    account_transactions, mortgage_interest_transactions = _build_transactions(
+        transactions, account_map, income_tax_rate
+    )
     accounts = list(account_map.values())
 
     balances, total, cash_flows = simulate_account_balances_and_total_wealth(
