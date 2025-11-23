@@ -484,9 +484,13 @@ const Simulation = () => {
         setError(null);
         try {
             const transaction = await createTransaction(currentScenarioId, payload);
+            if (!transaction || !transaction.asset_id) {
+                throw new Error('Transaktion konnte nicht angelegt werden (keine asset_id in Antwort).');
+            }
             setAccountTransactions((prev) => {
                 const updated = { ...prev };
                 const addTx = (tx) => {
+                    if (!tx || !tx.asset_id) return;
                     const assetId = tx.asset_id;
                     updated[assetId] = [...(updated[assetId] || []), tx];
                 };
