@@ -5,7 +5,7 @@
 .simulation {
   text-align: left;
   padding: clamp(1rem, 3vw, 2rem);
-  max-width: 1400px;
+  max-width: 1200px;
   margin: 0 auto;
 }
 
@@ -57,13 +57,12 @@
   align-self: flex-start;
   z-index: 10;
   border: 1px solid var(--border);
-  background: var(--card);
+  background: var(--surface);
   color: var(--text);
-  padding: 0.45rem 0.75rem;
+  padding: 0.5rem 0.9rem;
   border-radius: 12px;
   box-shadow: var(--shadow);
   cursor: pointer;
-  backdrop-filter: blur(6px);
 }
 
 .user-sidebar {
@@ -101,7 +100,7 @@ label.stacked select,
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--surface);
+  background: #f8fafc;
   color: var(--text);
 }
 
@@ -188,7 +187,7 @@ label.stacked select:focus,
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 1.25rem;
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.05), rgba(15, 23, 42, 0.6));
+  background: var(--surface);
   box-shadow: var(--shadow);
 }
 
