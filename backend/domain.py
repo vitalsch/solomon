@@ -186,9 +186,8 @@ def simulate_account_balances_and_total_wealth(
             for transaction in account_transactions.get(account, []):
                 if transaction.is_applicable(current_date.month, current_date.year):
                     account.update_balance(transaction.amount)
-                    if getattr(transaction, "internal", False):
-                        continue
                     if getattr(transaction, "tax_effect", 0):
+                        account.update_balance(getattr(transaction, "tax_effect"))
                         monthly_tax += getattr(transaction, "tax_effect")
                         tax_details.append(
                             {
@@ -197,6 +196,8 @@ def simulate_account_balances_and_total_wealth(
                                 "account": account.name,
                             }
                         )
+                    if getattr(transaction, "internal", False):
+                        continue
                     amount = transaction.amount
                     if amount >= 0:
                         monthly_income += amount
