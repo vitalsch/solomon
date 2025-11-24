@@ -230,6 +230,20 @@ def simulate_account_balances_and_total_wealth(
                         "account": interest_tx.pay_from_account.name,
                     }
                 )
+                # Apply tax on mortgage interest if marked taxable
+                if getattr(interest_tx, "taxable", False):
+                    taxable_amount = abs(interest_tx.amount)
+                    tax_rate = getattr(interest_tx, "tax_rate", 0.0) or 0.0
+                    tax_effect = -taxable_amount * tax_rate  # expense (negative)
+                    interest_tx.pay_from_account.update_balance(tax_effect)
+                    monthly_tax += tax_effect
+                    tax_details.append(
+                        {
+                            "name": f"{interest_tx.name} Steuer",
+                            "amount": tax_effect,
+                            "account": interest_tx.pay_from_account.name,
+                        }
+                    )
 
         for account in accounts:
             account_balance_histories[account].append((current_date, account.get_balance()))

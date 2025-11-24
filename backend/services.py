@@ -64,6 +64,9 @@ def _build_transactions(transaction_docs, account_map, income_tax_rate: float = 
                 tx.get("end_month", tx.get("start_month", 1)),
                 tx.get("end_year", tx.get("start_year", 2024)),
             )
+            # carry tax info so simulation can include tax effects
+            setattr(interest_tx, "taxable", bool(tx.get("taxable")))
+            setattr(interest_tx, "tax_rate", income_tax_rate or 0.0)
             mortgage_interest_transactions.append(interest_tx)
             continue
 
