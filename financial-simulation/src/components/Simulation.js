@@ -65,7 +65,6 @@ const Simulation = () => {
     const [showScenarios, setShowScenarios] = useState(true);
     const [showAccounts, setShowAccounts] = useState(true);
     const [showTransactions, setShowTransactions] = useState(true);
-    const [showComparison, setShowComparison] = useState(true);
     const [showTotals, setShowTotals] = useState(true);
     const [accounts, setAccounts] = useState([]);
     const [accountTransactions, setAccountTransactions] = useState({});
@@ -90,7 +89,6 @@ const Simulation = () => {
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
     const [chartRange, setChartRange] = useState({ start: 0, end: null });
-    const [expandedYears, setExpandedYears] = useState([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const formatCurrency = (value) => {
         const num = Number(value);
@@ -1461,27 +1459,17 @@ const Simulation = () => {
                         <div className="panel">
                             <div className="panel-header">
                                 <div>
-                                    <p className="eyebrow">Vergleich</p>
-                                    <h3>Szenarien im Chart</h3>
-                                    <p className="muted">
-                                        Wähle die Szenarien aus, die in den Diagrammen gemeinsam angezeigt werden sollen.
-                                    </p>
+                                    <p className="eyebrow">Assets</p>
+                                    <h3>Asset Balances & Totals</h3>
                                 </div>
                                 <div className="panel-actions">
-                                    <div className="scenario-chip subtle">
-                                        <span>Ausgewählt</span>
-                                        <strong>{selectedScenarios.length}</strong>
-                                    </div>
-                                    <button className="secondary" onClick={() => setShowComparison((v) => !v)}>
-                                        {showComparison ? 'Einklappen' : 'Ausklappen'}
-                                    </button>
-                                    <button className="secondary" onClick={() => setSelectedScenarios([])}>
-                                        Auswahl leeren
+                                    <button className="secondary" onClick={() => setShowTotals((v) => !v)}>
+                                        {showTotals ? 'Einklappen' : 'Ausklappen'}
                                     </button>
                                 </div>
                             </div>
-                            {showComparison && (
-                                <>
+                            {showTotals && (
+                                <div className="panel-body">
                                     {scenarios.length === 0 ? (
                                         <p className="placeholder">Keine Szenarien vorhanden.</p>
                                     ) : (
@@ -1518,276 +1506,6 @@ const Simulation = () => {
                                         </div>
                                     )}
 
-                                    <div className="chart-wrapper">
-                                        <Line
-                                            data={{
-                                                labels: yearlyCashFlow.map((entry) => entry.year),
-                                                datasets: [
-                                                    {
-                                                        label: 'Netto',
-                                                        data: yearlyCashFlow.map((entry) => entry.net),
-                                                        borderColor: '#22d3ee',
-                                                        backgroundColor: 'rgba(34, 211, 238, 0.2)',
-                                                        tension: 0.25,
-                                                        fill: true,
-                                                    },
-                                                ],
-                                            }}
-                                            options={{
-                                                responsive: true,
-                                                maintainAspectRatio: false,
-                                                plugins: {
-                                                    legend: { display: false },
-                                                    tooltip: {
-                                                        callbacks: {
-                                                            label: (ctx) =>
-                                                                `Netto: ${ctx.parsed.y.toLocaleString('de-CH', {
-                                                                    style: 'currency',
-                                                                    currency: 'CHF',
-                                                                })}`,
-                                                        },
-                                                    },
-                                                },
-                                                scales: {
-                                                    x: {
-                                                        stacked: true,
-                                                    },
-                                                    y: {
-                                                        stacked: true,
-                                                        ticks: {
-                                                            callback: (value) =>
-                                                                value.toLocaleString('de-CH', {
-                                                                    style: 'currency',
-                                                                    currency: 'CHF',
-                                                                }),
-                                                        },
-                                                    },
-                                                },
-                                            }}
-                                        />
-                                    </div>
-
-                                    {yearlyCashFlow.length > 0 && (
-                                        <div className="cashflow-table">
-                                            <h3>Cashflow Zusammenfassung</h3>
-                                            <table>
-                                                <thead>
-                                                    <tr>
-                                                        <th>Jahr (Ende)</th>
-                                                        <th>Einnahmen</th>
-                                                        <th>Ausgaben</th>
-                                                        <th>Steuern</th>
-                                                        <th>Netto</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {yearlyCashFlow.map((yearRow) => {
-                                                        const isExpanded = expandedYears.includes(yearRow.year);
-                                                        return (
-                                                            <React.Fragment key={`year-${yearRow.year}`}>
-                                                                {isExpanded &&
-                                                                    yearRow.months.map((row) => (
-                                                                        <React.Fragment key={row.date}>
-                                                                            <tr className="monthly-row">
-                                                                                <td>{row.dateLabel}</td>
-                                                                                <td>
-                                                                                    <button
-                                                                                        className="link-button"
-                                                                                        onClick={() =>
-                                                                                            setCashFlows((prev) =>
-                                                                                                prev.map((cf) =>
-                                                                                                    cf.date === row.date
-                                                                                                        ? { ...cf, showIncome: !cf.showIncome }
-                                                                                                        : cf
-                                                                                                )
-                                                                                            )
-                                                                                        }
-                                                                                    >
-                                                                                        {row.income.toLocaleString('de-CH', {
-                                                                                            style: 'currency',
-                                                                                            currency: 'CHF',
-                                                                                        })}
-                                                                                    </button>
-                                                                                </td>
-                                                                                <td>
-                                                                                    <button
-                                                                                        className="link-button"
-                                                                                        onClick={() =>
-                                                                                            setCashFlows((prev) =>
-                                                                                                prev.map((cf) =>
-                                                                                                    cf.date === row.date
-                                                                                                        ? { ...cf, showExpense: !cf.showExpense }
-                                                                                                        : cf
-                                                                                                )
-                                                                                            )
-                                                                                        }
-                                                                                    >
-                                                                                        {row.expenses.toLocaleString('de-CH', {
-                                                                                            style: 'currency',
-                                                                                            currency: 'CHF',
-                                                                                        })}
-                                                                                    </button>
-                                                                                </td>
-                                                                                <td>
-                                                                                    <button
-                                                                                        className="link-button"
-                                                                                        onClick={() =>
-                                                                                            setCashFlows((prev) =>
-                                                                                                prev.map((cf) =>
-                                                                                                    cf.date === row.date
-                                                                                                        ? { ...cf, showTax: !cf.showTax }
-                                                                                                        : cf
-                                                                                                )
-                                                                                            )
-                                                                                        }
-                                                                                    >
-                                                                                        {(row.taxes || 0).toLocaleString('de-CH', {
-                                                                                            style: 'currency',
-                                                                                            currency: 'CHF',
-                                                                                        })}
-                                                                                    </button>
-                                                                                </td>
-                                                                                <td>
-                                                                                    {(row.net ||
-                                                                                        row.income + row.expenses + (row.taxes || 0)
-                                                                                    ).toLocaleString('de-CH', {
-                                                                                        style: 'currency',
-                                                                                        currency: 'CHF',
-                                                                                    })}
-                                                                                </td>
-                                                                            </tr>
-                                                                            {row.showIncome && row.income_details?.length > 0 && (
-                                                                                <tr className="cashflow-subrow">
-                                                                                    <td></td>
-                                                                                    <td colSpan={4}>
-                                                                                        <ul className="cashflow-items">
-                                                                                            {row.income_details.map((item, idx) => (
-                                                                                                <li key={`inc-${row.date}-${idx}`}>
-                                                                                                    <span>{item.name}</span>
-                                                                                                    <span className="muted">{item.account}</span>
-                                                                                                    <span className="amount">
-                                                                                                        {item.amount.toLocaleString('de-CH', {
-                                                                                                            style: 'currency',
-                                                                                                            currency: 'CHF',
-                                                                                                        })}
-                                                                                                    </span>
-                                                                                                </li>
-                                                                                            ))}
-                                                                                        </ul>
-                                                                                    </td>
-                                                                                </tr>
-                                                                            )}
-                                                                            {row.showExpense && row.expense_details?.length > 0 && (
-                                                                                <tr className="cashflow-subrow">
-                                                                                    <td></td>
-                                                                                    <td colSpan={4}>
-                                                                                        <ul className="cashflow-items">
-                                                                                            {row.expense_details.map((item, idx) => (
-                                                                                                <li key={`exp-${row.date}-${idx}`}>
-                                                                                                    <span>{item.name}</span>
-                                                                                                    <span className="muted">{item.account}</span>
-                                                                                                    <span className="amount">
-                                                                                                        {item.amount.toLocaleString('de-CH', {
-                                                                                                            style: 'currency',
-                                                                                                            currency: 'CHF',
-                                                                                                        })}
-                                                                                                    </span>
-                                                                                                </li>
-                                                                                            ))}
-                                                                                        </ul>
-                                                                                    </td>
-                                                                                </tr>
-                                                                            )}
-                                                                    {row.showTax && row.tax_details?.length > 0 && (
-                                                                        <tr className="cashflow-subrow">
-                                                                            <td></td>
-                                                                            <td colSpan={4}>
-                                                                                <ul className="cashflow-items">
-                                                                                    {row.tax_details.map((item, idx) => (
-                                                                                        <li key={`tax-${row.date}-${idx}`}>
-                                                                                            <span>{item.name}</span>
-                                                                                            <span className="muted">{item.account}</span>
-                                                                                            <span className="amount">
-                                                                                                {item.amount.toLocaleString('de-CH', {
-                                                                                                    style: 'currency',
-                                                                                                    currency: 'CHF',
-                                                                                                })}
-                                                                                            </span>
-                                                                                        </li>
-                                                                                    ))}
-                                                                                </ul>
-                                                                            </td>
-                                                                        </tr>
-                                                                    )}
-                                                                </React.Fragment>
-                                                            ))}
-                                                        <tr>
-                                                                    <td>
-                                                                        <button
-                                                                            className="link-button"
-                                                                            onClick={() =>
-                                                                                setExpandedYears((prev) =>
-                                                                                    prev.includes(yearRow.year)
-                                                                                        ? prev.filter((y) => y !== yearRow.year)
-                                                                                        : [...prev, yearRow.year]
-                                                                                )
-                                                                            }
-                                                                        >
-                                                                            {new Date(yearRow.year, 11, 31).toLocaleDateString('de-CH')}
-                                                                        </button>
-                                                                    </td>
-                                                                    <td>
-                                                                        {yearRow.income.toLocaleString('de-CH', {
-                                                                            style: 'currency',
-                                                                            currency: 'CHF',
-                                                                        })}
-                                                                    </td>
-                                                                    <td>
-                                                                        {yearRow.expenses.toLocaleString('de-CH', {
-                                                                            style: 'currency',
-                                                                            currency: 'CHF',
-                                                                        })}
-                                                                    </td>
-                                                                    <td>
-                                                                        {(yearRow.taxes || 0).toLocaleString('de-CH', {
-                                                                            style: 'currency',
-                                                                            currency: 'CHF',
-                                                                        })}
-                                                                    </td>
-                                                                    <td>
-                                                                        {(yearRow.net ||
-                                                                            yearRow.income + yearRow.expenses + (yearRow.taxes || 0)
-                                                                        ).toLocaleString('de-CH', {
-                                                                            style: 'currency',
-                                                                            currency: 'CHF',
-                                                                        })}
-                                                                    </td>
-                                                                </tr>
-                                                            </React.Fragment>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    )}
-                                </>
-                            )}
-                        </div>
-
-                        <div className="panel">
-                            <div className="panel-header">
-                                <div>
-                                    <p className="eyebrow">Assets</p>
-                                    <h3>Asset Balances & Totals</h3>
-                                </div>
-                                <div className="panel-actions">
-                                    <button className="secondary" onClick={() => setShowTotals((v) => !v)}>
-                                        {showTotals ? 'Einklappen' : 'Ausklappen'}
-                                    </button>
-                                </div>
-                            </div>
-                            {showTotals && (
-                                <div className="panel-body">
                                     <div className="range-controls dual-range">
                                         <label>Zeitraum</label>
                                         <div className="range-slider">
