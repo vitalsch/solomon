@@ -1459,6 +1459,46 @@ const Simulation = () => {
                         <div className="panel">
                             <div className="panel-header">
                                 <div>
+                                    <p className="eyebrow">Cashflow</p>
+                                    <h3>Zusammenfassung</h3>
+                                </div>
+                            </div>
+                            <div className="panel-body table-wrapper">
+                                {yearlyCashFlow.length === 0 ? (
+                                    <p className="placeholder">Noch keine Cashflows berechnet.</p>
+                                ) : (
+                                    <table className="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Jahr</th>
+                                                <th>Einnahmen</th>
+                                                <th>Ausgaben</th>
+                                                <th>Steuern</th>
+                                                <th>Netto</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {yearlyCashFlow.map((year) => {
+                                                const net = (year.income || 0) + (year.expenses || 0) + (year.taxes || 0);
+                                                return (
+                                                    <tr key={year.year}>
+                                                        <td>{year.year}</td>
+                                                        <td>{formatCurrency(year.income || 0)}</td>
+                                                        <td>{formatCurrency(year.expenses || 0)}</td>
+                                                        <td>{formatCurrency(year.taxes || 0)}</td>
+                                                        <td>{formatCurrency(net)}</td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="panel">
+                            <div className="panel-header">
+                                <div>
                                     <p className="eyebrow">Assets</p>
                                     <h3>Asset Balances & Totals</h3>
                                 </div>
