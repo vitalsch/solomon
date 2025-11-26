@@ -232,9 +232,9 @@ def simulate_account_balances_and_total_wealth(
                 )
                 # Apply tax on mortgage interest if marked taxable
                 if getattr(interest_tx, "taxable", False):
-                    # Tax follows the sign of the interest amount (interest is negative -> tax_effect negative)
+                    # Interest is a cost (negative); tax credit should be positive (reduces expense)
                     tax_rate = abs(getattr(interest_tx, "tax_rate", 0.0) or 0.0)
-                    tax_effect = interest_tx.amount * tax_rate
+                    tax_effect = abs(interest_tx.amount) * tax_rate  # positive credit
                     interest_tx.pay_from_account.update_balance(tax_effect)
                     monthly_tax += tax_effect
                     tax_details.append(
