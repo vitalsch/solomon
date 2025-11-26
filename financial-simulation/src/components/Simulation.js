@@ -66,6 +66,7 @@ const Simulation = () => {
     const [showAccounts, setShowAccounts] = useState(true);
     const [showTransactions, setShowTransactions] = useState(true);
     const [showComparison, setShowComparison] = useState(true);
+    const [showTotals, setShowTotals] = useState(true);
     const [accounts, setAccounts] = useState([]);
     const [accountTransactions, setAccountTransactions] = useState({});
     const [newAccountName, setNewAccountName] = useState('');
@@ -1773,88 +1774,102 @@ const Simulation = () => {
                             )}
                         </div>
 
-                        <div className="total-wealth">
-                            <h2>Asset Balances & Totals</h2>
-                            <div className="range-controls dual-range">
-                                <label>Zeitraum</label>
-                                <div className="range-slider">
-                                    <input
-                                        type="range"
-                                        min={0}
-                                        max={Math.max(assetChartData.fullLabels.length - 1, 0)}
-                                        value={Math.min(chartRange.start, Math.max(assetChartData.fullLabels.length - 1, 0))}
-                                        onChange={(e) => {
-                                            const total = Math.max(assetChartData.fullLabels.length - 1, 0);
-                                            const newStart = Math.max(0, Math.min(Number(e.target.value), total));
-                                            setChartRange((prev) => {
-                                                const currentEnd = prev.end === null ? total : Math.max(0, Math.min(prev.end, total));
-                                                return {
-                                                    start: Math.min(newStart, currentEnd),
-                                                    end: currentEnd < newStart ? newStart : currentEnd,
-                                                };
-                                            });
-                                        }}
-                                    />
-                                    <input
-                                        type="range"
-                                        min={0}
-                                        max={Math.max(assetChartData.fullLabels.length - 1, 0)}
-                                        value={
-                                            chartRange.end === null
-                                                ? Math.max(assetChartData.fullLabels.length - 1, 0)
-                                                : Math.min(chartRange.end, Math.max(assetChartData.fullLabels.length - 1, 0))
-                                        }
-                                        onChange={(e) => {
-                                            const total = Math.max(assetChartData.fullLabels.length - 1, 0);
-                                            const newEnd = Math.max(0, Math.min(Number(e.target.value), total));
-                                            setChartRange((prev) => ({
-                                                start: Math.min(prev.start, newEnd),
-                                                end: Math.max(newEnd, prev.start),
-                                            }));
-                                        }}
-                                    />
+                        <div className="panel">
+                            <div className="panel-header">
+                                <div>
+                                    <p className="eyebrow">Assets</p>
+                                    <h3>Asset Balances & Totals</h3>
                                 </div>
-                                <div className="range-labels">
-                                    <span>{assetChartData.fullLabels[Math.min(chartRange.start, Math.max(assetChartData.fullLabels.length - 1, 0))] || '–'}</span>
-                                    <span>
-                                        {assetChartData.fullLabels[
-                                            chartRange.end === null
-                                                ? Math.max(assetChartData.fullLabels.length - 1, 0)
-                                                : Math.min(chartRange.end, Math.max(assetChartData.fullLabels.length - 1, 0))
-                                        ] || '–'}
-                                    </span>
+                                <div className="panel-actions">
+                                    <button className="secondary" onClick={() => setShowTotals((v) => !v)}>
+                                        {showTotals ? 'Einklappen' : 'Ausklappen'}
+                                    </button>
                                 </div>
                             </div>
-                            <Line
-                                data={assetChartData}
-                                options={{
-                                    responsive: true,
-                                    plugins: {
-                                        legend: {
-                                            position: 'top',
-                                        },
-                                        title: {
-                                            display: true,
-                                            text: 'Gestapelte Assets + Total-Linien',
-                                        },
-                                    },
-                                    scales: {
-                                        x: {
-                                            stacked: true,
-                                        },
-                                        y: {
-                                            stacked: true,
-                                            ticks: {
-                                                callback: (value) =>
-                                                    value.toLocaleString('de-CH', {
-                                                        style: 'currency',
-                                                        currency: 'CHF',
-                                                    }),
+                            {showTotals && (
+                                <div className="panel-body">
+                                    <div className="range-controls dual-range">
+                                        <label>Zeitraum</label>
+                                        <div className="range-slider">
+                                            <input
+                                                type="range"
+                                                min={0}
+                                                max={Math.max(assetChartData.fullLabels.length - 1, 0)}
+                                                value={Math.min(chartRange.start, Math.max(assetChartData.fullLabels.length - 1, 0))}
+                                                onChange={(e) => {
+                                                    const total = Math.max(assetChartData.fullLabels.length - 1, 0);
+                                                    const newStart = Math.max(0, Math.min(Number(e.target.value), total));
+                                                    setChartRange((prev) => {
+                                                        const currentEnd = prev.end === null ? total : Math.max(0, Math.min(prev.end, total));
+                                                        return {
+                                                            start: Math.min(newStart, currentEnd),
+                                                            end: currentEnd < newStart ? newStart : currentEnd,
+                                                        };
+                                                    });
+                                                }}
+                                            />
+                                            <input
+                                                type="range"
+                                                min={0}
+                                                max={Math.max(assetChartData.fullLabels.length - 1, 0)}
+                                                value={
+                                                    chartRange.end === null
+                                                        ? Math.max(assetChartData.fullLabels.length - 1, 0)
+                                                        : Math.min(chartRange.end, Math.max(assetChartData.fullLabels.length - 1, 0))
+                                                }
+                                                onChange={(e) => {
+                                                    const total = Math.max(assetChartData.fullLabels.length - 1, 0);
+                                                    const newEnd = Math.max(0, Math.min(Number(e.target.value), total));
+                                                    setChartRange((prev) => ({
+                                                        start: Math.min(prev.start, newEnd),
+                                                        end: Math.max(newEnd, prev.start),
+                                                    }));
+                                                }}
+                                            />
+                                        </div>
+                                        <div className="range-labels">
+                                            <span>{assetChartData.fullLabels[Math.min(chartRange.start, Math.max(assetChartData.fullLabels.length - 1, 0))] || '–'}</span>
+                                            <span>
+                                                {assetChartData.fullLabels[
+                                                    chartRange.end === null
+                                                        ? Math.max(assetChartData.fullLabels.length - 1, 0)
+                                                        : Math.min(chartRange.end, Math.max(assetChartData.fullLabels.length - 1, 0))
+                                                ] || '–'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <Line
+                                        data={assetChartData}
+                                        options={{
+                                            responsive: true,
+                                            plugins: {
+                                                legend: {
+                                                    position: 'top',
+                                                },
+                                                title: {
+                                                    display: true,
+                                                    text: 'Gestapelte Assets + Total-Linien',
+                                                },
                                             },
-                                        },
-                                    },
-                                }}
-                            />
+                                            scales: {
+                                                x: {
+                                                    stacked: true,
+                                                },
+                                                y: {
+                                                    stacked: true,
+                                                    ticks: {
+                                                        callback: (value) =>
+                                                            value.toLocaleString('de-CH', {
+                                                                style: 'currency',
+                                                                currency: 'CHF',
+                                                            }),
+                                                    },
+                                                },
+                                            },
+                                        }}
+                                    />
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
