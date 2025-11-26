@@ -65,6 +65,7 @@ const Simulation = () => {
     const [showScenarios, setShowScenarios] = useState(true);
     const [showAccounts, setShowAccounts] = useState(true);
     const [showTransactions, setShowTransactions] = useState(true);
+    const [showCashflow, setShowCashflow] = useState(true);
     const [showTotals, setShowTotals] = useState(true);
     const [accounts, setAccounts] = useState([]);
     const [accountTransactions, setAccountTransactions] = useState({});
@@ -89,6 +90,7 @@ const Simulation = () => {
     const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
     const [chartRange, setChartRange] = useState({ start: 0, end: null });
+    const [expandedYears, setExpandedYears] = useState([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const formatCurrency = (value) => {
         const num = Number(value);
@@ -1462,38 +1464,238 @@ const Simulation = () => {
                                     <p className="eyebrow">Cashflow</p>
                                     <h3>Zusammenfassung</h3>
                                 </div>
+                                <div className="panel-actions">
+                                    <button className="secondary" onClick={() => setShowCashflow((v) => !v)}>
+                                        {showCashflow ? 'Einklappen' : 'Ausklappen'}
+                                    </button>
+                                </div>
                             </div>
-                            <div className="panel-body table-wrapper">
-                                {yearlyCashFlow.length === 0 ? (
-                                    <p className="placeholder">Noch keine Cashflows berechnet.</p>
-                                ) : (
-                                    <table className="table">
-                                        <thead>
-                                            <tr>
-                                                <th>Jahr</th>
-                                                <th>Einnahmen</th>
-                                                <th>Ausgaben</th>
-                                                <th>Steuern</th>
-                                                <th>Netto</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {yearlyCashFlow.map((year) => {
-                                                const net = (year.income || 0) + (year.expenses || 0) + (year.taxes || 0);
-                                                return (
-                                                    <tr key={year.year}>
-                                                        <td>{year.year}</td>
-                                                        <td>{formatCurrency(year.income || 0)}</td>
-                                                        <td>{formatCurrency(year.expenses || 0)}</td>
-                                                        <td>{formatCurrency(year.taxes || 0)}</td>
-                                                        <td>{formatCurrency(net)}</td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                )}
-                            </div>
+                            {showCashflow && (
+                                <>
+                                    {yearlyCashFlow.length === 0 ? (
+                                        <div className="panel-body">
+                                            <p className="placeholder">Noch keine Cashflows berechnet.</p>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="panel-body">
+                                                <div className="chart-wrapper">
+                                                    <Line
+                                                        data={{
+                                                            labels: yearlyCashFlow.map((entry) => entry.year),
+                                                            datasets: [
+                                                                {
+                                                                    label: 'Netto',
+                                                                    data: yearlyCashFlow.map(
+                                                                        (entry) =>
+                                                                            entry.net ||
+                                                                            entry.income + entry.expenses + (entry.taxes || 0)
+                                                                    ),
+                                                                    borderColor: '#22d3ee',
+                                                                    backgroundColor: 'rgba(34, 211, 238, 0.2)',
+                                                                    tension: 0.25,
+                                                                    fill: true,
+                                                                },
+                                                            ],
+                                                        }}
+                                                        options={{
+                                                            responsive: true,
+                                                            maintainAspectRatio: false,
+                                                            plugins: {
+                                                                legend: { display: false },
+                                                                tooltip: {
+                                                                    callbacks: {
+                                                                        label: (ctx) =>
+                                                                            `Netto: ${ctx.parsed.y.toLocaleString('de-CH', {
+                                                                                style: 'currency',
+                                                                                currency: 'CHF',
+                                                                            })}`,
+                                                                    },
+                                                                },
+                                                            },
+                                                            scales: {
+                                                                x: { stacked: true },
+                                                                y: {
+                                                                    stacked: true,
+                                                                    ticks: {
+                                                                        callback: (value) =>
+                                                                            value.toLocaleString('de-CH', {
+                                                                                style: 'currency',
+                                                                                currency: 'CHF',
+                                                                            }),
+                                                                    },
+                                                                },
+                                                            },
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="panel-body table-wrapper">
+                                                <table className="table cashflow-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Jahr (Ende)</th>
+                                                            <th>Einnahmen</th>
+                                                            <th>Ausgaben</th>
+                                                            <th>Steuern</th>
+                                                            <th>Netto</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {yearlyCashFlow.map((yearRow) => {
+                                                            const isExpanded = expandedYears.includes(yearRow.year);
+                                                            const yearNet =
+                                                                yearRow.net ||
+                                                                yearRow.income + yearRow.expenses + (yearRow.taxes || 0);
+                                                            return (
+                                                                <React.Fragment key={`year-${yearRow.year}`}>
+                                                                    <tr>
+                                                                        <td>
+                                                                            <button
+                                                                                className="link-button"
+                                                                                onClick={() =>
+                                                                                    setExpandedYears((prev) =>
+                                                                                        prev.includes(yearRow.year)
+                                                                                            ? prev.filter((y) => y !== yearRow.year)
+                                                                                            : [...prev, yearRow.year]
+                                                                                    )
+                                                                                }
+                                                                            >
+                                                                                {new Date(yearRow.year, 11, 31).toLocaleDateString('de-CH')}
+                                                                            </button>
+                                                                        </td>
+                                                                        <td>{formatCurrency(yearRow.income)}</td>
+                                                                        <td>{formatCurrency(yearRow.expenses)}</td>
+                                                                        <td>{formatCurrency(yearRow.taxes || 0)}</td>
+                                                                        <td>{formatCurrency(yearNet)}</td>
+                                                                    </tr>
+                                                                    {isExpanded &&
+                                                                        yearRow.months.map((row) => {
+                                                                            const monthNet =
+                                                                                row.net ||
+                                                                                row.income + row.expenses + (row.taxes || 0);
+                                                                            return (
+                                                                                <React.Fragment key={row.date}>
+                                                                                    <tr className="monthly-row">
+                                                                                        <td>{row.dateLabel}</td>
+                                                                                        <td>
+                                                                                            <button
+                                                                                                className="link-button"
+                                                                                                onClick={() =>
+                                                                                                    setCashFlows((prev) =>
+                                                                                                        prev.map((cf) =>
+                                                                                                            cf.date === row.date
+                                                                                                                ? { ...cf, showIncome: !cf.showIncome }
+                                                                                                                : cf
+                                                                                                        )
+                                                                                                    )
+                                                                                                }
+                                                                                            >
+                                                                                                {formatCurrency(row.income)}
+                                                                                            </button>
+                                                                                        </td>
+                                                                                        <td>
+                                                                                            <button
+                                                                                                className="link-button"
+                                                                                                onClick={() =>
+                                                                                                    setCashFlows((prev) =>
+                                                                                                        prev.map((cf) =>
+                                                                                                            cf.date === row.date
+                                                                                                                ? { ...cf, showExpense: !cf.showExpense }
+                                                                                                                : cf
+                                                                                                        )
+                                                                                                    )
+                                                                                                }
+                                                                                            >
+                                                                                                {formatCurrency(row.expenses)}
+                                                                                            </button>
+                                                                                        </td>
+                                                                                        <td>
+                                                                                            <button
+                                                                                                className="link-button"
+                                                                                                onClick={() =>
+                                                                                                    setCashFlows((prev) =>
+                                                                                                        prev.map((cf) =>
+                                                                                                            cf.date === row.date
+                                                                                                                ? { ...cf, showTax: !cf.showTax }
+                                                                                                                : cf
+                                                                                                        )
+                                                                                                    )
+                                                                                                }
+                                                                                            >
+                                                                                                {formatCurrency(row.taxes || 0)}
+                                                                                            </button>
+                                                                                        </td>
+                                                                                        <td>{formatCurrency(monthNet)}</td>
+                                                                                    </tr>
+                                                                                    {row.showIncome && row.income_details?.length > 0 && (
+                                                                                        <tr className="cashflow-subrow">
+                                                                                            <td></td>
+                                                                                            <td colSpan={4}>
+                                                                                                <ul className="cashflow-items">
+                                                                                                    {row.income_details.map((item, idx) => (
+                                                                                                        <li key={`inc-${row.date}-${idx}`}>
+                                                                                                            <span>{item.name}</span>
+                                                                                                            <span className="muted">{item.account}</span>
+                                                                                                            <span className="amount">
+                                                                                                                {formatCurrency(item.amount)}
+                                                                                                            </span>
+                                                                                                        </li>
+                                                                                                    ))}
+                                                                                                </ul>
+                                                                                            </td>
+                                                                                        </tr>
+                                                                                    )}
+                                                                                    {row.showExpense && row.expense_details?.length > 0 && (
+                                                                                        <tr className="cashflow-subrow">
+                                                                                            <td></td>
+                                                                                            <td colSpan={4}>
+                                                                                                <ul className="cashflow-items">
+                                                                                                    {row.expense_details.map((item, idx) => (
+                                                                                                        <li key={`exp-${row.date}-${idx}`}>
+                                                                                                            <span>{item.name}</span>
+                                                                                                            <span className="muted">{item.account}</span>
+                                                                                                            <span className="amount">
+                                                                                                                {formatCurrency(item.amount)}
+                                                                                                            </span>
+                                                                                                        </li>
+                                                                                                    ))}
+                                                                                                </ul>
+                                                                                            </td>
+                                                                                        </tr>
+                                                                                    )}
+                                                                                    {row.showTax && row.tax_details?.length > 0 && (
+                                                                                        <tr className="cashflow-subrow">
+                                                                                            <td></td>
+                                                                                            <td colSpan={4}>
+                                                                                                <ul className="cashflow-items">
+                                                                                                    {row.tax_details.map((item, idx) => (
+                                                                                                        <li key={`tax-${row.date}-${idx}`}>
+                                                                                                            <span>{item.name}</span>
+                                                                                                            <span className="muted">{item.account}</span>
+                                                                                                            <span className="amount">
+                                                                                                                {formatCurrency(item.amount)}
+                                                                                                            </span>
+                                                                                                        </li>
+                                                                                                    ))}
+                                                                                                </ul>
+                                                                                            </td>
+                                                                                        </tr>
+                                                                                    )}
+                                                                                </React.Fragment>
+                                                                            );
+                                                                        })}
+                                                                </React.Fragment>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </>
+                                    )}
+                                </>
+                            )}
                         </div>
 
                         <div className="panel">
