@@ -625,6 +625,14 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         return value
 
     if action_type == "create_scenario":
+        # Default period if missing
+        if action.get("start_year") is None or action.get("start_month") is None:
+            today = datetime.utcnow()
+            action["start_year"] = today.year
+            action["start_month"] = today.month
+        if action.get("end_year") is None or action.get("end_month") is None:
+            action["end_year"] = (action.get("start_year") or datetime.utcnow().year) + 10
+            action["end_month"] = 12
         payload = {
             "user_id": current_user["id"],
             "name": action.get("name"),
@@ -653,6 +661,12 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             payload["wealth_tax_rate"],
         )
 
+    elif action_type == "use_scenario":
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
+        if not scenario_id:
+            raise HTTPException(status_code=404, detail="Scenario not found for current user")
+        scenario = repo.get_scenario(scenario_id)
+        applied = scenario
     elif action_type == "create_asset":
         scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
         _ensure_scenario_access(scenario_id, current_user)
@@ -779,13 +793,16 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
         "Vorgehen:\n"
         "1) Arbeite NUR im Kontext des aktuell eingeloggten Nutzers. Keine Daten anderer Nutzer lesen oder ändern. "
         "   Wenn ein Szenario-Name genannt wird und es für diesen Nutzer nicht existiert, lege es neu an. "
+        "   Zum Wechseln auf ein bestehendes Szenario kannst du die Aktion use_scenario nutzen. "
         "2) Ermittele fehlende Pflichtfelder je Aktion, frage nach: "
+        "   - use_scenario: scenario (Name/ID) des Nutzers. "
+        "   - create_scenario: name, (optional start/end); wenn nicht angegeben, nehme Start=aktueller Monat, Ende=Startjahr+10, Monat 12. "
         "   - create_asset: scenario (Name/ID), name, initial_balance (oder balance/value), asset_type (default generic), optional start_date/start_year/start_month. "
         "   - create_liability: scenario, name, amount, interest_rate (falls Hypothek), optional start_date. "
         "   - create_transaction: scenario, asset_id, name, amount, type, start_year/start_month (oder start_date). "
         "3) Zeige eine knappe Tabelle/Liste der gesammelten Werte und frage nach Bestätigung. "
         "4) Gib IMMER am Ende einen JSON-Plan in ```json ... ``` zurück, Schema: "
-        "{ \"actions\": [ { \"type\": \"create_scenario|create_asset|create_liability|create_transaction\", "
+        "{ \"actions\": [ { \"type\": \"use_scenario|create_scenario|create_asset|create_liability|create_transaction\", "
         "\"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", Felder wie name, amount, start_date, initial_balance, asset_type, interest_rate usw. } ] }. "
         "Nutze Aliase (store_as) und referenziere sie in nachfolgenden Aktionen mit \"$alias\". "
         "Wenn noch Daten fehlen, frage danach und gib einen leeren Plan {\"actions\":[]} zurück. "
