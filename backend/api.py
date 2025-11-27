@@ -910,6 +910,17 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
                 action.get("taxable") or False,
                 action.get("taxable_amount"),
             )
+    elif action_type in {"delete_asset", "delete_liability"}:
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
+        _ensure_scenario_access(scenario_id, current_user)
+        target_asset_id = _resolve_asset_id(action.get("asset_id") or action.get("name"), scenario_id, aliases)
+        if not target_asset_id:
+            raise HTTPException(status_code=404, detail="Asset not found to delete")
+        asset = repo.get_asset(target_asset_id)
+        if not asset or asset.get("scenario_id") != scenario_id:
+            raise HTTPException(status_code=404, detail="Asset not part of scenario")
+        repo.delete_asset(target_asset_id)
+        applied = {"deleted_asset_id": target_asset_id, "name": asset.get("name")}
 
     else:
         raise HTTPException(status_code=400, detail=f"Unknown plan action type: {action_type}")
@@ -933,9 +944,10 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
         return AssistantChatResponse(messages=new_messages, plan=None, reply=fallback_reply)
 
     system_prompt = (
-        "Du hilfst, Finanzereignisse in ein Szenario zu übernehmen (Assets, Hypotheken, Transaktionen). "
-        "Vorgehen:\n"
+       "Du hilfst, Finanzereignisse in ein Szenario zu übernehmen (Assets, Hypotheken, Transaktionen). "
+       "Vorgehen:\n"
         "1) Arbeite NUR im Kontext des aktuell eingeloggten Nutzers. Keine Daten anderer Nutzer lesen oder ändern. "
+        "   Nutze standardmäßig das vom Frontend übergebene aktuelle Szenario. "
         "   Wenn ein Szenario-Name genannt wird und es für diesen Nutzer nicht existiert, lege es neu an. "
         "   Zum Wechseln auf ein bestehendes Szenario kannst du die Aktion use_scenario nutzen. "
         "2) Ermittele fehlende Pflichtfelder je Aktion, frage nach: "
@@ -948,10 +960,11 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
         "   - create_liability: scenario, name, amount, interest_rate (falls Hypothek), optional start_date. "
         "   - create_transaction: scenario, asset_id, name, amount, type, start_year/start_month (oder start_date). "
         "     Asset-IDs NICHT erfragen: du kannst nach Namen auflösen. Nutze asset_id als Name oder Alias (z.B. ZKB Konto, ZKB Depot). "
+        "   - delete_asset|delete_liability: scenario, asset_id (Name/ID/Alias) im aktuellen Szenario löschen. "
         "3) Wenn alle Pflichtfelder da sind, wende den Plan an (keine Ausrede, dass du es nicht kannst) und bestätige kurz. "
         "   Nur wenn etwas fehlt, kurz nachfragen. "
         "4) Gib IMMER am Ende einen JSON-Plan in ```json ... ``` zurück, Schema: "
-        "{ \"actions\": [ { \"type\": \"use_scenario|create_scenario|create_asset|create_liability|create_transaction\", "
+        "{ \"actions\": [ { \"type\": \"use_scenario|create_scenario|create_asset|create_liability|create_transaction|delete_asset|delete_liability\", "
         "\"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", Felder wie name, amount, start_date, initial_balance, asset_type, interest_rate usw. } ] }. "
         "Nutze Aliase (store_as) und referenziere sie in nachfolgenden Aktionen mit \"$alias\". "
         "Wenn noch Daten fehlen, frage danach und gib einen leeren Plan {\"actions\":[]} zurück. "
