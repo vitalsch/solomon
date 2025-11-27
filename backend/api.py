@@ -543,12 +543,14 @@ def _ensure_scenario_access(scenario_id: str, current_user):
 
 def _normalize_action(action: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Flacht Aktionen ab: bevorzugt Felder in action["data"], behält type und store_as.
+    Flacht Aktionen ab: bevorzugt Felder in action["data"], action["asset"], action["transaction"],
+    behält type und store_as.
     """
-    data = action.get("data", {}) if isinstance(action.get("data", {}), dict) else {}
-    merged = {k: v for k, v in action.items() if k not in {"data"}}
-    # fields in data override same-named fields in the outer action
-    merged.update(data)
+    merged = {k: v for k, v in action.items() if k not in {"data", "asset", "transaction"}}
+    for key in ("data", "asset", "transaction"):
+        payload = action.get(key, {})
+        if isinstance(payload, dict):
+            merged.update(payload)
     return merged
 
 
@@ -567,9 +569,9 @@ def _parse_year_month_from_date(date_value: Optional[str]):
     return None, None
 
 
-def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str]):
+def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str], fallback_last=None):
     if ref is None:
-        return None
+        ref = fallback_last
     if isinstance(ref, str) and ref.startswith("$"):
         return aliases.get(ref[1:])
     # try as direct id
@@ -578,13 +580,15 @@ def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str]):
         return scenario["id"]
     # try lookup by name for this user
     scenarios = repo.list_scenarios_for_user(current_user["id"])
+    if ref is None and len(scenarios) == 1:
+        return scenarios[0].get("id")
     for s in scenarios:
         if s.get("name") == ref:
             return s.get("id")
     return None
 
 
-def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, str]):
+def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, str], last_scenario_id=None):
     action = _normalize_action(action)
     applied = None
     action_type = action.get("type")
@@ -624,7 +628,7 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         )
 
     elif action_type == "create_asset":
-        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases)
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
         _ensure_scenario_access(scenario_id, current_user)
         payload = {
             "name": action.get("name"),
@@ -657,7 +661,7 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         )
 
     elif action_type == "create_liability":
-        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases)
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
         _ensure_scenario_access(scenario_id, current_user)
         name = action.get("name") or action.get("type") or "Liability"
         amount = action.get("amount") or 0.0
@@ -676,9 +680,14 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         )
 
     elif action_type == "create_transaction":
-        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases)
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
         _ensure_scenario_access(scenario_id, current_user)
         asset_id = resolve(action.get("asset_id"))
+        if not asset_id:
+            # fallback: if only one asset in scenario, pick it
+            assets = repo.list_assets_for_scenario(scenario_id)
+            if len(assets) == 1:
+                asset_id = assets[0]["id"]
         if not asset_id:
             raise HTTPException(status_code=400, detail="asset_id required for create_transaction")
         asset = repo.get_asset(asset_id)
@@ -786,16 +795,20 @@ def assistant_apply(payload: AssistantApplyRequest, current_user=Depends(get_cur
 
     applied = []
     aliases: Dict[str, str] = {}
+    last_scenario_id = None
     for action in actions:
         if not isinstance(action, dict):
             continue
-        applied_item = _apply_plan_action(action, current_user, aliases)
+        applied_item = _apply_plan_action(action, current_user, aliases, last_scenario_id)
         alias_key = action.get("store_as")
         if alias_key and isinstance(alias_key, str):
             if isinstance(applied_item, dict) and applied_item.get("id"):
                 aliases[alias_key] = applied_item["id"]
             else:
                 aliases[alias_key] = str(applied_item)
+        # track last scenario to reduce required fields in follow-ups
+        if isinstance(applied_item, dict) and applied_item.get("id") and action.get("type") == "create_scenario":
+            last_scenario_id = applied_item["id"]
         applied.append(applied_item)
 
     return {"status": "applied", "count": len(applied), "results": applied}
