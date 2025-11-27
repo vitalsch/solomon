@@ -602,7 +602,12 @@ def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str], fallback_la
     if isinstance(ref, str) and ref.startswith("$"):
         return aliases.get(ref[1:])
     # try as direct id
-    scenario = repo.get_scenario(ref)
+    scenario = None
+    try:
+        scenario = repo.get_scenario(ref)
+    except Exception as exc:
+        # e.g. invalid ObjectId format; ignore and fall through to name lookup
+        print(f"[assistant] scenario lookup by id failed for '{ref}': {exc}")
     if scenario and scenario.get("user_id") == current_user["id"]:
         return scenario["id"]
     # try lookup by name for this user
@@ -610,7 +615,7 @@ def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str], fallback_la
     if ref is None and len(scenarios) == 1:
         return scenarios[0].get("id")
     for s in scenarios:
-        if s.get("name") == ref:
+        if s.get("name") and str(s.get("name")).lower() == str(ref).lower():
             return s.get("id")
     return None
 
@@ -923,7 +928,7 @@ def _apply_plan(plan: Dict[str, Any], current_user):
             else:
                 aliases[alias_key] = str(applied_item)
         # track last scenario to reduce required fields in follow-ups
-        if isinstance(applied_item, dict) and applied_item.get("id") and action.get("type") == "create_scenario":
+        if isinstance(applied_item, dict) and applied_item.get("id") and action.get("type") in {"create_scenario", "use_scenario"}:
             last_scenario_id = applied_item["id"]
         applied.append(applied_item)
     return applied
