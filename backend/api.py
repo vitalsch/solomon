@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, validator
+from typing import Any, Dict, List
 
 from .repository import WealthRepository
 from .services import run_scenario_simulation
@@ -31,6 +32,31 @@ app.add_middleware(
 
 repo = WealthRepository()
 auth_scheme = HTTPBearer()
+
+try:
+    from openai import OpenAI
+except ImportError:  # pragma: no cover - only if dependency missing
+    OpenAI = None  # type: ignore
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+_cached_openai_client = None
+
+
+def get_openai_client():
+    """
+    Build the OpenAI client lazily to avoid import-time crashes (e.g. httpx proxy signature mismatch).
+    Returns None if no key is set or if the client cannot be constructed.
+    """
+    global _cached_openai_client
+    if _cached_openai_client is not None:
+        return _cached_openai_client
+    if not (OpenAI and OPENAI_API_KEY):
+        return None
+    try:
+        _cached_openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    except Exception:
+        _cached_openai_client = None
+    return _cached_openai_client
 
 
 class UserCreate(BaseModel):
@@ -150,6 +176,26 @@ class TransactionUpdate(BaseModel):
     annual_interest_rate: Optional[float] = None
     taxable: Optional[bool] = None
     taxable_amount: Optional[float] = None
+
+
+class AssistantMessage(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+
+class AssistantChatRequest(BaseModel):
+    messages: List[AssistantMessage]
+    context: Optional[Dict[str, Any]] = None
+
+
+class AssistantChatResponse(BaseModel):
+    messages: List[AssistantMessage]
+    plan: Optional[Dict[str, Any]] = None
+    reply: Optional[str] = None
+
+
+class AssistantApplyRequest(BaseModel):
+    plan: Dict[str, Any]
 
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(auth_scheme)):
@@ -482,3 +528,172 @@ def simulate_scenario(scenario_id: str, current_user=Depends(get_current_user)):
         return run_scenario_simulation(scenario_id, repo)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _ensure_scenario_access(scenario_id: str, current_user):
+    scenario = repo.get_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to access this scenario")
+    return scenario
+
+
+def _apply_plan_action(action: Dict[str, Any], current_user):
+    applied = None
+    action_type = action.get("type")
+
+    if action_type == "create_scenario":
+        payload = {
+            "user_id": current_user["id"],
+            "name": action.get("name"),
+            "start_year": action.get("start_year"),
+            "start_month": action.get("start_month"),
+            "end_year": action.get("end_year"),
+            "end_month": action.get("end_month"),
+            "description": action.get("description"),
+            "inflation_rate": action.get("inflation_rate"),
+            "income_tax_rate": action.get("income_tax_rate"),
+            "wealth_tax_rate": action.get("wealth_tax_rate"),
+        }
+        required = ["name", "start_year", "start_month", "end_year", "end_month"]
+        if any(payload.get(k) is None for k in required):
+            raise HTTPException(status_code=400, detail=f"Missing fields for create_scenario: {required}")
+        applied = repo.create_scenario(
+            payload["user_id"],
+            payload["name"],
+            payload["start_year"],
+            payload["start_month"],
+            payload["end_year"],
+            payload["end_month"],
+            payload["description"],
+            payload["inflation_rate"],
+            payload["income_tax_rate"],
+            payload["wealth_tax_rate"],
+        )
+
+    elif action_type == "create_asset":
+        scenario_id = action.get("scenario_id")
+        _ensure_scenario_access(scenario_id, current_user)
+        payload = {
+            "name": action.get("name"),
+            "annual_growth_rate": action.get("annual_growth_rate") or 0.0,
+            "initial_balance": action.get("initial_balance") or 0.0,
+            "asset_type": action.get("asset_type") or "generic",
+            "start_year": action.get("start_year"),
+            "start_month": action.get("start_month"),
+            "end_year": action.get("end_year"),
+            "end_month": action.get("end_month"),
+        }
+        if not payload["name"]:
+            raise HTTPException(status_code=400, detail="Missing name for create_asset")
+        applied = repo.add_asset(
+            scenario_id,
+            payload["name"],
+            payload["annual_growth_rate"],
+            payload["initial_balance"],
+            payload["asset_type"],
+            payload["start_year"],
+            payload["start_month"],
+            payload["end_year"],
+            payload["end_month"],
+        )
+
+    elif action_type == "create_transaction":
+        scenario_id = action.get("scenario_id")
+        _ensure_scenario_access(scenario_id, current_user)
+        asset_id = action.get("asset_id")
+        if not asset_id:
+            raise HTTPException(status_code=400, detail="asset_id required for create_transaction")
+        asset = repo.get_asset(asset_id)
+        if not asset or asset["scenario_id"] != scenario_id:
+            raise HTTPException(status_code=400, detail="Asset not part of scenario")
+
+        tx_type = action.get("type") or "one_time"
+        annual_interest_rate = action.get("annual_interest_rate")
+        if tx_type == "mortgage_interest" and annual_interest_rate is None:
+            annual_interest_rate = action.get("annual_growth_rate")
+        applied = repo.add_transaction(
+            scenario_id,
+            asset_id,
+            action.get("name") or "AI Transaction",
+            action.get("amount") or 0.0,
+            tx_type,
+            action.get("start_year"),
+            action.get("start_month"),
+            action.get("end_year") or action.get("start_year"),
+            action.get("end_month") or action.get("start_month"),
+            action.get("frequency"),
+            action.get("annual_growth_rate") or 0.0,
+            action.get("counter_asset_id"),
+            action.get("double_entry") or False,
+            action.get("mortgage_asset_id"),
+            annual_interest_rate,
+            action.get("taxable") or False,
+            action.get("taxable_amount"),
+        )
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown plan action type: {action_type}")
+
+    return applied
+
+
+@app.post("/assistant/chat", response_model=AssistantChatResponse)
+def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_current_user)):
+    if not payload.messages:
+        raise HTTPException(status_code=400, detail="messages required")
+
+    client = get_openai_client()
+    if not client:
+        fallback_reply = (
+            "Assistant ist aktiv, aber es ist kein OPENAI_API_KEY gesetzt. "
+            "Oder der Client konnte nicht initialisiert werden (httpx/proxy Issue). "
+            "Bitte Key setzen oder httpx auf eine kompatible Version bringen."
+        )
+        new_messages = payload.messages + [AssistantMessage(role="assistant", content=fallback_reply)]
+        return AssistantChatResponse(messages=new_messages, plan=None, reply=fallback_reply)
+
+    system_prompt = (
+        "Du hilfst, Finanzereignisse in ein Szenario zu übernehmen (Assets, Hypotheken, Transaktionen). "
+        "Frage nach fehlenden Daten, fasse strukturiert zusammen und schlage einen Plan mit Aktionen vor. "
+        "Antworte kurz. Wenn möglich, liefere einen JSON-Plan mit Aktionen (type: create_scenario/create_asset/create_transaction). "
+        "Wenn Angaben fehlen, stelle Rückfragen."
+    )
+
+    chat_messages = [{"role": "system", "content": system_prompt}]
+    for m in payload.messages:
+        chat_messages.append({"role": m.role, "content": m.content})
+
+    try:
+        completion = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=chat_messages,
+            temperature=0.3,
+        )
+        reply = completion.choices[0].message.content or "OK"
+    except Exception as exc:  # pragma: no cover - external API
+        raise HTTPException(status_code=500, detail=f"Assistant call failed: {exc}")
+
+    assistant_msg = AssistantMessage(role="assistant", content=reply)
+    updated_messages = payload.messages + [assistant_msg]
+
+    # Plan extraction is model-dependent; we keep None here and let the user approve/apply manually.
+    return AssistantChatResponse(messages=updated_messages, plan=None, reply=reply)
+
+
+@app.post("/assistant/apply")
+def assistant_apply(payload: AssistantApplyRequest, current_user=Depends(get_current_user)):
+    plan = payload.plan or {}
+    actions = plan.get("actions") if isinstance(plan, dict) else None
+    if not actions or not isinstance(actions, list):
+        raise HTTPException(status_code=400, detail="plan.actions must be a list")
+
+    applied = []
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        applied_item = _apply_plan_action(action, current_user)
+        applied.append(applied_item)
+
+    return {"status": "applied", "count": len(applied), "results": applied}
