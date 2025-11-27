@@ -868,25 +868,48 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         if overwrite:
             _delete_transactions_by_name(scenario_id, tx_name)
         _ensure_unique_transaction_name(scenario_id, tx_name)
-        applied = repo.add_transaction(
-            scenario_id,
-            asset_id,
-            tx_name,
-            action.get("amount") or 0.0,
-            tx_type,
-            start_year,
-            start_month,
-            action.get("end_year") or start_year,
-            action.get("end_month") or start_month,
-            action.get("frequency"),
-            action.get("annual_growth_rate") or 0.0,
-            action.get("counter_asset_id"),
-            action.get("double_entry") or False,
-            action.get("mortgage_asset_id"),
-            annual_interest_rate,
-            action.get("taxable") or False,
-            action.get("taxable_amount"),
-        )
+        if action.get("double_entry"):
+            counter_asset_id = _resolve_asset_id(action.get("counter_asset_id") or action.get("to_asset_id"), scenario_id, aliases)
+            if not counter_asset_id:
+                raise HTTPException(status_code=400, detail="counter_asset_id (or to_asset_id) required for double_entry")
+            if counter_asset_id == asset_id:
+                raise HTTPException(status_code=400, detail="counter_asset_id must differ from asset_id")
+            debit_tx, credit_tx = repo.add_linked_transactions(
+                scenario_id,
+                asset_id,
+                counter_asset_id,
+                tx_name,
+                action.get("amount") or 0.0,
+                tx_type,
+                start_year,
+                start_month,
+                action.get("end_year") or start_year,
+                action.get("end_month") or start_month,
+                action.get("frequency"),
+                action.get("annual_growth_rate") or 0.0,
+            )
+            debit_tx["linked_transaction"] = credit_tx
+            applied = debit_tx
+        else:
+            applied = repo.add_transaction(
+                scenario_id,
+                asset_id,
+                tx_name,
+                action.get("amount") or 0.0,
+                tx_type,
+                start_year,
+                start_month,
+                action.get("end_year") or start_year,
+                action.get("end_month") or start_month,
+                action.get("frequency"),
+                action.get("annual_growth_rate") or 0.0,
+                action.get("counter_asset_id"),
+                action.get("double_entry") or False,
+                action.get("mortgage_asset_id"),
+                annual_interest_rate,
+                action.get("taxable") or False,
+                action.get("taxable_amount"),
+            )
 
     else:
         raise HTTPException(status_code=400, detail=f"Unknown plan action type: {action_type}")
