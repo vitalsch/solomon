@@ -680,18 +680,36 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             if action.get("value") is not None
             else 0.0
         )
+        inferred_type = action.get("asset_type") or action.get("type") or None
+        if not inferred_type:
+            lname = (action.get("name") or "").lower()
+            if any(k in lname for k in ["konto", "account", "zkb"]):
+                inferred_type = "bank_account"
+            elif any(k in lname for k in ["hypo", "hypothek"]):
+                inferred_type = "mortgage"
+            elif any(k in lname for k in ["haus", "immobilie", "house"]):
+                inferred_type = "real_estate"
+        name_value = action.get("name")
+        if not name_value:
+            lname = (action.get("name") or action.get("type") or "").lower()
+            if any(k in lname for k in ["konto", "account", "zkb"]):
+                name_value = "ZKB Konto"
+            elif any(k in lname for k in ["hypo", "hypothek"]):
+                name_value = "Hypothek"
+            elif any(k in lname for k in ["haus", "immobilie", "house"]):
+                name_value = "Haus"
+            else:
+                name_value = "Asset"
         payload = {
-            "name": action.get("name"),
+            "name": name_value,
             "annual_growth_rate": action.get("annual_growth_rate") or 0.0,
             "initial_balance": initial_balance,
-            "asset_type": action.get("asset_type") or action.get("type") or "generic",
+            "asset_type": inferred_type or "generic",
             "start_year": action.get("start_year"),
             "start_month": action.get("start_month"),
             "end_year": action.get("end_year"),
             "end_month": action.get("end_month"),
         }
-        if not payload["name"]:
-            raise HTTPException(status_code=400, detail="Missing name for create_asset")
         if not payload["start_year"] and action.get("purchase_date"):
             y, m = _parse_year_month_from_date(action.get("purchase_date"))
             payload["start_year"], payload["start_month"] = y, m
@@ -798,16 +816,20 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
         "2) Ermittele fehlende Pflichtfelder je Aktion, frage nach: "
         "   - use_scenario: scenario (Name/ID) des Nutzers. "
         "   - create_scenario: name, (optional start/end); wenn nicht angegeben, nehme Start=aktueller Monat, Ende=Startjahr+10, Monat 12. "
-        "   - create_asset: scenario (Name/ID), name, initial_balance (oder balance/value), asset_type (default generic), optional start_date/start_year/start_month. "
+        "   - create_asset: scenario (Name/ID), name, initial_balance (oder balance/value), asset_type (default generic). "
+        "     Wenn asset_type fehlt und der Name enthält Konto/Account/ZKB, setze asset_type=bank_account. "
+        "     Wenn name fehlt und Konto/Account/ZKB im Text, setze name='ZKB Konto', sonst verwende einen generischen Namen (kein Nachfragen). "
+        "     Wenn asset_type fehlt und sonst nichts passt, setze generic (nicht nachfragen). "
         "   - create_liability: scenario, name, amount, interest_rate (falls Hypothek), optional start_date. "
         "   - create_transaction: scenario, asset_id, name, amount, type, start_year/start_month (oder start_date). "
-        "3) Zeige eine knappe Tabelle/Liste der gesammelten Werte und frage nach Bestätigung. "
+        "3) Wenn alle Pflichtfelder da sind, wende den Plan an (keine Ausrede, dass du es nicht kannst) und bestätige kurz. "
+        "   Nur wenn etwas fehlt, kurz nachfragen. "
         "4) Gib IMMER am Ende einen JSON-Plan in ```json ... ``` zurück, Schema: "
         "{ \"actions\": [ { \"type\": \"use_scenario|create_scenario|create_asset|create_liability|create_transaction\", "
         "\"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", Felder wie name, amount, start_date, initial_balance, asset_type, interest_rate usw. } ] }. "
         "Nutze Aliase (store_as) und referenziere sie in nachfolgenden Aktionen mit \"$alias\". "
         "Wenn noch Daten fehlen, frage danach und gib einen leeren Plan {\"actions\":[]} zurück. "
-        "Antworte kurz."
+        "Antworte kurz, schreibe NICHT, dass du nur einen Plan erstellen kannst."
     )
 
     chat_messages = [{"role": "system", "content": system_prompt}]
@@ -829,11 +851,11 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
         if not text:
             return None
         # Look for a fenced ```json ... ``` block first
-        fence_match = re.search(r"```json\\s*(\\{.*?\\})\\s*```", text, re.DOTALL | re.IGNORECASE)
+        fence_match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
         candidate = fence_match.group(1) if fence_match else None
         if not candidate:
             # Fallback: first JSON object in text
-            brace_match = re.search(r"\\{.*\\}", text, re.DOTALL)
+            brace_match = re.search(r"\{.*\}", text, re.DOTALL)
             candidate = brace_match.group(0) if brace_match else None
         if not candidate:
             return None
