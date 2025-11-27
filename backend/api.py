@@ -897,6 +897,7 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
         "     Wenn asset_type fehlt und sonst nichts passt, setze generic (nicht nachfragen). "
         "   - create_liability: scenario, name, amount, interest_rate (falls Hypothek), optional start_date. "
         "   - create_transaction: scenario, asset_id, name, amount, type, start_year/start_month (oder start_date). "
+        "     Asset-IDs NICHT erfragen: du kannst nach Namen auflösen. Nutze asset_id als Name oder Alias (z.B. ZKB Konto, ZKB Depot). "
         "3) Wenn alle Pflichtfelder da sind, wende den Plan an (keine Ausrede, dass du es nicht kannst) und bestätige kurz. "
         "   Nur wenn etwas fehlt, kurz nachfragen. "
         "4) Gib IMMER am Ende einen JSON-Plan in ```json ... ``` zurück, Schema: "
