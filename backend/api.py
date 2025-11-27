@@ -638,6 +638,14 @@ def _ensure_unique_asset_name(scenario_id: str, name: str):
             raise HTTPException(status_code=400, detail=f"Asset name '{name}' already exists in this scenario.")
 
 
+def _ensure_unique_transaction_name(scenario_id: str, name: str):
+    """Ensure the scenario has no other transaction with the same (case-insensitive) name."""
+    txs = repo.list_transactions_for_scenario(scenario_id)
+    for tx in txs:
+        if tx.get("name") and tx["name"].lower() == name.lower():
+            raise HTTPException(status_code=400, detail=f"Transaction name '{name}' already exists in this scenario.")
+
+
 def _resolve_asset_id(ref, scenario_id: str, aliases: Dict[str, str]):
     if ref is None:
         return None
@@ -708,6 +716,9 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             payload["income_tax_rate"],
             payload["wealth_tax_rate"],
         )
+        # auto-alias by name
+        if payload["name"] and payload["name"] not in aliases:
+            aliases[payload["name"]] = applied.get("id")
 
     elif action_type == "use_scenario":
         scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
@@ -775,6 +786,8 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             payload["end_year"],
             payload["end_month"],
         )
+        if payload["name"] and payload["name"] not in aliases:
+            aliases[payload["name"]] = applied.get("id")
 
     elif action_type == "create_liability":
         scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
@@ -822,10 +835,12 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         annual_interest_rate = action.get("annual_interest_rate")
         if tx_type == "mortgage_interest" and annual_interest_rate is None:
             annual_interest_rate = action.get("annual_growth_rate")
+        tx_name = action.get("name") or "AI Transaction"
+        _ensure_unique_transaction_name(scenario_id, tx_name)
         applied = repo.add_transaction(
             scenario_id,
             asset_id,
-            action.get("name") or "AI Transaction",
+            tx_name,
             action.get("amount") or 0.0,
             tx_type,
             start_year,
@@ -981,10 +996,14 @@ def _apply_plan(plan: Dict[str, Any], current_user):
         # track last scenario to reduce required fields in follow-ups
         if isinstance(applied_item, dict) and applied_item.get("id") and action.get("type") in {"create_scenario", "use_scenario"}:
             last_scenario_id = applied_item["id"]
-        # auto-alias asset names if not set
+        # auto-alias asset/transaction names if not set
         if action.get("type") == "create_asset" and isinstance(applied_item, dict) and applied_item.get("id"):
             asset_name = applied_item.get("name")
             if asset_name and asset_name not in aliases:
                 aliases[asset_name] = applied_item["id"]
+        if action.get("type") == "create_transaction" and isinstance(applied_item, dict) and applied_item.get("id"):
+            tx_name = applied_item.get("name")
+            if tx_name and tx_name not in aliases:
+                aliases[tx_name] = applied_item["id"]
         applied.append(applied_item)
     return applied
