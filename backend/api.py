@@ -541,7 +541,51 @@ def _ensure_scenario_access(scenario_id: str, current_user):
     return scenario
 
 
+def _normalize_action(action: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Flacht Aktionen ab: bevorzugt Felder in action["data"], behält type und store_as.
+    """
+    data = action.get("data", {}) if isinstance(action.get("data", {}), dict) else {}
+    merged = {k: v for k, v in action.items() if k not in {"data"}}
+    # fields in data override same-named fields in the outer action
+    merged.update(data)
+    return merged
+
+
+def _parse_year_month_from_date(date_value: Optional[str]):
+    if not date_value or not isinstance(date_value, str):
+        return None, None
+    try:
+        # accept YYYY-MM or YYYY-MM-DD
+        parts = date_value.split("-")
+        if len(parts) >= 2:
+            year = int(parts[0])
+            month = int(parts[1])
+            return year, month
+    except Exception:
+        return None, None
+    return None, None
+
+
+def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str]):
+    if ref is None:
+        return None
+    if isinstance(ref, str) and ref.startswith("$"):
+        return aliases.get(ref[1:])
+    # try as direct id
+    scenario = repo.get_scenario(ref)
+    if scenario and scenario.get("user_id") == current_user["id"]:
+        return scenario["id"]
+    # try lookup by name for this user
+    scenarios = repo.list_scenarios_for_user(current_user["id"])
+    for s in scenarios:
+        if s.get("name") == ref:
+            return s.get("id")
+    return None
+
+
 def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, str]):
+    action = _normalize_action(action)
     applied = None
     action_type = action.get("type")
 
@@ -580,7 +624,7 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         )
 
     elif action_type == "create_asset":
-        scenario_id = resolve(action.get("scenario_id"))
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases)
         _ensure_scenario_access(scenario_id, current_user)
         payload = {
             "name": action.get("name"),
@@ -594,6 +638,12 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         }
         if not payload["name"]:
             raise HTTPException(status_code=400, detail="Missing name for create_asset")
+        if not payload["start_year"] and action.get("purchase_date"):
+            y, m = _parse_year_month_from_date(action.get("purchase_date"))
+            payload["start_year"], payload["start_month"] = y, m
+        if not payload["start_year"] and action.get("start_date"):
+            y, m = _parse_year_month_from_date(action.get("start_date"))
+            payload["start_year"], payload["start_month"] = y, m
         applied = repo.add_asset(
             scenario_id,
             payload["name"],
@@ -606,8 +656,27 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             payload["end_month"],
         )
 
+    elif action_type == "create_liability":
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases)
+        _ensure_scenario_access(scenario_id, current_user)
+        name = action.get("name") or action.get("type") or "Liability"
+        amount = action.get("amount") or 0.0
+        annual_rate = action.get("annual_interest_rate") or action.get("interest_rate") or action.get("annual_growth_rate")
+        start_year, start_month = _parse_year_month_from_date(action.get("start_date"))
+        applied = repo.add_asset(
+            scenario_id,
+            name,
+            annual_rate or 0.0,
+            -abs(amount),
+            "mortgage",
+            start_year,
+            start_month,
+            action.get("end_year"),
+            action.get("end_month"),
+        )
+
     elif action_type == "create_transaction":
-        scenario_id = resolve(action.get("scenario_id"))
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases)
         _ensure_scenario_access(scenario_id, current_user)
         asset_id = resolve(action.get("asset_id"))
         if not asset_id:
