@@ -601,6 +601,8 @@ def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str], fallback_la
         ref = fallback_last
     if isinstance(ref, str) and ref.startswith("$"):
         return aliases.get(ref[1:])
+    if isinstance(ref, str) and ref.lower() == "current":
+        return fallback_last
     # try as direct id
     scenario = None
     try:
@@ -634,6 +636,27 @@ def _ensure_unique_asset_name(scenario_id: str, name: str):
     for a in assets:
         if a.get("name") and a["name"].lower() == name.lower():
             raise HTTPException(status_code=400, detail=f"Asset name '{name}' already exists in this scenario.")
+
+
+def _resolve_asset_id(ref, scenario_id: str, aliases: Dict[str, str]):
+    if ref is None:
+        return None
+    if isinstance(ref, str) and ref.startswith("$"):
+        ref = aliases.get(ref[1:], ref)
+    # try direct id
+    asset = None
+    try:
+        asset = repo.get_asset(ref)
+    except Exception:
+        asset = None
+    if asset and asset.get("scenario_id") == scenario_id:
+        return asset["id"]
+    # try by name in scenario
+    assets = repo.list_assets_for_scenario(scenario_id)
+    for a in assets:
+        if a.get("name") and str(a["name"]).lower() == str(ref).lower():
+            return a.get("id")
+    return None
 
 
 def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, str], last_scenario_id=None):
@@ -775,7 +798,7 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
     elif action_type == "create_transaction":
         scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
         _ensure_scenario_access(scenario_id, current_user)
-        asset_id = resolve(action.get("asset_id"))
+        asset_id = _resolve_asset_id(action.get("asset_id"), scenario_id, aliases)
         if not asset_id:
             # fallback: if only one asset in scenario, pick it
             assets = repo.list_assets_for_scenario(scenario_id)
@@ -958,5 +981,10 @@ def _apply_plan(plan: Dict[str, Any], current_user):
         # track last scenario to reduce required fields in follow-ups
         if isinstance(applied_item, dict) and applied_item.get("id") and action.get("type") in {"create_scenario", "use_scenario"}:
             last_scenario_id = applied_item["id"]
+        # auto-alias asset names if not set
+        if action.get("type") == "create_asset" and isinstance(applied_item, dict) and applied_item.get("id"):
+            asset_name = applied_item.get("name")
+            if asset_name and asset_name not in aliases:
+                aliases[asset_name] = applied_item["id"]
         applied.append(applied_item)
     return applied
