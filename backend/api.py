@@ -676,6 +676,11 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
     applied = None
     action_type = action.get("type")
 
+    # Allow shorthand "transfer" as an action: treat as create_transaction with transfer subtype
+    if action_type == "transfer":
+        action["tx_type_internal"] = "transfer"
+        action_type = "create_transaction"
+
     def resolve(value):
         if isinstance(value, str) and value.startswith("$"):
             return aliases.get(value[1:], value)
@@ -827,7 +832,15 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         if not asset or asset["scenario_id"] != scenario_id:
             raise HTTPException(status_code=400, detail="Asset not part of scenario")
 
-        tx_type = (action.get("type") or "one_time").lower()
+        tx_type = (
+            action.get("tx_type_internal")
+            or action.get("tx_type")
+            or action.get("transaction_type")
+            or action.get("tx_kind")
+            or action.get("type")
+            or "one_time"
+        )
+        tx_type = (tx_type or "one_time").lower()
         if tx_type == "transfer":
             tx_type = "regular"
         start_year = action.get("start_year")
