@@ -751,8 +751,11 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
     system_prompt = (
         "Du hilfst, Finanzereignisse in ein Szenario zu übernehmen (Assets, Hypotheken, Transaktionen). "
         "Frage nach fehlenden Daten, fasse strukturiert zusammen und schlage einen Plan mit Aktionen vor. "
-        "Antworte kurz. Wenn möglich, liefere einen JSON-Plan mit Aktionen (type: create_scenario/create_asset/create_transaction). "
-        "Wenn Angaben fehlen, stelle Rückfragen."
+        "Antworte kurz und liefere IMMER am Ende einen JSON-Plan in einem ```json ... ``` Block mit folgendem Schema: "
+        "{ \"actions\": [ { \"type\": \"create_scenario|create_asset|create_liability|create_transaction\", "
+        "\"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", weitere Felder wie name, amount, start_date usw. } ] }. "
+        "Nutze wenn möglich Aliase (store_as) und referenziere sie in nachfolgenden Aktionen mit \"$alias\". "
+        "Wenn Daten fehlen, stelle Rückfragen, gib aber trotzdem einen leeren Plan {\"actions\":[]} im JSON-Block zurück."
     )
 
     chat_messages = [{"role": "system", "content": system_prompt}]
