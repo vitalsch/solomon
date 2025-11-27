@@ -206,11 +206,6 @@ const Simulation = () => {
         [accounts]
     );
 
-    const refreshAfterAssistant = useCallback(async () => {
-        if (!currentScenarioId) return;
-        await fetchScenarioDetails(currentScenarioId);
-        await handleSimulate();
-    }, [currentScenarioId, fetchScenarioDetails, handleSimulate]);
 
     const openAssetModal = useCallback(() => {
         setIsAssetModalOpen(true);
@@ -921,7 +916,7 @@ const Simulation = () => {
         yearlyCashFlow,
     ]);
 
-    const handleSimulate = async () => {
+    const handleSimulate = useCallback(async () => {
         if (!currentScenarioId) {
             setError('Bitte zuerst ein Szenario auswählen.');
             return;
@@ -943,7 +938,13 @@ const Simulation = () => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [currentScenarioId, selectedScenarios, selectedUserId]);
+
+    const refreshAfterAssistant = useCallback(async () => {
+        if (!currentScenarioId) return;
+        await fetchScenarioDetails(currentScenarioId);
+        await handleSimulate();
+    }, [currentScenarioId, fetchScenarioDetails, handleSimulate]);
 
     const handleSelectScenario = async (e) => {
         const { value, checked } = e.target;
