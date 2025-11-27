@@ -650,6 +650,17 @@ def _ensure_unique_transaction_name(scenario_id: str, name: str):
             raise HTTPException(status_code=400, detail=f"Transaction name '{name}' already exists in this scenario.")
 
 
+def _delete_transactions_by_name(scenario_id: str, name: str):
+    """Delete all transactions in a scenario that match a name (case-insensitive)."""
+    txs = repo.list_transactions_for_scenario(scenario_id)
+    for tx in txs:
+        if tx.get("name") and tx["name"].lower() == name.lower():
+            try:
+                repo.delete_transaction(tx["id"])
+            except Exception as exc:
+                print(f"[assistant] failed to delete tx '{name}' ({tx.get('id')}): {exc}")
+
+
 def _resolve_asset_id(ref, scenario_id: str, aliases: Dict[str, str]):
     if ref is None:
         return None
@@ -853,6 +864,9 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         if tx_type == "mortgage_interest" and annual_interest_rate is None:
             annual_interest_rate = action.get("annual_growth_rate")
         tx_name = action.get("name") or "AI Transaction"
+        overwrite = action.get("overwrite") or action.get("overwrite_existing") or action.get("replace")
+        if overwrite:
+            _delete_transactions_by_name(scenario_id, tx_name)
         _ensure_unique_transaction_name(scenario_id, tx_name)
         applied = repo.add_transaction(
             scenario_id,
@@ -902,7 +916,7 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
         "   Wenn ein Szenario-Name genannt wird und es für diesen Nutzer nicht existiert, lege es neu an. "
         "   Zum Wechseln auf ein bestehendes Szenario kannst du die Aktion use_scenario nutzen. "
         "2) Ermittele fehlende Pflichtfelder je Aktion, frage nach: "
-        "   - use_scenario: scenario (Name/ID) des Nutzers. "
+        "   - use_scenario: scenario (Name/ID) des Nutzers. Wenn nichts angegeben ist, nimm das aktuell ausgewählte Szenario. "
         "   - create_scenario: name, (optional start/end); wenn nicht angegeben, nehme Start=aktueller Monat, Ende=Startjahr+10, Monat 12. "
         "   - create_asset: scenario (Name/ID), name, initial_balance (oder balance/value), asset_type (default generic). "
         "     Wenn asset_type fehlt und der Name enthält Konto/Account/ZKB, setze asset_type=bank_account. "
@@ -958,7 +972,10 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
     applied_results = None
     if plan and isinstance(plan, dict) and isinstance(plan.get("actions"), list) and len(plan["actions"]) > 0:
         try:
-            applied_results = _apply_plan(plan, current_user)
+            # prefer context scenario if provided
+            ctx = payload.context or {}
+            initial_scenario_ref = ctx.get("scenario_id") or ctx.get("scenario_name")
+            applied_results = _apply_plan(plan, current_user, initial_scenario_ref=initial_scenario_ref)
             print(f"[assistant] applied {len(applied_results)} actions")
         except HTTPException as exc:
             applied_results = {"error": exc.detail}
@@ -994,13 +1011,13 @@ def assistant_apply(payload: AssistantApplyRequest, current_user=Depends(get_cur
     return {"status": "applied", "count": len(applied), "results": applied}
 
 
-def _apply_plan(plan: Dict[str, Any], current_user):
+def _apply_plan(plan: Dict[str, Any], current_user, initial_scenario_ref=None):
     actions = plan.get("actions") if isinstance(plan, dict) else None
     if not actions or not isinstance(actions, list):
         return []
     applied = []
     aliases: Dict[str, str] = {}
-    last_scenario_id = None
+    last_scenario_id = _resolve_scenario_id(initial_scenario_ref, current_user, aliases, None)
     for action in actions:
         if not isinstance(action, dict):
             continue
