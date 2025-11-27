@@ -661,6 +661,17 @@ def _delete_transactions_by_name(scenario_id: str, name: str):
                 print(f"[assistant] failed to delete tx '{name}' ({tx.get('id')}): {exc}")
 
 
+def _delete_transaction_by_ref(scenario_id: str, ref, aliases: Dict[str, str]):
+    tx_id = _resolve_transaction_id(ref, scenario_id, aliases)
+    if not tx_id:
+        raise HTTPException(status_code=404, detail="Transaction not found to delete")
+    tx = repo.get_transaction(tx_id)
+    if not tx or tx.get("scenario_id") != scenario_id:
+        raise HTTPException(status_code=404, detail="Transaction not part of scenario")
+    repo.delete_transaction(tx_id)
+    return {"deleted_transaction_id": tx_id, "name": tx.get("name")}
+
+
 def _resolve_asset_id(ref, scenario_id: str, aliases: Dict[str, str]):
     if ref is None:
         return None
@@ -679,6 +690,25 @@ def _resolve_asset_id(ref, scenario_id: str, aliases: Dict[str, str]):
     for a in assets:
         if a.get("name") and str(a["name"]).lower() == str(ref).lower():
             return a.get("id")
+    return None
+
+
+def _resolve_transaction_id(ref, scenario_id: str, aliases: Dict[str, str]):
+    if ref is None:
+        return None
+    if isinstance(ref, str) and ref.startswith("$"):
+        ref = aliases.get(ref[1:], ref)
+    tx = None
+    try:
+        tx = repo.get_transaction(ref)
+    except Exception:
+        tx = None
+    if tx and tx.get("scenario_id") == scenario_id:
+        return tx.get("id")
+    txs = repo.list_transactions_for_scenario(scenario_id)
+    for t in txs:
+        if t.get("name") and str(t["name"]).lower() == str(ref).lower():
+            return t.get("id")
     return None
 
 
@@ -921,6 +951,10 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             raise HTTPException(status_code=404, detail="Asset not part of scenario")
         repo.delete_asset(target_asset_id)
         applied = {"deleted_asset_id": target_asset_id, "name": asset.get("name")}
+    elif action_type == "delete_transaction":
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
+        _ensure_scenario_access(scenario_id, current_user)
+        applied = _delete_transaction_by_ref(scenario_id, action.get("transaction_id") or action.get("name"), aliases)
 
     else:
         raise HTTPException(status_code=400, detail=f"Unknown plan action type: {action_type}")
@@ -961,10 +995,11 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
         "   - create_transaction: scenario, asset_id, name, amount, type, start_year/start_month (oder start_date). "
         "     Asset-IDs NICHT erfragen: du kannst nach Namen auflösen. Nutze asset_id als Name oder Alias (z.B. ZKB Konto, ZKB Depot). "
         "   - delete_asset|delete_liability: scenario, asset_id (Name/ID/Alias) im aktuellen Szenario löschen. "
+        "   - delete_transaction: scenario, name oder transaction_id im aktuellen Szenario löschen. "
         "3) Wenn alle Pflichtfelder da sind, wende den Plan an (keine Ausrede, dass du es nicht kannst) und bestätige kurz. "
         "   Nur wenn etwas fehlt, kurz nachfragen. "
         "4) Gib IMMER am Ende einen JSON-Plan in ```json ... ``` zurück, Schema: "
-        "{ \"actions\": [ { \"type\": \"use_scenario|create_scenario|create_asset|create_liability|create_transaction|delete_asset|delete_liability\", "
+        "{ \"actions\": [ { \"type\": \"use_scenario|create_scenario|create_asset|create_liability|create_transaction|delete_asset|delete_liability|delete_transaction\", "
         "\"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", Felder wie name, amount, start_date, initial_balance, asset_type, interest_rate usw. } ] }. "
         "Nutze Aliase (store_as) und referenziere sie in nachfolgenden Aktionen mit \"$alias\". "
         "Wenn noch Daten fehlen, frage danach und gib einen leeren Plan {\"actions\":[]} zurück. "
