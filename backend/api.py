@@ -539,9 +539,14 @@ def _ensure_scenario_access(scenario_id: str, current_user):
     return scenario
 
 
-def _apply_plan_action(action: Dict[str, Any], current_user):
+def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, str]):
     applied = None
     action_type = action.get("type")
+
+    def resolve(value):
+        if isinstance(value, str) and value.startswith("$"):
+            return aliases.get(value[1:], value)
+        return value
 
     if action_type == "create_scenario":
         payload = {
@@ -573,7 +578,7 @@ def _apply_plan_action(action: Dict[str, Any], current_user):
         )
 
     elif action_type == "create_asset":
-        scenario_id = action.get("scenario_id")
+        scenario_id = resolve(action.get("scenario_id"))
         _ensure_scenario_access(scenario_id, current_user)
         payload = {
             "name": action.get("name"),
@@ -600,9 +605,9 @@ def _apply_plan_action(action: Dict[str, Any], current_user):
         )
 
     elif action_type == "create_transaction":
-        scenario_id = action.get("scenario_id")
+        scenario_id = resolve(action.get("scenario_id"))
         _ensure_scenario_access(scenario_id, current_user)
-        asset_id = action.get("asset_id")
+        asset_id = resolve(action.get("asset_id"))
         if not asset_id:
             raise HTTPException(status_code=400, detail="asset_id required for create_transaction")
         asset = repo.get_asset(asset_id)
@@ -690,10 +695,17 @@ def assistant_apply(payload: AssistantApplyRequest, current_user=Depends(get_cur
         raise HTTPException(status_code=400, detail="plan.actions must be a list")
 
     applied = []
+    aliases: Dict[str, str] = {}
     for action in actions:
         if not isinstance(action, dict):
             continue
-        applied_item = _apply_plan_action(action, current_user)
+        applied_item = _apply_plan_action(action, current_user, aliases)
+        alias_key = action.get("store_as")
+        if alias_key and isinstance(alias_key, str):
+            if isinstance(applied_item, dict) and applied_item.get("id"):
+                aliases[alias_key] = applied_item["id"]
+            else:
+                aliases[alias_key] = str(applied_item)
         applied.append(applied_item)
 
     return {"status": "applied", "count": len(applied), "results": applied}
