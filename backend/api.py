@@ -750,12 +750,18 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
 
     system_prompt = (
         "Du hilfst, Finanzereignisse in ein Szenario zu übernehmen (Assets, Hypotheken, Transaktionen). "
-        "Frage nach fehlenden Daten, fasse strukturiert zusammen und schlage einen Plan mit Aktionen vor. "
-        "Antworte kurz und liefere IMMER am Ende einen JSON-Plan in einem ```json ... ``` Block mit folgendem Schema: "
+        "Vorgehen:\n"
+        "1) Ermittele fehlende Pflichtfelder je Aktion, frage nach: "
+        "   - create_asset: scenario (Name/ID), name, initial_balance (oder balance/value), asset_type (default generic), optional start_date/start_year/start_month. "
+        "   - create_liability: scenario, name, amount, interest_rate (falls Hypothek), optional start_date. "
+        "   - create_transaction: scenario, asset_id, name, amount, type, start_year/start_month (oder start_date). "
+        "2) Zeige eine knappe Tabelle/Liste der gesammelten Werte und frage nach Bestätigung. "
+        "3) Gib IMMER am Ende einen JSON-Plan in ```json ... ``` zurück, Schema: "
         "{ \"actions\": [ { \"type\": \"create_scenario|create_asset|create_liability|create_transaction\", "
-        "\"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", weitere Felder wie name, amount, start_date usw. } ] }. "
-        "Nutze wenn möglich Aliase (store_as) und referenziere sie in nachfolgenden Aktionen mit \"$alias\". "
-        "Wenn Daten fehlen, stelle Rückfragen, gib aber trotzdem einen leeren Plan {\"actions\":[]} im JSON-Block zurück."
+        "\"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", Felder wie name, amount, start_date, initial_balance, asset_type, interest_rate usw. } ] }. "
+        "Nutze Aliase (store_as) und referenziere sie in nachfolgenden Aktionen mit \"$alias\". "
+        "Wenn noch Daten fehlen, frage danach und gib einen leeren Plan {\"actions\":[]} zurück. "
+        "Antworte kurz."
     )
 
     chat_messages = [{"role": "system", "content": system_prompt}]
@@ -791,10 +797,21 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
             return None
 
     plan = extract_plan(reply)
+    applied_results = None
+    if plan and isinstance(plan, dict) and isinstance(plan.get("actions"), list) and len(plan["actions"]) > 0:
+        try:
+            applied_results = _apply_plan(plan, current_user)
+        except HTTPException as exc:
+            applied_results = {"error": exc.detail}
+        except Exception as exc:  # pragma: no cover
+            applied_results = {"error": str(exc)}
 
     assistant_msg = AssistantMessage(role="assistant", content=reply)
     updated_messages = payload.messages + [assistant_msg]
 
+    # If we applied, clear plan (already executed) but keep results
+    if applied_results is not None:
+        return AssistantChatResponse(messages=updated_messages, plan=None, reply=reply)
     return AssistantChatResponse(messages=updated_messages, plan=plan, reply=reply)
 
 
@@ -805,6 +822,14 @@ def assistant_apply(payload: AssistantApplyRequest, current_user=Depends(get_cur
     if not actions or not isinstance(actions, list):
         raise HTTPException(status_code=400, detail="plan.actions must be a list")
 
+    applied = _apply_plan(plan, current_user)
+    return {"status": "applied", "count": len(applied), "results": applied}
+
+
+def _apply_plan(plan: Dict[str, Any], current_user):
+    actions = plan.get("actions") if isinstance(plan, dict) else None
+    if not actions or not isinstance(actions, list):
+        return []
     applied = []
     aliases: Dict[str, str] = {}
     last_scenario_id = None
@@ -822,5 +847,4 @@ def assistant_apply(payload: AssistantApplyRequest, current_user=Depends(get_cur
         if isinstance(applied_item, dict) and applied_item.get("id") and action.get("type") == "create_scenario":
             last_scenario_id = applied_item["id"]
         applied.append(applied_item)
-
-    return {"status": "applied", "count": len(applied), "results": applied}
+    return applied
