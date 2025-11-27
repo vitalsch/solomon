@@ -13,6 +13,7 @@ import {
 } from 'chart.js';
 import Account from './Account';
 import TransactionForm from './TransactionForm';
+import AIAssistant from './AIAssistant';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -1925,6 +1926,7 @@ const Simulation = () => {
                     </div>
                 </div>
             )}
+            <AIAssistant currentScenarioId={currentScenarioId} accounts={accounts} scenarios={scenarios} />
         </>
     );
 };
