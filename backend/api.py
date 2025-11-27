@@ -603,6 +603,7 @@ def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str], fallback_la
         return aliases.get(ref[1:])
     if isinstance(ref, str) and ref.lower() == "current":
         return fallback_last
+    ref_norm = str(ref).strip().lower() if ref is not None else None
     # try as direct id
     scenario = None
     try:
@@ -617,8 +618,11 @@ def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str], fallback_la
     if ref is None and len(scenarios) == 1:
         return scenarios[0].get("id")
     for s in scenarios:
-        if s.get("name") and str(s.get("name")).lower() == str(ref).lower():
+        name_norm = str(s.get("name") or "").strip().lower()
+        if ref_norm and name_norm == ref_norm:
             return s.get("id")
+    if fallback_last:
+        return fallback_last
     return None
 
 
