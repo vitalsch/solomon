@@ -7,7 +7,7 @@ const initialBotMessage = {
         'Hallo! Ich kann dir helfen, neue Assets, Hypotheken und Transaktionen einzupflegen. Beschreibe einfach, was passiert ist, z.B. “Haus für CHF 1’000’000 gekauft, 200k vom ZKB Konto, Rest Hypothek 2% Zinsen p.a.”',
 };
 
-const AIAssistant = ({ currentScenarioId, accounts, scenarios }) => {
+const AIAssistant = ({ currentScenarioId, accounts, scenarios, onDataChanged }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState([initialBotMessage]);
     const [input, setInput] = useState('');
@@ -60,6 +60,9 @@ const AIAssistant = ({ currentScenarioId, accounts, scenarios }) => {
             if (!resp?.plan) {
                 setStatusNote('Kein automatischer Plan erkannt – bitte mehr Details geben oder manuell bestätigen.');
             }
+            if (typeof onDataChanged === 'function') {
+                await onDataChanged();
+            }
         } catch (err) {
             appendMessage({
                 role: 'assistant',
@@ -85,6 +88,9 @@ const AIAssistant = ({ currentScenarioId, accounts, scenarios }) => {
                 content: 'Plan angewendet. Die Änderungen sollten gleich sichtbar sein.',
             });
             setStatusNote('Fertig.');
+            if (typeof onDataChanged === 'function') {
+                await onDataChanged();
+            }
         } catch (err) {
             appendMessage({
                 role: 'assistant',

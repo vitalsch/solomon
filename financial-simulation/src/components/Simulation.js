@@ -206,6 +206,12 @@ const Simulation = () => {
         [accounts]
     );
 
+    const refreshAfterAssistant = useCallback(async () => {
+        if (!currentScenarioId) return;
+        await fetchScenarioDetails(currentScenarioId);
+        await handleSimulate();
+    }, [currentScenarioId, fetchScenarioDetails, handleSimulate]);
+
     const openAssetModal = useCallback(() => {
         setIsAssetModalOpen(true);
     }, []);
@@ -1926,7 +1932,12 @@ const Simulation = () => {
                     </div>
                 </div>
             )}
-            <AIAssistant currentScenarioId={currentScenarioId} accounts={accounts} scenarios={scenarios} />
+            <AIAssistant
+                currentScenarioId={currentScenarioId}
+                accounts={accounts}
+                scenarios={scenarios}
+                onDataChanged={refreshAfterAssistant}
+            />
         </>
     );
 };
