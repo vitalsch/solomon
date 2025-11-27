@@ -620,6 +620,22 @@ def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str], fallback_la
     return None
 
 
+def _ensure_unique_scenario_name(user_id: str, name: str):
+    """Ensure the user has no other scenario with the same (case-insensitive) name."""
+    existing = repo.list_scenarios_for_user(user_id)
+    for s in existing:
+        if s.get("name") and s["name"].lower() == name.lower():
+            raise HTTPException(status_code=400, detail=f"Scenario name '{name}' is already in use.")
+
+
+def _ensure_unique_asset_name(scenario_id: str, name: str):
+    """Ensure the scenario has no other asset with the same (case-insensitive) name."""
+    assets = repo.list_assets_for_scenario(scenario_id)
+    for a in assets:
+        if a.get("name") and a["name"].lower() == name.lower():
+            raise HTTPException(status_code=400, detail=f"Asset name '{name}' already exists in this scenario.")
+
+
 def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, str], last_scenario_id=None):
     action = _normalize_action(action)
     applied = None
@@ -639,6 +655,9 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         if action.get("end_year") is None or action.get("end_month") is None:
             action["end_year"] = (action.get("start_year") or datetime.utcnow().year) + 10
             action["end_month"] = 12
+        if not action.get("name"):
+            raise HTTPException(status_code=400, detail="Scenario name is required")
+        _ensure_unique_scenario_name(current_user["id"], action["name"])
         payload = {
             "user_id": current_user["id"],
             "name": action.get("name"),
@@ -715,6 +734,7 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             "end_year": action.get("end_year"),
             "end_month": action.get("end_month"),
         }
+        _ensure_unique_asset_name(scenario_id, payload["name"])
         if not payload["start_year"] and action.get("purchase_date"):
             y, m = _parse_year_month_from_date(action.get("purchase_date"))
             payload["start_year"], payload["start_month"] = y, m
@@ -767,7 +787,15 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         if not asset or asset["scenario_id"] != scenario_id:
             raise HTTPException(status_code=400, detail="Asset not part of scenario")
 
-        tx_type = action.get("type") or "one_time"
+        tx_type = (action.get("type") or "one_time").lower()
+        if tx_type == "transfer":
+            tx_type = "regular"
+        start_year = action.get("start_year")
+        start_month = action.get("start_month")
+        if (start_year is None or start_month is None) and action.get("start_date"):
+            y, m = _parse_year_month_from_date(action.get("start_date"))
+            start_year, start_month = start_year or y, start_month or m
+
         annual_interest_rate = action.get("annual_interest_rate")
         if tx_type == "mortgage_interest" and annual_interest_rate is None:
             annual_interest_rate = action.get("annual_growth_rate")
@@ -777,10 +805,10 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             action.get("name") or "AI Transaction",
             action.get("amount") or 0.0,
             tx_type,
-            action.get("start_year"),
-            action.get("start_month"),
-            action.get("end_year") or action.get("start_year"),
-            action.get("end_month") or action.get("start_month"),
+            start_year,
+            start_month,
+            action.get("end_year") or start_year,
+            action.get("end_month") or start_month,
             action.get("frequency"),
             action.get("annual_growth_rate") or 0.0,
             action.get("counter_asset_id"),
