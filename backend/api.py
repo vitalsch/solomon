@@ -4,6 +4,7 @@ import os
 import json
 import re
 import httpx
+from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -838,7 +839,8 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
             return None
         try:
             return json.loads(candidate)
-        except Exception:
+        except Exception as exc:
+            print(f"[assistant] plan json parse failed: {exc}")
             return None
 
     plan = extract_plan(reply)
@@ -846,18 +848,28 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
     if plan and isinstance(plan, dict) and isinstance(plan.get("actions"), list) and len(plan["actions"]) > 0:
         try:
             applied_results = _apply_plan(plan, current_user)
+            print(f"[assistant] applied {len(applied_results)} actions")
         except HTTPException as exc:
             applied_results = {"error": exc.detail}
+            print(f"[assistant] apply http error: {exc.detail}")
         except Exception as exc:  # pragma: no cover
             applied_results = {"error": str(exc)}
+            print(f"[assistant] apply error: {exc}")
 
-    assistant_msg = AssistantMessage(role="assistant", content=reply)
+    assistant_reply = reply
+    if applied_results is not None:
+        if isinstance(applied_results, dict) and applied_results.get("error"):
+            assistant_reply = f"{reply}\n\n(Auto-apply Fehler: {applied_results.get('error')})"
+        else:
+            assistant_reply = f"{reply}\n\n(Auto-apply: {len(applied_results)} Aktionen ausgeführt.)"
+
+    assistant_msg = AssistantMessage(role="assistant", content=assistant_reply)
     updated_messages = payload.messages + [assistant_msg]
 
     # If we applied, clear plan (already executed) but keep results
     if applied_results is not None:
-        return AssistantChatResponse(messages=updated_messages, plan=None, reply=reply)
-    return AssistantChatResponse(messages=updated_messages, plan=plan, reply=reply)
+        return AssistantChatResponse(messages=updated_messages, plan=None, reply=assistant_reply)
+    return AssistantChatResponse(messages=updated_messages, plan=plan, reply=assistant_reply)
 
 
 @app.post("/assistant/apply")
