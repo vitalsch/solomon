@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import re
+import httpx
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -43,6 +44,26 @@ except ImportError:  # pragma: no cover - only if dependency missing
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 _cached_openai_client = None
 
+# Patch httpx.Client/__init__ to accept "proxies" kwarg (OpenAI may pass it) for newer httpx versions
+try:
+    _orig_client_init = httpx.Client.__init__
+    _orig_async_client_init = httpx.AsyncClient.__init__
+
+    def _patched_client_init(self, *args, **kwargs):
+        if "proxies" in kwargs and "proxy" not in kwargs:
+            kwargs["proxy"] = kwargs.pop("proxies")
+        return _orig_client_init(self, *args, **kwargs)
+
+    def _patched_async_client_init(self, *args, **kwargs):
+        if "proxies" in kwargs and "proxy" not in kwargs:
+            kwargs["proxy"] = kwargs.pop("proxies")
+        return _orig_async_client_init(self, *args, **kwargs)
+
+    httpx.Client.__init__ = _patched_client_init  # type: ignore
+    httpx.AsyncClient.__init__ = _patched_async_client_init  # type: ignore
+except Exception:
+    pass
+
 
 def get_openai_client():
     """
@@ -52,11 +73,16 @@ def get_openai_client():
     global _cached_openai_client
     if _cached_openai_client is not None:
         return _cached_openai_client
-    if not (OpenAI and OPENAI_API_KEY):
+    if not OpenAI:
+        print("[assistant] OpenAI SDK not available")
+        return None
+    if not OPENAI_API_KEY:
+        print("[assistant] OPENAI_API_KEY not set")
         return None
     try:
         _cached_openai_client = OpenAI(api_key=OPENAI_API_KEY)
-    except Exception:
+    except Exception as exc:
+        print(f"[assistant] failed to init OpenAI client: {exc}")
         _cached_openai_client = None
     return _cached_openai_client
 
@@ -751,12 +777,14 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
     system_prompt = (
         "Du hilfst, Finanzereignisse in ein Szenario zu übernehmen (Assets, Hypotheken, Transaktionen). "
         "Vorgehen:\n"
-        "1) Ermittele fehlende Pflichtfelder je Aktion, frage nach: "
+        "1) Arbeite NUR im Kontext des aktuell eingeloggten Nutzers. Keine Daten anderer Nutzer lesen oder ändern. "
+        "   Wenn ein Szenario-Name genannt wird und es für diesen Nutzer nicht existiert, lege es neu an. "
+        "2) Ermittele fehlende Pflichtfelder je Aktion, frage nach: "
         "   - create_asset: scenario (Name/ID), name, initial_balance (oder balance/value), asset_type (default generic), optional start_date/start_year/start_month. "
         "   - create_liability: scenario, name, amount, interest_rate (falls Hypothek), optional start_date. "
         "   - create_transaction: scenario, asset_id, name, amount, type, start_year/start_month (oder start_date). "
-        "2) Zeige eine knappe Tabelle/Liste der gesammelten Werte und frage nach Bestätigung. "
-        "3) Gib IMMER am Ende einen JSON-Plan in ```json ... ``` zurück, Schema: "
+        "3) Zeige eine knappe Tabelle/Liste der gesammelten Werte und frage nach Bestätigung. "
+        "4) Gib IMMER am Ende einen JSON-Plan in ```json ... ``` zurück, Schema: "
         "{ \"actions\": [ { \"type\": \"create_scenario|create_asset|create_liability|create_transaction\", "
         "\"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", Felder wie name, amount, start_date, initial_balance, asset_type, interest_rate usw. } ] }. "
         "Nutze Aliase (store_as) und referenziere sie in nachfolgenden Aktionen mit \"$alias\". "
