@@ -630,11 +630,20 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
     elif action_type == "create_asset":
         scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
         _ensure_scenario_access(scenario_id, current_user)
+        initial_balance = (
+            action.get("initial_balance")
+            if action.get("initial_balance") is not None
+            else action.get("balance")
+            if action.get("balance") is not None
+            else action.get("value")
+            if action.get("value") is not None
+            else 0.0
+        )
         payload = {
             "name": action.get("name"),
             "annual_growth_rate": action.get("annual_growth_rate") or 0.0,
-            "initial_balance": action.get("initial_balance") or 0.0,
-            "asset_type": action.get("asset_type") or "generic",
+            "initial_balance": initial_balance,
+            "asset_type": action.get("asset_type") or action.get("type") or "generic",
             "start_year": action.get("start_year"),
             "start_month": action.get("start_month"),
             "end_year": action.get("end_year"),
