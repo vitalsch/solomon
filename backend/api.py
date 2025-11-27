@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import json
+import re
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -680,11 +682,30 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
     except Exception as exc:  # pragma: no cover - external API
         raise HTTPException(status_code=500, detail=f"Assistant call failed: {exc}")
 
+    # Attempt to extract a JSON plan from the reply
+    def extract_plan(text: str):
+        if not text:
+            return None
+        # Look for a fenced ```json ... ``` block first
+        fence_match = re.search(r"```json\\s*(\\{.*?\\})\\s*```", text, re.DOTALL | re.IGNORECASE)
+        candidate = fence_match.group(1) if fence_match else None
+        if not candidate:
+            # Fallback: first JSON object in text
+            brace_match = re.search(r"\\{.*\\}", text, re.DOTALL)
+            candidate = brace_match.group(0) if brace_match else None
+        if not candidate:
+            return None
+        try:
+            return json.loads(candidate)
+        except Exception:
+            return None
+
+    plan = extract_plan(reply)
+
     assistant_msg = AssistantMessage(role="assistant", content=reply)
     updated_messages = payload.messages + [assistant_msg]
 
-    # Plan extraction is model-dependent; we keep None here and let the user approve/apply manually.
-    return AssistantChatResponse(messages=updated_messages, plan=None, reply=reply)
+    return AssistantChatResponse(messages=updated_messages, plan=plan, reply=reply)
 
 
 @app.post("/assistant/apply")
