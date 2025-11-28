@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { sendAssistantMessage, applyAssistantPlan } from '../api';
+import { sendAssistantMessage } from '../api';
 
 const initialBotMessage = {
     role: 'assistant',
@@ -58,7 +58,7 @@ const AIAssistant = ({ currentScenarioId, accounts, scenarios, onDataChanged }) 
             }
             setPendingPlan(resp?.plan || null);
             if (!resp?.plan) {
-                setStatusNote('Kein automatischer Plan erkannt – bitte mehr Details geben oder manuell bestätigen.');
+                setStatusNote('Kein automatischer Plan erkannt – bitte mehr Details geben.');
             }
             if (typeof onDataChanged === 'function') {
                 await onDataChanged();
@@ -74,37 +74,87 @@ const AIAssistant = ({ currentScenarioId, accounts, scenarios, onDataChanged }) 
         }
     };
 
-    const handleApply = async () => {
-        if (!pendingPlan) {
-            setStatusNote('Kein Plan zum Anwenden vorhanden.');
-            return;
-        }
-        setLoading(true);
-        setStatusNote('Wende Plan an …');
-        try {
-            await applyAssistantPlan(pendingPlan);
-            appendMessage({
-                role: 'assistant',
-                content: 'Plan angewendet. Die Änderungen sollten gleich sichtbar sein.',
-            });
-            setStatusNote('Fertig.');
-            if (typeof onDataChanged === 'function') {
-                await onDataChanged();
-            }
-        } catch (err) {
-            appendMessage({
-                role: 'assistant',
-                content: `Konnte den Plan nicht anwenden: ${err.message}`,
-            });
-            setStatusNote('Bitte manuell prüfen oder später erneut versuchen.');
-        } finally {
-            setLoading(false);
-        }
-    };
-
     const handleQuickStart = () => {
         setInput(
             'Hauskauf: CHF 1’000’000, 200’000 vom ZKB Konto, Rest Hypothek, 2% Zinsen p.a., Start 11/2025.'
+        );
+    };
+
+    const renderTable = (tableData) => {
+        if (!tableData) return null;
+        const { headers, rows } = tableData;
+        return (
+            <div className="ai-table-wrapper">
+                <table className="ai-table">
+                    {headers?.length ? (
+                        <thead>
+                            <tr>
+                                {headers.map((h, idx) => (
+                                    <th key={idx}>{h || ' '}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                    ) : null}
+                    <tbody>
+                        {rows.map((r, rIdx) => (
+                            <tr key={rIdx}>
+                                {r.map((cell, cIdx) => (
+                                    <td key={cIdx}>{cell}</td>
+                                ))}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
+
+    const parsePipeTable = (lines) => {
+        if (!lines || lines.length < 2) return null;
+        const cleaned = lines
+            .map((l) => l.trim())
+            .filter((l) => l.startsWith('|'))
+            .map((l) => l.replace(/^\|/, '').replace(/\|$/, ''));
+        if (!cleaned.length) return null;
+        const headerCells = cleaned[0].split('|').map((c) => c.trim());
+        let dataLines = cleaned.slice(1);
+        if (dataLines.length && /^-+/.test(dataLines[0].replace(/\|/g, '').trim())) {
+            dataLines = dataLines.slice(1);
+        }
+        const rows = dataLines.map((l) => l.split('|').map((c) => c.trim()));
+        return { headers: headerCells, rows };
+    };
+
+    const renderMessageContent = (msg) => {
+        if (typeof msg?.content !== 'string') return msg?.content;
+        if (msg.role !== 'assistant') return msg.content;
+        // Strip fenced JSON blocks and Auto-apply status lines from assistant text
+        let cleaned = msg.content.replace(/```json[\s\S]*?```/gi, '').trim();
+        cleaned = cleaned
+            .split('\n')
+            .filter((line) => !/^\(auto-apply/i.test(line.trim()))
+            .join('\n')
+            .trim();
+        const lines = cleaned.split('\n');
+        const tableStart = lines.findIndex((l) => l.trim().startsWith('|') && l.includes('|'));
+        if (tableStart === -1) {
+            return <div className="ai-text">{cleaned}</div>;
+        }
+        let tableEnd = tableStart;
+        while (tableEnd < lines.length && lines[tableEnd].trim().startsWith('|')) {
+            tableEnd += 1;
+        }
+        const before = lines.slice(0, tableStart).join('\n').trim();
+        const tableLines = lines.slice(tableStart, tableEnd);
+        const after = lines.slice(tableEnd).join('\n').trim();
+        const tableData = parsePipeTable(tableLines);
+
+        return (
+            <>
+                {before && <div className="ai-text">{before}</div>}
+                {renderTable(tableData)}
+                {after && <div className="ai-text">{after}</div>}
+            </>
         );
     };
 
@@ -140,7 +190,7 @@ const AIAssistant = ({ currentScenarioId, accounts, scenarios, onDataChanged }) 
                     <div className="ai-messages">
                         {messages.map((msg, idx) => (
                             <div key={idx} className={`ai-bubble ${msg.role}`}>
-                                {msg.content}
+                                {renderMessageContent(msg)}
                             </div>
                         ))}
                         <div ref={bottomRef} />
@@ -156,9 +206,6 @@ const AIAssistant = ({ currentScenarioId, accounts, scenarios, onDataChanged }) 
                         <div className="ai-footer-actions">
                             <button onClick={() => handleSend()} disabled={loading}>
                                 Senden
-                            </button>
-                            <button className="secondary" onClick={handleApply} disabled={loading || !pendingPlan}>
-                                Plan anwenden
                             </button>
                         </div>
                         {statusNote && <div className="muted small">{statusNote}</div>}

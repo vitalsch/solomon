@@ -395,6 +395,12 @@ class WealthRepository:
             else v
             for k, v in updates.items()
         }
+        # If amount is provided and entry=credit, ensure amount is negative to keep debit/credit consistency
+        current = self.db.transactions.find_one({"_id": _ensure_object_id(transaction_id)})
+        if current and "amount" in updates and current.get("entry") == "credit":
+            converted_updates["amount"] = -abs(converted_updates.get("amount", updates["amount"]))
+        if current and "amount" in updates and current.get("entry") == "debit":
+            converted_updates["amount"] = abs(converted_updates.get("amount", updates["amount"]))
         doc = self.db.transactions.find_one_and_update(
             {"_id": _ensure_object_id(transaction_id)},
             {"$set": converted_updates},

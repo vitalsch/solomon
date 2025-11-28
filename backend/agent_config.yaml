@@ -1,0 +1,39 @@
+roles:
+  - orchestrator
+  - szenario
+  - konto
+  - immo
+  - hypo
+  - zins
+
+actions:
+  create_scenario:
+    required: [name, start_year, start_month, end_year, end_month]
+
+  create_asset:
+    required: [name, annual_growth_rate, start_year, start_month, end_year, end_month]
+    # asset_types mapping hints (not enforced, used by prompt/agent)
+    asset_types:
+      bank_account: [konto, account, zkb, depot]
+      real_estate: [haus, immobilie, home]
+
+  create_liability:
+    required: [name, amount]
+
+  update_asset:
+    required: [asset_id]
+
+  create_transaction:
+    required: [asset_id, name, type, start_year, start_month]
+    per_type:
+      mortgage_interest:
+        required: [asset_id, mortgage_asset_id, annual_interest_rate, frequency, start_year, start_month]
+        allow_amount_zero: true
+
+
+  create_interest_transaction:
+    required: [asset_id, name, type, start_year, start_month]
+    per_type:
+      mortgage_interest:
+        required: [asset_id, mortgage_asset_id, annual_interest_rate, frequency, start_year, start_month]
+        allow_amount_zero: true

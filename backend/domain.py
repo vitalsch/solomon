@@ -7,12 +7,25 @@ from typing import Dict, Iterable, List, Tuple
 class Account:
     """Single asset or liability that compounds monthly and processes transactions."""
 
-    def __init__(self, name: str, annual_growth_rate: float = 0.0, initial_balance: float = 0.0):
+    def __init__(
+        self,
+        name: str,
+        annual_growth_rate: float = 0.0,
+        initial_balance: float = 0.0,
+        start_year: int | None = None,
+        start_month: int | None = None,
+        end_year: int | None = None,
+        end_month: int | None = None,
+    ):
         self.name = name
         self.annual_growth_rate = annual_growth_rate
         self.monthly_growth_rate = (1 + annual_growth_rate) ** (1 / 12) - 1
         self.initial_balance = initial_balance
         self.balance = initial_balance
+        self.start_year = start_year
+        self.start_month = start_month
+        self.end_year = end_year
+        self.end_month = end_month
 
     def reset_balance(self) -> None:
         self.balance = self.initial_balance
@@ -25,6 +38,22 @@ class Account:
 
     def get_balance(self) -> float:
         return self.balance
+
+    def is_active(self, current_month: int, current_year: int) -> bool:
+        """Return True if the account is within its configured active window (inclusive)."""
+        if self.start_year is not None and self.start_month is not None:
+            starts_before_or_now = current_year > self.start_year or (
+                current_year == self.start_year and current_month >= self.start_month
+            )
+            if not starts_before_or_now:
+                return False
+        if self.end_year is not None and self.end_month is not None:
+            ends_after_or_now = current_year < self.end_year or (
+                current_year == self.end_year and current_month <= self.end_month
+            )
+            if not ends_after_or_now:
+                return False
+        return True
 
 
 class Transaction:
@@ -58,7 +87,8 @@ class RegularTransaction(Transaction):
         super().__init__(name, amount, start_month, start_year)
         self.end_month = end_month
         self.end_year = end_year
-        self.frequency = frequency
+        # Guard against missing/invalid frequency values coming from the DB
+        self.frequency = max(1, frequency or 1)
         self.annual_growth_rate = annual_growth_rate
         self.monthly_growth_rate = (1 + annual_growth_rate) ** (1 / 12) - 1
         self.original_amount = amount
@@ -107,7 +137,8 @@ class MortgageInterestTransaction(Transaction):
         super().__init__(name, 0.0, start_month, start_year)
         self.mortgage_account = mortgage_account
         self.pay_from_account = pay_from_account
-        self.frequency = frequency
+        # Guard against missing/invalid frequency values
+        self.frequency = max(1, frequency or 1)
         self.end_month = end_month
         self.end_year = end_year
         self.annual_interest_rate = annual_interest_rate
@@ -154,6 +185,7 @@ def simulate_account_balances_and_total_wealth(
     for account in accounts:
         account.reset_balance()
 
+    account_initialized = {account: False for account in accounts}
     account_balance_histories: AccountBalanceHistory = {account: [] for account in accounts}
     total_wealth_history: List[Tuple[date, float]] = []
     cash_flow_history: List[Dict] = []
@@ -174,6 +206,12 @@ def simulate_account_balances_and_total_wealth(
 
         # Apply growth and track it separately
         for account in accounts:
+            if not account.is_active(current_date.month, current_date.year):
+                account.balance = 0.0
+                continue
+            if not account_initialized[account]:
+                account.balance = account.initial_balance
+                account_initialized[account] = True
             before_growth = account.get_balance()
             account.apply_growth()
             growth_amount = account.get_balance() - before_growth
@@ -183,6 +221,8 @@ def simulate_account_balances_and_total_wealth(
 
         # First process all standard transactions per account (excluding mortgage interest which depends on balances)
         for account in accounts:
+            if not account.is_active(current_date.month, current_date.year):
+                continue
             for transaction in account_transactions.get(account, []):
                 if transaction.is_applicable(current_date.month, current_date.year):
                     account.update_balance(transaction.amount)
@@ -221,6 +261,11 @@ def simulate_account_balances_and_total_wealth(
         # Then apply mortgage interest so it reflects the current mortgage balance for the month
         for interest_tx in mortgage_interest_transactions or []:
             if interest_tx.is_applicable(current_date.month, current_date.year):
+                if not (
+                    interest_tx.mortgage_account.is_active(current_date.month, current_date.year)
+                    and interest_tx.pay_from_account.is_active(current_date.month, current_date.year)
+                ):
+                    continue
                 interest_tx.pay_from_account.update_balance(interest_tx.amount)
                 monthly_expense += interest_tx.amount
                 expense_details.append(

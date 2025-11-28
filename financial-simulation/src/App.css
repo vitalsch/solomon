@@ -708,6 +708,34 @@ button.tiny {
   font-family: inherit;
 }
 
+.ai-text {
+  white-space: pre-wrap;
+}
+
+.ai-table-wrapper {
+  overflow-x: auto;
+  margin-top: 8px;
+}
+
+.ai-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.ai-table th,
+.ai-table td {
+  border: 1px solid #d1d5db;
+  padding: 6px 8px;
+  text-align: left;
+  background: #fff;
+}
+
+.ai-table th {
+  background: #e5e7eb;
+  font-weight: 600;
+}
+
 .ai-footer-actions {
   display: flex;
   justify-content: flex-end;
@@ -718,11 +746,11 @@ button.tiny {
   min-width: 120px;
 }
 
- .modal-overlay {
+.modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(4, 6, 15, 0.7);
-  backdrop-filter: blur(4px);
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(2px);
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -731,12 +759,13 @@ button.tiny {
 }
 
 .modal-content {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.05), rgba(15, 23, 42, 0.8));
+  background: #ffffff;
   border-radius: 18px;
   padding: 1.75rem;
   width: min(560px, 92vw);
-  box-shadow: 0 30px 70px rgba(15, 23, 42, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 28px 65px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(229, 231, 235, 0.9);
+  border: 1px solid rgba(229, 231, 235, 0.9);
+  color: var(--text);
   animation: modal-pop 180ms ease-out;
 }
 

@@ -93,6 +93,7 @@ const Simulation = () => {
     const [chartRange, setChartRange] = useState({ start: 0, end: null });
     const [expandedYears, setExpandedYears] = useState([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [scenarioCount, setScenarioCount] = useState(0);
     const formatCurrency = (value) => {
         const num = Number(value);
         const safe = Number.isFinite(num) ? num : 0;
@@ -302,6 +303,11 @@ const Simulation = () => {
         const cached = simulationCache[cacheKey(selectedUserId, currentScenarioId)];
         if (cached?.cash_flows) {
             setCashFlows(cached.cash_flows);
+            const labels = cached.total_wealth?.map((point) => point.date) || [];
+            setChartRange({ start: 0, end: labels.length ? labels.length - 1 : null });
+        } else {
+            setCashFlows([]);
+            setChartRange({ start: 0, end: null });
         }
     }, [currentScenarioId, simulationCache, selectedUserId]);
 
@@ -309,6 +315,7 @@ const Simulation = () => {
         async (userIdentifier) => {
             if (!userIdentifier) {
                 setScenarios([]);
+                setScenarioCount(0);
                 setCurrentScenarioId('');
                 setScenarioDetails(null);
                 setAccounts([]);
@@ -325,6 +332,7 @@ const Simulation = () => {
             try {
                 const userScenarios = await listScenarios();
                 setScenarios(userScenarios);
+                setScenarioCount(userScenarios.length);
                 const firstScenario = normalizeId(userScenarios[0]?.id || '');
                 setCurrentScenarioId(firstScenario);
                 setSelectedScenarios(firstScenario ? [firstScenario] : []);
@@ -916,15 +924,15 @@ const Simulation = () => {
         yearlyCashFlow,
     ]);
 
-    const handleSimulate = useCallback(async () => {
-        if (!currentScenarioId) {
+    const handleSimulate = useCallback(async (scenarioIdOverride) => {
+        const scenarioKey = normalizeId(scenarioIdOverride || currentScenarioId);
+        if (!scenarioKey) {
             setError('Bitte zuerst ein Szenario auswählen.');
             return;
         }
         setLoading(true);
         setError(null);
         try {
-            const scenarioKey = normalizeId(currentScenarioId);
             const result = await simulateScenario(scenarioKey);
             setSimulationCache((prev) => ({ ...prev, [cacheKey(selectedUserId, scenarioKey)]: result }));
             setCashFlows(result.cash_flows || []);
@@ -940,11 +948,43 @@ const Simulation = () => {
         }
     }, [currentScenarioId, selectedScenarios, selectedUserId]);
 
+    const refreshScenarioList = useCallback(async () => {
+        try {
+            const userScenarios = await listScenarios();
+            setScenarios(userScenarios);
+            const currentKey = normalizeId(currentScenarioId);
+            const exists = userScenarios.some((s) => normalizeId(s.id) === currentKey);
+            const prevCount = scenarioCount;
+            const nextCount = userScenarios.length;
+            setScenarioCount(nextCount);
+
+            // If a new scenario was added (count increased), select the newest (last) scenario
+            if (nextCount > prevCount && nextCount > 0) {
+                const newestId = normalizeId(userScenarios[userScenarios.length - 1].id);
+                setCurrentScenarioId(newestId);
+                setSelectedScenarios(newestId ? [newestId] : []);
+                return newestId;
+            }
+
+            if (!exists) {
+                const nextId = normalizeId(userScenarios[0]?.id || '');
+                setCurrentScenarioId(nextId);
+                setSelectedScenarios(nextId ? [nextId] : []);
+                return nextId;
+            }
+            return currentKey;
+        } catch (err) {
+            setError(err.message);
+            return normalizeId(currentScenarioId);
+        }
+    }, [currentScenarioId, scenarioCount]);
+
     const refreshAfterAssistant = useCallback(async () => {
-        if (!currentScenarioId) return;
-        await fetchScenarioDetails(currentScenarioId);
-        await handleSimulate();
-    }, [currentScenarioId, fetchScenarioDetails, handleSimulate]);
+        const scenarioIdToUse = await refreshScenarioList();
+        if (!scenarioIdToUse) return;
+        await fetchScenarioDetails(scenarioIdToUse);
+        await handleSimulate(scenarioIdToUse);
+    }, [fetchScenarioDetails, handleSimulate, refreshScenarioList]);
 
     const handleSelectScenario = async (e) => {
         const { value, checked } = e.target;

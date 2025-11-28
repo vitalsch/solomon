@@ -2,6 +2,46 @@
 
 Dieses Backend stellt REST Endpunkte bereit, um Nutzer, Szenarien, Assets und Transaktionen in MongoDB zu verwalten und bestehende Simulationen aus `wealth_plan_5.py`/dem React Frontend mit dynamischen Daten zu speisen.
 
+## API Kurzreferenz (für den AI Assistant)
+
+- Auth  
+  - `POST /auth/register` `{username, password, name?, email?}` → `{token, user}`  
+  - `POST /auth/login` `{username, password}` → `{token, user}`  
+  - `GET /me` → aktueller User; `DELETE /me` entfernt ihn (inkl. Daten)
+- Szenarien  
+  - `GET /scenarios` (User-scoped), `GET /scenarios/{id}`  
+  - `POST /scenarios` `{name, start_year, start_month, end_year, end_month, description?, inflation_rate?, income_tax_rate?, wealth_tax_rate?}`  
+  - `PATCH /scenarios/{id}` dieselben Felder optional, `DELETE /scenarios/{id}`  
+  - `POST /scenarios/{id}/simulate` → `account_balances`, `total_wealth`, `cash_flows`
+- Assets  
+  - `GET /scenarios/{scenario_id}/assets`  
+  - `POST /scenarios/{scenario_id}/assets` `{name, annual_growth_rate=0 (bei Konten = Verzinsung/Zins), initial_balance=0, asset_type? (generic|real_estate|bank_account|mortgage), start_year?, start_month?, end_year?, end_month?}`  
+  - `PATCH /assets/{asset_id}` optionale Felder wie oben, `DELETE /assets/{asset_id}`
+  - Assistant-Plan-Aktion `update_asset` erlaubt Updates (z.B. growth_rate) per Name/ID (alias) statt Neuanlage.
+- Transaktionen  
+  - `GET /scenarios/{scenario_id}/transactions`  
+  - `POST /scenarios/{scenario_id}/transactions` Basisfelder: `{asset_id, name, amount, type (one_time|regular|mortgage_interest), start_year, start_month, end_year?, end_month?, frequency?, annual_growth_rate?}`  
+    - Double Entry: `double_entry=true` + `counter_asset_id` (≠ `asset_id`)  
+    - Mortgage Interest: `mortgage_asset_id` + `asset_id` (Zahler), `annual_interest_rate` oder `annual_growth_rate`, `frequency` > 0  
+    - Tax: `taxable` (bool), `taxable_amount` (Basis); Szenario-`income_tax_rate` wird angewendet  
+  - `PATCH /transactions/{transaction_id}` optionale Felder wie oben, `DELETE /transactions/{transaction_id}`
+  - Assistant-Plan-Aktion `update_transaction` erlaubt Updates per Name/ID (alias) statt Neuanlage; oder `overwrite=true` bei create, um alte gleichnamige zu ersetzen.
+- Assistant-spezifisch  
+  - `POST /assistant/chat` `{messages:[{role: system|user|assistant, content}], context?:{scenario_id?, scenario_name?, auto_apply?}}` → `{messages, plan|null, reply}`; benötigt `OPENAI_API_KEY`  
+  - `POST /assistant/apply` `{plan:{actions:[...]}}` führt Plan-Aktionen aus (create/update/delete Asset/Transaction, create/use/delete Scenario etc.)
+
+### Assistant-Hinweise / Mapping typischer Begriffe
+- „Überweisung/Transfer/Umbuchung“ → `create_transaction` mit `double_entry=true`, `asset_id` = zahlt ab, `counter_asset_id` = empfängt; `tx_type=regular` oder `one_time` je Kontext; bei fehlenden Konten nachfragen.  
+- „monatlich/regelmäßig/Gehaltszahlung“ → `tx_type=regular`, `frequency=1` (wenn nicht angegeben).  
+- Vor Ausführen: kurz tabellarisch/knapp zusammenfassen, Zustimmung einholen; `auto_apply` nur setzen, wenn der Nutzer explizit zustimmt (oberste Ebene, nicht als Action).  
+- Unklare Typen: nachfragen statt neue Typen erfinden (erlaubt: `one_time`, `regular`, `mortgage_interest`).  
+- Wenn kein Szenario genannt: aktuelles Szenario aus dem Frontend verwenden, sonst nach dem Namen fragen.  
+- Fehlende Pflichtfelder (Szenario, Asset/Konto, Betrag, Typ, Startdatum) immer nachfragen.
+- Hypothek: Keine Wachstumsrate auf dem Asset; Zinssatz gehört ausschließlich in die `mortgage_interest`-Transaktion.
+ - "Zinsen/Zinssatz/Zinszahlungen oder ähnliches" → `create_transaction` mit `type=mortgage_interest`(Felder: asset_id Zahler, mortgage_asset_id, annual_interest_rate, frequency, Start/Ende).
+
+Hinweise: Alle Endpunkte sind auf den eingeloggten User gescoped (Bearer-Token). Fehlende Frequenzen werden intern als 1 interpretiert, um `% None` zu vermeiden. CORS erlaubt standardmäßig `*`, Host lokal `http://127.0.0.1:8000`.
+
 ## Setup
 
 1. Stelle sicher, dass ein MongoDB Server läuft **oder** nutze die gegebene Atlas-Instanz und setze die Verbindungsdaten:

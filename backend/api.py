@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import re
+from pathlib import Path
 import httpx
 from datetime import datetime
 from typing import Literal, Optional
@@ -41,6 +42,12 @@ try:
     from openai import OpenAI
 except ImportError:  # pragma: no cover - only if dependency missing
     OpenAI = None  # type: ignore
+
+# Optional YAML config for agent roles/validation
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - dependency optional
+    yaml = None  # type: ignore
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 _cached_openai_client = None
@@ -341,16 +348,20 @@ def create_asset(scenario_id: str, payload: AssetCreate, current_user=Depends(ge
         raise HTTPException(status_code=404, detail="Scenario not found")
     if scenario["user_id"] != current_user["id"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to modify this scenario")
+    start_year = payload.start_year or scenario["start_year"]
+    start_month = payload.start_month or scenario["start_month"]
+    end_year = payload.end_year or scenario["end_year"]
+    end_month = payload.end_month or scenario["end_month"]
     return repo.add_asset(
         scenario_id,
         payload.name,
         payload.annual_growth_rate,
         payload.initial_balance,
         payload.asset_type,
-        payload.start_year,
-        payload.start_month,
-        payload.end_year,
-        payload.end_month,
+        start_year,
+        start_month,
+        end_year,
+        end_month,
     )
 
 
@@ -584,16 +595,223 @@ def _normalize_action(action: Dict[str, Any]) -> Dict[str, Any]:
 def _parse_year_month_from_date(date_value: Optional[str]):
     if not date_value or not isinstance(date_value, str):
         return None, None
+    date_value = date_value.strip()
+    # Accept formats: YYYY-MM, YYYY-MM-DD, MM/YYYY, MM-YYYY, MM.YYYY, DD.MM.YYYY (month is the middle or after separator)
     try:
-        # accept YYYY-MM or YYYY-MM-DD
+        # YYYY-MM or YYYY-MM-DD
         parts = date_value.split("-")
-        if len(parts) >= 2:
+        if len(parts) >= 2 and len(parts[0]) == 4:
             year = int(parts[0])
             month = int(parts[1])
+            return year, month
+        # MM/YYYY or MM-YYYY or MM.YYYY
+        for sep in ["/", "-", "."]:
+            if sep in date_value and len(date_value.split(sep)) == 2:
+                m, y = date_value.split(sep)
+                month = int(m)
+                year = int(y)
+                return year, month
+        # DD.MM.YYYY -> take middle as month
+        if date_value.count(".") == 2:
+            dd, mm, yyyy = date_value.split(".")
+            year = int(yyyy)
+            month = int(mm)
             return year, month
     except Exception:
         return None, None
     return None, None
+
+
+def _parse_year_month_fuzzy(value: Optional[str]):
+    """Parse year/month from various strings like '1/2026', '01/2026', '2026-01', 'Jan 2026'."""
+    if not value or not isinstance(value, str):
+        return None, None
+    y, m = _parse_year_month_from_date(value)
+    if y and m:
+        return y, m
+    try:
+        import re
+
+        match = re.search(r"(\d{1,2})\D+(\d{4})", value)
+        if match:
+            month = int(match.group(1))
+            year = int(match.group(2))
+            return year, month
+    except Exception:
+        return None, None
+    return None, None
+
+
+def _parse_rate(value):
+    """Parse a rate that might be given als 0.02, 2, '2%', oder '0,02'."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, str):
+            import re
+
+            # Extract first numeric chunk (supports commas, dots, percent)
+            match = re.search(r"([-+]?\d+[.,]?\d*)", value)
+            if not match:
+                return None
+            val = match.group(1).replace(",", ".")
+            rate = float(val)
+            has_percent = "%" in value or "prozent" in value.lower()
+        else:
+            rate = float(value)
+            has_percent = False
+        # If a percent marker is present, always divide by 100 (e.g. 1% -> 0.01)
+        if has_percent and rate is not None:
+            rate = rate / 100.0
+        # If no percent marker: interpret values >=1 als Prozentangabe (1 -> 0.01, 2 -> 0.02, 50 -> 0.5)
+        if not has_percent and rate >= 1 and rate <= 100:
+            rate = rate / 100.0
+        return rate
+    except Exception:
+        return None
+
+
+def _load_agent_config():
+    default = {
+        "roles": ["orchestrator", "szenario", "konto", "immo", "hypo", "zins"],
+        "actions": {
+            "create_scenario": {"required": ["name", "start_year", "start_month", "end_year", "end_month"]},
+            "create_asset": {
+                "required": ["name", "annual_growth_rate"],
+                "asset_types": {"bank": ["konto", "account", "zkb", "depot"], "real_estate": ["haus", "immobilie", "home"]},
+            },
+            "create_liability": {"required": ["name", "amount"], "defaults": {}},
+            "update_asset": {"required": ["asset_id"]},
+            "create_transaction": {
+                "required": ["asset_id", "name", "type", "start_year", "start_month"],
+                "per_type": {
+                    "mortgage_interest": {
+                        "required": ["asset_id", "mortgage_asset_id", "annual_interest_rate", "frequency", "start_year", "start_month"],
+                        "allow_amount_zero": True,
+                    }
+                },
+            },
+        },
+    }
+    cfg_path = Path(__file__).parent / "agent_config.yaml"
+    if yaml is None or not cfg_path.exists():
+        return default
+    try:
+        with cfg_path.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        return default
+    return default
+
+
+AGENT_CONFIG = _load_agent_config()
+
+
+def _validate_actions(actions: List[Dict[str, Any]]) -> List[str]:
+    """
+    Basic pre-flight validation to avoid running incomplete plans.
+    Returns a list of human-readable missing-field messages.
+    """
+    missing: List[str] = []
+    for idx, action in enumerate(actions or []):
+        if not isinstance(action, dict):
+            continue
+        a_type = (action.get("type") or action.get("action") or "").lower()
+        label = f"Aktion {idx+1} ({a_type or 'unbekannt'})"
+        cfg_actions = AGENT_CONFIG.get("actions", {})
+        # normalize interest helper
+        if a_type == "create_interest_transaction":
+            action["type"] = "create_transaction"
+            if not action.get("type_tx") and not action.get("tx_type"):
+                action["tx_type"] = "mortgage_interest"
+            a_type = "create_transaction"
+        cfg = cfg_actions.get(a_type, {})
+        base_required = cfg.get("required", [])
+        per_type = (cfg.get("per_type") or {}) if isinstance(cfg, dict) else {}
+
+        # helper to check presence
+        def _has(field: str) -> bool:
+            return action.get(field) is not None
+
+        need = []
+        for field in base_required:
+            if not _has(field):
+                need.append(field)
+
+        # Special handling for start_date fallback
+        if any(f in base_required for f in ["start_year", "start_month"]):
+            if not (_has("start_year") and _has("start_month")) and not _has("start_date"):
+                if "start_year/start_month" not in need:
+                    need.append("start_year/start_month oder start_date")
+                need = [n for n in need if n not in {"start_year", "start_month"}]
+
+        if a_type == "create_transaction":
+            tx_type = _normalize_tx_type(action.get("tx_type") or action.get("transaction_type") or action.get("type"))
+            type_cfg = per_type.get(tx_type, {})
+            for field in type_cfg.get("required", []):
+                if not _has(field):
+                    need.append(field)
+            if tx_type in {"mortgage_interest", "zinsausgaben"}:
+                # Accept alias fields and parsed rates
+                rate = (
+                    action.get("annual_interest_rate")
+                    or action.get("interest_rate")
+                    or action.get("zinssatz")
+                    or action.get("zins")
+                    or action.get("annual_growth_rate")
+                )
+                if rate is None and "annual_interest_rate" in type_cfg.get("required", []):
+                    need.append("annual_interest_rate/interest_rate/zinssatz")
+                if not _has("frequency"):
+                    need.append("frequency")
+                if not (_has("start_year") and _has("start_month")) and not _has("start_date"):
+                    need.append("start_year/start_month oder start_date")
+
+            # Double entry (Transfer/Umbuchung): asset_id und counter_asset_id erforderlich
+            if action.get("double_entry"):
+                if action.get("asset_id") is None and action.get("from_asset") is None:
+                    need.append("asset_id (Zahler)")
+                if action.get("counter_asset_id") is None and action.get("to_asset") is None:
+                    need.append("counter_asset_id (Empfänger)")
+                if action.get("amount") is None:
+                    need.append("amount")
+                if not (_has("start_year") and _has("start_month")) and not _has("start_date"):
+                    need.append("start_year/start_month oder start_date")
+
+        if need:
+            missing.append(f"{label}: fehlend -> {', '.join(sorted(set(need)))}")
+    return missing
+
+
+def _normalize_asset_type(value: Optional[str], name_hint: Optional[str] = None) -> Optional[str]:
+    if not value and not name_hint:
+        return None
+    candidates = []
+    if value:
+        candidates.append(value)
+    if name_hint:
+        candidates.append(name_hint)
+    for candidate in candidates:
+        val = str(candidate or "").strip().lower()
+        if not val:
+            continue
+        if val in {"real_estate", "immobilie", "immobilien", "haus", "house", "home"}:
+            return "real_estate"
+        if val in {"mortgage", "hypothek", "hypo"}:
+            return "mortgage"
+        if val in {"bank_account", "konto", "account", "zkb", "depot"}:
+            return "bank_account"
+    return None
+
+
+def _normalize_tx_type(value: Optional[str]) -> str:
+    """Normalize transaction type strings (spaces/hyphens) and map synonyms to canonical types."""
+    tx_type = (value or "one_time").strip().lower().replace(" ", "_").replace("-", "_")
+    if tx_type in {"zinsausgaben", "zinszahlung", "zinszahlungen", "interest_expense", "interest_payment"}:
+        return "mortgage_interest"
+    return tx_type or "one_time"
 
 
 def _resolve_scenario_id(ref, current_user, aliases: Dict[str, str], fallback_last=None):
@@ -672,6 +890,16 @@ def _delete_transaction_by_ref(scenario_id: str, ref, aliases: Dict[str, str]):
     return {"deleted_transaction_id": tx_id, "name": tx.get("name")}
 
 
+def _resolve_transaction_by_ref(scenario_id: str, ref, aliases: Dict[str, str]):
+    tx_id = _resolve_transaction_id(ref, scenario_id, aliases)
+    if not tx_id:
+        return None
+    tx = repo.get_transaction(tx_id)
+    if not tx or tx.get("scenario_id") != scenario_id:
+        return None
+    return tx
+
+
 def _resolve_asset_id(ref, scenario_id: str, aliases: Dict[str, str]):
     if ref is None:
         return None
@@ -712,14 +940,32 @@ def _resolve_transaction_id(ref, scenario_id: str, aliases: Dict[str, str]):
     return None
 
 
-def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, str], last_scenario_id=None):
+def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, str], last_scenario_id=None, interest_rates=None, state=None):
     action = _normalize_action(action)
     applied = None
-    action_type = action.get("type")
+    action_type = action.get("type") or action.get("action")
+
+    # Normalize interest helper to create_transaction/mortgage_interest
+    if (action_type or "").lower() == "create_interest_transaction":
+        action["tx_type"] = "mortgage_interest"
+        action["type"] = "create_transaction"
+        action_type = "create_transaction"
+        if action.get("amount") is None:
+            action["amount"] = 0.0
+
+    # If action_type was mistakenly a transaction type, pivot to create_transaction and carry it along
+    tx_type_from_action = None
+    if action_type in {"regular", "one_time", "mortgage_interest"}:
+        tx_type_from_action = action_type
+        action_type = "create_transaction"
+    elif action_type in {"credit", "debit"}:
+        tx_type_from_action = "regular"
+        action_type = "create_transaction"
 
     # Allow shorthand "transfer" as an action: treat as create_transaction with transfer subtype
     if action_type == "transfer":
         action["tx_type_internal"] = "transfer"
+        action["double_entry"] = action.get("double_entry") or True
         action_type = "create_transaction"
 
     def resolve(value):
@@ -728,17 +974,35 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         return value
 
     if action_type == "create_scenario":
-        # Default period if missing
-        if action.get("start_year") is None or action.get("start_month") is None:
-            today = datetime.utcnow()
-            action["start_year"] = today.year
-            action["start_month"] = today.month
-        if action.get("end_year") is None or action.get("end_month") is None:
-            action["end_year"] = (action.get("start_year") or datetime.utcnow().year) + 10
-            action["end_month"] = 12
         if not action.get("name"):
             raise HTTPException(status_code=400, detail="Scenario name is required")
         _ensure_unique_scenario_name(current_user["id"], action["name"])
+        # Parse start/end from start_date/end_date if provided
+        if action.get("start_date") and (action.get("start_year") is None or action.get("start_month") is None):
+            y, m = _parse_year_month_from_date(action.get("start_date"))
+            if y:
+                action["start_year"] = action.get("start_year") or y
+            if m:
+                action["start_month"] = action.get("start_month") or m
+        if action.get("end_date") and (action.get("end_year") is None or action.get("end_month") is None):
+            y, m = _parse_year_month_from_date(action.get("end_date"))
+            if y:
+                action["end_year"] = action.get("end_year") or y
+            if m:
+                action["end_month"] = action.get("end_month") or m
+        # Fuzzy parse from start/end fields if provided as strings like "01/2026"
+        if (action.get("start_year") is None or action.get("start_month") is None) and action.get("start"):
+            y, m = _parse_year_month_fuzzy(str(action.get("start")))
+            if y:
+                action["start_year"] = action.get("start_year") or y
+            if m:
+                action["start_month"] = action.get("start_month") or m
+        if (action.get("end_year") is None or action.get("end_month") is None) and action.get("end"):
+            y, m = _parse_year_month_fuzzy(str(action.get("end")))
+            if y:
+                action["end_year"] = action.get("end_year") or y
+            if m:
+                action["end_month"] = action.get("end_month") or m
         payload = {
             "user_id": current_user["id"],
             "name": action.get("name"),
@@ -748,12 +1012,15 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             "end_month": action.get("end_month"),
             "description": action.get("description"),
             "inflation_rate": action.get("inflation_rate"),
-            "income_tax_rate": action.get("income_tax_rate"),
+            "income_tax_rate": action.get("income_tax_rate")
+            or action.get("income_tax")
+            or action.get("einkommenssteuersatz")
+            or action.get("steuersatz"),
             "wealth_tax_rate": action.get("wealth_tax_rate"),
         }
         required = ["name", "start_year", "start_month", "end_year", "end_month"]
         if any(payload.get(k) is None for k in required):
-            raise HTTPException(status_code=400, detail=f"Missing fields for create_scenario: {required}")
+            raise HTTPException(status_code=400, detail="start_year/start_month and end_year/end_month required for create_scenario")
         applied = repo.create_scenario(
             payload["user_id"],
             payload["name"],
@@ -778,7 +1045,7 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         applied = scenario
     elif action_type == "create_asset":
         scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
-        _ensure_scenario_access(scenario_id, current_user)
+        scenario_doc = _ensure_scenario_access(scenario_id, current_user)
         initial_balance = (
             action.get("initial_balance")
             if action.get("initial_balance") is not None
@@ -788,15 +1055,16 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             if action.get("value") is not None
             else 0.0
         )
-        inferred_type = action.get("asset_type") or action.get("type") or None
+        inferred_type = _normalize_asset_type(action.get("asset_type") or action.get("type"), action.get("name"))
         if not inferred_type:
             lname = (action.get("name") or "").lower()
-            if any(k in lname for k in ["konto", "account", "zkb"]):
+            if any(k in lname for k in ["konto", "account", "zkb", "depot"]):
                 inferred_type = "bank_account"
             elif any(k in lname for k in ["hypo", "hypothek"]):
                 inferred_type = "mortgage"
-            elif any(k in lname for k in ["haus", "immobilie", "house"]):
+            elif any(k in lname for k in ["haus", "immobilie", "house", "home"]):
                 inferred_type = "real_estate"
+        growth_rate = _parse_rate(action.get("annual_growth_rate") or action.get("growth_rate") or 0.0) or 0.0
         name_value = action.get("name")
         if not name_value:
             lname = (action.get("name") or action.get("type") or "").lower()
@@ -808,15 +1076,30 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
                 name_value = "Haus"
             else:
                 name_value = "Asset"
+        # Re-use existing asset if same name exists in scenario
+        existing_assets = repo.list_assets_for_scenario(scenario_id)
+        for existing in existing_assets:
+            if existing.get("name") and existing["name"].lower() == name_value.lower():
+                applied = existing
+                if name_value and name_value not in aliases:
+                    aliases[name_value] = existing.get("id")
+                break
+        if applied:
+            return applied
+
+        start_year = action.get("start_year") or (scenario_doc.get("start_year") if scenario_doc else None)
+        start_month = action.get("start_month") or (scenario_doc.get("start_month") if scenario_doc else None)
+        end_year = action.get("end_year") or (scenario_doc.get("end_year") if scenario_doc else None)
+        end_month = action.get("end_month") or (scenario_doc.get("end_month") if scenario_doc else None)
         payload = {
             "name": name_value,
-            "annual_growth_rate": action.get("annual_growth_rate") or 0.0,
+            "annual_growth_rate": growth_rate,
             "initial_balance": initial_balance,
             "asset_type": inferred_type or "generic",
-            "start_year": action.get("start_year"),
-            "start_month": action.get("start_month"),
-            "end_year": action.get("end_year"),
-            "end_month": action.get("end_month"),
+            "start_year": start_year,
+            "start_month": start_month,
+            "end_year": end_year,
+            "end_month": end_month,
         }
         _ensure_unique_asset_name(scenario_id, payload["name"])
         if not payload["start_year"] and action.get("purchase_date"):
@@ -825,6 +1108,11 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         if not payload["start_year"] and action.get("start_date"):
             y, m = _parse_year_month_from_date(action.get("start_date"))
             payload["start_year"], payload["start_month"] = y, m
+        if scenario_doc:
+            payload["start_year"] = payload["start_year"] or scenario_doc.get("start_year")
+            payload["start_month"] = payload["start_month"] or scenario_doc.get("start_month")
+            payload["end_year"] = payload["end_year"] or scenario_doc.get("end_year")
+            payload["end_month"] = payload["end_month"] or scenario_doc.get("end_month")
         applied = repo.add_asset(
             scenario_id,
             payload["name"],
@@ -838,83 +1126,278 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
         )
         if payload["name"] and payload["name"] not in aliases:
             aliases[payload["name"]] = applied.get("id")
+        if state is not None and applied.get("id"):
+            state["last_asset_id"] = applied.get("id")
+
+    elif action_type == "update_asset":
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
+        _ensure_scenario_access(scenario_id, current_user)
+        asset_id = _resolve_asset_id(action.get("asset_id") or action.get("name"), scenario_id, aliases)
+        if not asset_id:
+            raise HTTPException(status_code=404, detail="Asset not found to update")
+        updates = {
+            k: v
+            for k, v in {
+                "name": action.get("name"),
+                "annual_growth_rate": _parse_rate(action.get("annual_growth_rate") or action.get("growth_rate")) if action.get("annual_growth_rate") is not None or action.get("growth_rate") is not None else None,
+                "initial_balance": action.get("initial_balance"),
+                "asset_type": action.get("asset_type"),
+                "start_year": action.get("start_year"),
+                "start_month": action.get("start_month"),
+                "end_year": action.get("end_year"),
+                "end_month": action.get("end_month"),
+            }.items()
+            if v is not None
+        }
+        if not updates:
+            raise HTTPException(status_code=400, detail="No updates provided for update_asset")
+        applied = repo.update_asset(asset_id, updates)
+        if action.get("store_as"):
+            aliases[action["store_as"]] = asset_id
 
     elif action_type == "create_liability":
         scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
-        _ensure_scenario_access(scenario_id, current_user)
+        scenario_doc = _ensure_scenario_access(scenario_id, current_user)
         name = action.get("name") or action.get("type") or "Liability"
         amount = action.get("amount") or 0.0
-        annual_rate = action.get("annual_interest_rate") or action.get("interest_rate") or action.get("annual_growth_rate")
+        interest_rate = _parse_rate(
+            action.get("annual_interest_rate")
+            or action.get("interest_rate")
+            or action.get("zinssatz")
+            or action.get("zins")
+        )
+        # Hypotheken bekommen keine Wachstumsrate; Zins gehört in mortgage_interest
+        asset_growth_rate = 0.0
         start_year, start_month = _parse_year_month_from_date(action.get("start_date"))
+        if scenario_doc:
+            start_year = start_year or scenario_doc.get("start_year")
+            start_month = start_month or scenario_doc.get("start_month")
+        end_year = action.get("end_year") or (scenario_doc.get("end_year") if scenario_doc else None)
+        end_month = action.get("end_month") or (scenario_doc.get("end_month") if scenario_doc else None)
         applied = repo.add_asset(
             scenario_id,
             name,
-            annual_rate or 0.0,
+            asset_growth_rate,
             -abs(amount),
             "mortgage",
             start_year,
             start_month,
-            action.get("end_year"),
-            action.get("end_month"),
+            end_year,
+            end_month,
         )
+        # store alias for liability/mortgage by name
+        if name and name not in aliases:
+            aliases[name] = applied.get("id")
+        # track interest rate by mortgage asset id for later mortgage_interest transactions
+        if interest_rates is not None and applied.get("id") and interest_rate is not None:
+            interest_rates[applied.get("id")] = interest_rate
+        if state is not None and applied.get("id"):
+            state["last_mortgage_id"] = applied.get("id")
+        # Auto-create mortgage interest transaction (payer = pay_from or first bank_account)
+        try:
+            payer_asset_id = (
+                _resolve_asset_id(action.get("pay_from_asset_id") or action.get("pay_from_asset"), scenario_id, aliases)
+                or _resolve_asset_id(action.get("asset_id"), scenario_id, aliases)
+            )
+            if not payer_asset_id:
+                assets_in_scenario = repo.list_assets_for_scenario(scenario_id)
+                bank = next((a for a in assets_in_scenario if a.get("asset_type") == "bank_account"), None)
+                payer_asset_id = bank.get("id") if bank else None
+            if payer_asset_id:
+                scenario = repo.get_scenario(scenario_id)
+                mi_start_year = start_year or scenario.get("start_year")
+                mi_start_month = start_month or scenario.get("start_month")
+                mi_end_year = action.get("end_year") or scenario.get("end_year")
+                mi_end_month = action.get("end_month") or scenario.get("end_month")
+                repo.add_transaction(
+                    scenario_id,
+                    payer_asset_id,
+                    f"{name} Zins",
+                    0.0,
+                    "mortgage_interest",
+                    mi_start_year,
+                    mi_start_month,
+                    mi_end_year,
+                    mi_end_month,
+                    action.get("frequency") or 1,
+                    interest_rate or action.get("annual_growth_rate") or 0.0,
+                    None,
+                    False,
+                    applied.get("id"),
+                    interest_rate or action.get("annual_growth_rate") or 0.0,
+                    action.get("taxable") or False,
+                    action.get("taxable_amount"),
+                )
+        except Exception as exc:  # pragma: no cover
+            print(f"[assistant] failed to auto-create mortgage interest tx: {exc}")
 
     elif action_type == "create_transaction":
         scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
         _ensure_scenario_access(scenario_id, current_user)
-        asset_id = _resolve_asset_id(action.get("asset_id"), scenario_id, aliases)
+        scenario = repo.get_scenario(scenario_id)
+        if not scenario:
+            raise HTTPException(status_code=404, detail="Scenario not found for create_transaction")
+        asset_id = _resolve_asset_id(action.get("asset_id") or action.get("from_asset"), scenario_id, aliases)
+        # If a counter asset is present, default to double_entry
+        if not action.get("double_entry") and (action.get("counter_asset_id") or action.get("to_asset")):
+            action["double_entry"] = True
         if not asset_id:
-            # fallback: if only one asset in scenario, pick it
-            assets = repo.list_assets_for_scenario(scenario_id)
-            if len(assets) == 1:
-                asset_id = assets[0]["id"]
+            # fallback: last created asset in state
+            if state is not None:
+                asset_id = state.get("last_asset_id")
+            if not asset_id:
+                # fallback: if only one asset in scenario, pick it
+                assets = repo.list_assets_for_scenario(scenario_id)
+                if len(assets) == 1:
+                    asset_id = assets[0]["id"]
         if not asset_id:
             raise HTTPException(status_code=400, detail="asset_id required for create_transaction")
         asset = repo.get_asset(asset_id)
         if not asset or asset["scenario_id"] != scenario_id:
             raise HTTPException(status_code=400, detail="Asset not part of scenario")
 
-        tx_type = (
-            action.get("tx_type_internal")
+        tx_type = _normalize_tx_type(
+            tx_type_from_action
+            or action.get("tx_type_internal")
             or action.get("tx_type")
             or action.get("transaction_type")
             or action.get("tx_kind")
             or action.get("type")
             or "one_time"
         )
-        tx_type = (tx_type or "one_time").lower()
         if tx_type == "transfer":
             tx_type = "regular"
-        start_year = action.get("start_year")
-        start_month = action.get("start_month")
-        if (start_year is None or start_month is None) and action.get("start_date"):
-            y, m = _parse_year_month_from_date(action.get("start_date"))
-            start_year, start_month = start_year or y, start_month or m
+        # Default mortgage_asset_id from last created mortgage if missing
+        if tx_type == "mortgage_interest" and not action.get("mortgage_asset_id") and state is not None:
+            action["mortgage_asset_id"] = state.get("last_mortgage_id")
+        if tx_type == "mortgage_interest":
+            action["double_entry"] = False
 
-        annual_interest_rate = action.get("annual_interest_rate")
-        if tx_type == "mortgage_interest" and annual_interest_rate is None:
-            annual_interest_rate = action.get("annual_growth_rate")
+        # Mortgage interest-specific normalisation
+        if tx_type == "mortgage_interest":
+            # If annual_interest_rate is missing but amount looks like a rate (0 < amount <= 1), treat amount as rate and set amount to 0 (computed later)
+            if (action.get("annual_interest_rate") is None and action.get("interest_rate") is None and action.get("zinssatz") is None):
+                amt = action.get("amount")
+                try:
+                    amt_f = float(amt)
+                except Exception:
+                    amt_f = None
+                if amt_f is not None and 0 < amt_f <= 1:
+                    action["annual_interest_rate"] = amt_f
+                    action["amount"] = 0.0
+            # Ensure frequency defaults to monthly if not provided
+            action["frequency"] = action.get("frequency") or 1
+
+            # If mortgage_asset_id missing but asset is a mortgage, treat it as the mortgage and look for a payer
+            if not action.get("mortgage_asset_id") and asset and asset.get("asset_type") == "mortgage":
+                action["mortgage_asset_id"] = asset_id
+                # payer fallback: pay_from_asset, last_asset_id, or first bank account
+                payer_candidate = _resolve_asset_id(action.get("pay_from_asset") or action.get("pay_from_asset_id"), scenario_id, aliases)
+                if not payer_candidate and state is not None:
+                    payer_candidate = state.get("last_asset_id")
+                if not payer_candidate:
+                    assets_in_scenario = repo.list_assets_for_scenario(scenario_id)
+                    bank = next((a for a in assets_in_scenario if a.get("asset_type") == "bank_account"), None)
+                    payer_candidate = bank.get("id") if bank else None
+                if payer_candidate:
+                    asset_id = payer_candidate
+
+        # Prefer explicit dates; fall back to scenario defaults
+        start_year = None
+        start_month = None
+        if action.get("start_date"):
+            y, m = _parse_year_month_from_date(action.get("start_date"))
+            start_year, start_month = y, m
+        if start_year is None:
+            start_year = action.get("start_year") or scenario.get("start_year")
+        if start_month is None:
+            start_month = action.get("start_month") or scenario.get("start_month")
+
+        end_year = None
+        end_month = None
+        if action.get("end_date"):
+            y, m = _parse_year_month_from_date(action.get("end_date"))
+            end_year, end_month = y, m
+        if end_year is None:
+            end_year = action.get("end_year") or scenario.get("end_year")
+        if end_month is None:
+            end_month = action.get("end_month") or scenario.get("end_month")
+
+        annual_interest_rate = _parse_rate(
+            action.get("annual_interest_rate")
+            or action.get("interest_rate")
+            or action.get("zinssatz")
+            or action.get("zins")
+        )
+        if tx_type in {"mortgage_interest", "zinsausgaben"}:
+            # Require mortgage and rate; no fallback to growth
+            if annual_interest_rate is None and interest_rates and action.get("mortgage_asset_id"):
+                annual_interest_rate = interest_rates.get(action.get("mortgage_asset_id"))
+            if not action.get("mortgage_asset_id") and state is not None:
+                action["mortgage_asset_id"] = state.get("last_mortgage_id")
+            if action.get("mortgage_asset_id") is None:
+                raise HTTPException(status_code=400, detail="mortgage_asset_id required for mortgage_interest")
+            if annual_interest_rate is None:
+                raise HTTPException(status_code=400, detail="annual_interest_rate required for mortgage_interest")
+            action["amount"] = 0.0
+            if action.get("frequency") is None:
+                action["frequency"] = 1
         tx_name = action.get("name") or "AI Transaction"
         overwrite = action.get("overwrite") or action.get("overwrite_existing") or action.get("replace")
         if overwrite:
             _delete_transactions_by_name(scenario_id, tx_name)
+        growth_rate_raw = action.get("annual_growth_rate") or action.get("growth_rate")
+        growth_rate = _parse_rate(growth_rate_raw) if growth_rate_raw is not None else None
+        # If a transaction with the same name exists and no overwrite flag, perform update instead of failing
+        existing_tx_id = _resolve_transaction_id(tx_name, scenario_id, aliases)
+        if existing_tx_id and not overwrite:
+            tx = repo.get_transaction(existing_tx_id)
+            if not tx:
+                raise HTTPException(status_code=404, detail="Transaction not found to update")
+            # Build updates using provided values, falling back to existing data
+            updates = {
+                k: v
+                for k, v in {
+                    "name": tx_name,
+                    "amount": action.get("amount"),
+                    "type": tx_type or tx.get("type"),
+                    "start_year": start_year,
+                    "start_month": start_month,
+                    "end_year": end_year,
+                    "end_month": end_month,
+                    "frequency": action.get("frequency"),
+                    "annual_growth_rate": growth_rate if growth_rate is not None else tx.get("annual_growth_rate"),
+                    "asset_id": asset_id or tx.get("asset_id"),
+                    "counter_asset_id": action.get("counter_asset_id"),
+                    "double_entry": action.get("double_entry"),
+                    "mortgage_asset_id": action.get("mortgage_asset_id"),
+                    "annual_interest_rate": annual_interest_rate,
+                    "taxable": action.get("taxable") if action.get("taxable") is not None else tx.get("taxable"),
+                    "taxable_amount": action.get("taxable_amount"),
+                }.items()
+                if v is not None
+            }
+            applied = repo.update_transaction(existing_tx_id, updates)
+            return applied
         _ensure_unique_transaction_name(scenario_id, tx_name)
         if action.get("double_entry"):
-            counter_asset_id = _resolve_asset_id(action.get("counter_asset_id") or action.get("to_asset_id"), scenario_id, aliases)
+            counter_asset_id = _resolve_asset_id(action.get("counter_asset_id") or action.get("to_asset_id") or action.get("to_asset"), scenario_id, aliases)
             if not counter_asset_id:
                 raise HTTPException(status_code=400, detail="counter_asset_id (or to_asset_id) required for double_entry")
             if counter_asset_id == asset_id:
                 raise HTTPException(status_code=400, detail="counter_asset_id must differ from asset_id")
+            # debit_tx = receiver (positive), credit_tx = payer (negative)
             debit_tx, credit_tx = repo.add_linked_transactions(
                 scenario_id,
-                asset_id,
                 counter_asset_id,
+                asset_id,
                 tx_name,
                 action.get("amount") or 0.0,
                 tx_type,
                 start_year,
                 start_month,
-                action.get("end_year") or start_year,
-                action.get("end_month") or start_month,
+                end_year or start_year,
+                end_month or start_month,
                 action.get("frequency"),
                 action.get("annual_growth_rate") or 0.0,
             )
@@ -929,10 +1412,10 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
                 tx_type,
                 start_year,
                 start_month,
-                action.get("end_year") or start_year,
-                action.get("end_month") or start_month,
+                end_year or start_year,
+                end_month or start_month,
                 action.get("frequency"),
-                action.get("annual_growth_rate") or 0.0,
+                growth_rate if growth_rate is not None else 0.0,
                 action.get("counter_asset_id"),
                 action.get("double_entry") or False,
                 action.get("mortgage_asset_id"),
@@ -951,6 +1434,83 @@ def _apply_plan_action(action: Dict[str, Any], current_user, aliases: Dict[str, 
             raise HTTPException(status_code=404, detail="Asset not part of scenario")
         repo.delete_asset(target_asset_id)
         applied = {"deleted_asset_id": target_asset_id, "name": asset.get("name")}
+    elif action_type in {"update_transaction", "upsert_transaction"}:
+        scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
+        _ensure_scenario_access(scenario_id, current_user)
+        tx_ref = action.get("transaction_id") or action.get("name")
+        if not tx_ref:
+            raise HTTPException(status_code=400, detail="transaction_id or name required for update_transaction")
+        tx = _resolve_transaction_by_ref(scenario_id, tx_ref, aliases)
+        if not tx:
+            raise HTTPException(status_code=404, detail="Transaction not found to update")
+        tx_type = (
+            action.get("tx_type_internal")
+            or action.get("tx_type_from_action")
+            or action.get("tx_type")
+            or action.get("transaction_type")
+            or action.get("tx_kind")
+            or action.get("type_tx")  # avoid clashing with action.type
+            or tx.get("type")
+        )
+
+        # Localize/normalize tax flags
+        taxable_flag = action.get("taxable")
+        if taxable_flag is None:
+            taxable_flag = action.get("steuerbar")
+        if taxable_flag is None:
+            taxable_flag = action.get("steuerrelevant")
+        taxable_amount = action.get("taxable_amount")
+        if taxable_amount is None:
+            taxable_amount = action.get("steuerbetrag")
+
+        updates = {
+            k: v
+            for k, v in {
+                "name": action.get("name") or tx.get("name"),
+                "amount": action.get("amount"),
+                "type": tx_type,
+                "start_year": action.get("start_year"),
+                "start_month": action.get("start_month"),
+                "end_year": action.get("end_year"),
+                "end_month": action.get("end_month"),
+                "frequency": action.get("frequency"),
+                "annual_growth_rate": _parse_rate(action.get("annual_growth_rate")) if action.get("annual_growth_rate") is not None else None,
+                "asset_id": _resolve_asset_id(action.get("asset_id") or action.get("from_asset"), scenario_id, aliases) or tx.get("asset_id"),
+                "counter_asset_id": _resolve_asset_id(action.get("counter_asset_id") or action.get("to_asset"), scenario_id, aliases),
+                "double_entry": action.get("double_entry"),
+                "mortgage_asset_id": _resolve_asset_id(action.get("mortgage_asset_id"), scenario_id, aliases),
+                "annual_interest_rate": _parse_rate(action.get("annual_interest_rate") or action.get("interest_rate") or action.get("zinssatz") or action.get("zins")) if action.get("annual_interest_rate") is not None or action.get("interest_rate") is not None or action.get("zinssatz") is not None or action.get("zins") is not None else tx.get("annual_interest_rate"),
+                "taxable": taxable_flag,
+                "taxable_amount": taxable_amount,
+            }.items()
+            if v is not None
+        }
+        applied = repo.update_transaction(tx["id"], updates)
+        # If this is a linked double-entry transaction, mirror updates to the counterpart
+        if tx.get("link_id"):
+            sibling = None
+            try:
+                sibling = repo.db.transactions.find_one({"link_id": tx.get("link_id"), "_id": {"$ne": tx["id"]}})
+            except Exception:
+                sibling = None
+            if sibling:
+                sibling_updates = updates.copy()
+                # Swap asset/counter if provided
+                if updates.get("asset_id") or updates.get("counter_asset_id"):
+                    sibling_updates["asset_id"] = updates.get("counter_asset_id") or sibling.get("asset_id")
+                    sibling_updates["counter_asset_id"] = updates.get("asset_id") or sibling.get("counter_asset_id")
+                # Mirror name and schedule fields
+                sibling_updates["name"] = updates.get("name") or sibling.get("name")
+                sibling_updates["start_year"] = updates.get("start_year") or sibling.get("start_year")
+                sibling_updates["start_month"] = updates.get("start_month") or sibling.get("start_month")
+                sibling_updates["end_year"] = updates.get("end_year") or sibling.get("end_year")
+                sibling_updates["end_month"] = updates.get("end_month") or sibling.get("end_month")
+                sibling_updates["frequency"] = updates.get("frequency") or sibling.get("frequency")
+                sibling_updates["annual_growth_rate"] = updates.get("annual_growth_rate") if "annual_growth_rate" in updates else sibling.get("annual_growth_rate")
+                sibling_updates["annual_interest_rate"] = updates.get("annual_interest_rate") if "annual_interest_rate" in updates else sibling.get("annual_interest_rate")
+                sibling_updates["taxable"] = updates.get("taxable") if "taxable" in updates else sibling.get("taxable")
+                sibling_updates["taxable_amount"] = updates.get("taxable_amount") if "taxable_amount" in updates else sibling.get("taxable_amount")
+                repo.update_transaction(sibling["_id"], sibling_updates)
     elif action_type == "delete_transaction":
         scenario_id = _resolve_scenario_id(action.get("scenario_id") or action.get("scenario"), current_user, aliases, last_scenario_id)
         _ensure_scenario_access(scenario_id, current_user)
@@ -978,32 +1538,29 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
         return AssistantChatResponse(messages=new_messages, plan=None, reply=fallback_reply)
 
     system_prompt = (
-       "Du hilfst, Finanzereignisse in ein Szenario zu übernehmen (Assets, Hypotheken, Transaktionen). "
-       "Vorgehen:\n"
-        "1) Arbeite NUR im Kontext des aktuell eingeloggten Nutzers. Keine Daten anderer Nutzer lesen oder ändern. "
-        "   Nutze standardmäßig das vom Frontend übergebene aktuelle Szenario. "
-        "   Wenn ein Szenario-Name genannt wird und es für diesen Nutzer nicht existiert, lege es neu an. "
-        "   Zum Wechseln auf ein bestehendes Szenario kannst du die Aktion use_scenario nutzen. "
-        "2) Ermittele fehlende Pflichtfelder je Aktion, frage nach: "
-        "   - use_scenario: scenario (Name/ID) des Nutzers. Wenn nichts angegeben ist, nimm das aktuell ausgewählte Szenario. "
-        "   - create_scenario: name, (optional start/end); wenn nicht angegeben, nehme Start=aktueller Monat, Ende=Startjahr+10, Monat 12. "
-        "   - create_asset: scenario (Name/ID), name, initial_balance (oder balance/value), asset_type (default generic). "
-        "     Wenn asset_type fehlt und der Name enthält Konto/Account/ZKB, setze asset_type=bank_account. "
-        "     Wenn name fehlt und Konto/Account/ZKB im Text, setze name='ZKB Konto', sonst verwende einen generischen Namen (kein Nachfragen). "
-        "     Wenn asset_type fehlt und sonst nichts passt, setze generic (nicht nachfragen). "
-        "   - create_liability: scenario, name, amount, interest_rate (falls Hypothek), optional start_date. "
-        "   - create_transaction: scenario, asset_id, name, amount, type, start_year/start_month (oder start_date). "
-        "     Asset-IDs NICHT erfragen: du kannst nach Namen auflösen. Nutze asset_id als Name oder Alias (z.B. ZKB Konto, ZKB Depot). "
-        "   - delete_asset|delete_liability: scenario, asset_id (Name/ID/Alias) im aktuellen Szenario löschen. "
-        "   - delete_transaction: scenario, name oder transaction_id im aktuellen Szenario löschen. "
-        "3) Wenn alle Pflichtfelder da sind, wende den Plan an (keine Ausrede, dass du es nicht kannst) und bestätige kurz. "
-        "   Nur wenn etwas fehlt, kurz nachfragen. "
-        "4) Gib IMMER am Ende einen JSON-Plan in ```json ... ``` zurück, Schema: "
-        "{ \"actions\": [ { \"type\": \"use_scenario|create_scenario|create_asset|create_liability|create_transaction|delete_asset|delete_liability|delete_transaction\", "
+       "Du bist der Orchestrator (einziger Sprecher). Spezial-Agenten: Szenario, Konto, Immo, Hypo. "
+       "Zins-Agent: stellt sicher, dass mortgage_interest Transaktionen alle Pflichtfelder haben (Zahler, Hypothek, Zinssatz, Frequency, Start/Ende). Nach dem Anlegen einer Hypothek fragt der Orchestrator, ob der Zins-Agent direkt eine Zinstransaktion anlegen soll, und instruiert ihn bei Zustimmung mit den bekannten Feldern. "
+       "Strikte API-Kurzreferenz, keine Felder erfinden. Fehlende Pflichtfelder zuerst erfragen, dann zusammenfassen, dann ausführen. Aktionen als Warteschlange.\n"
+        "1) Kontext: nur aktueller Nutzer/Szenario. use_scenario für Wechsel, fehlendes Szenario neu anlegen. "
+        "   Wenn ein Immobilien-Asset (Haus/Immobilie) angelegt wird und keine Hypothek genannt ist, frage kurz, ob eine Hypothek mitfinanziert werden soll. "
+        "2) Pflichtfelder je Aktion (erst erfragen, dann planen): "
+         "   - use_scenario: scenario (Name/ID), sonst aktuelles. "
+         "   - create_scenario: name, start_year/month, end_year/month. "
+         "   - create_asset (Konto/Immo): scenario, name, annual_growth_rate (bei Konto als Verzinsung/Zins benennen; immer abfragen, nicht defaulten), initial_balance (default 0), asset_type (ableiten: Konto/Depot→bank_account, Haus/Immobilie→real_estate). "
+         "   - create_liability (Hypothek): scenario, name, amount, start; Zinssatz NICHT als Growth, sondern für mortgage_interest nutzen. "
+       "   - create_transaction: scenario, asset_id, name, amount, type, start_year/start_month (oder start_date). "
+         "     mortgage_interest Pflicht: asset_id (Zahler), mortgage_asset_id (Hypothek), annual_interest_rate/interest_rate/zinssatz, frequency, start_year/start_month. Betrag kann 0 sein (wird berechnet). "
+         "     Fehlt etwas: nachfragen, NICHT ausführen, NICHT auf regular fallbacken. Namen/Aliase im Szenario auflösen, bevor du fragst. "
+         "     Transfer/Umbuchung: double_entry=true, asset_id=Zahler, counter_asset_id=Empfänger, amount, start_date/start_year/start_month; tx_type=one_time oder regular. "
+         "   - create_interest_transaction ist eine Kurzform von create_transaction mit tx_type=mortgage_interest (Zahler, Hypothek, Zins, Frequency, Start/End). "
+         "   - Kombi Immo+Hypo+Zins: 1) Asset (real_estate) anlegen, 2) Hypothek anlegen (ohne Growth), 3) Zins-Transaktion (mortgage_interest) mit Zahler-Konto, mortgage_asset_id, Zinssatz, Frequency, Start/Ende. Reihenfolge einhalten; nach fehlenden Feldern fragen. "
+         "   - update_asset: scenario, asset_id (Name/ID/Alias), optionale Felder. "
+         "   - delete_*: scenario + Name/ID/Alias. "
+        "3) Wenn alles da ist: tabellarisch/kurz zusammenfassen (kein JSON), Zustimmung einholen; auto_apply erst nach Zustimmung. "
+        "4) JSON-Plan IMMER in ```json``` Schema: { \"auto_apply\": true|false, \"actions\": [ { \"type\": \"use_scenario|create_scenario|create_asset|update_asset|create_liability|create_transaction|update_transaction|delete_asset|delete_liability|delete_transaction\", "
         "\"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", Felder wie name, amount, start_date, initial_balance, asset_type, interest_rate usw. } ] }. "
-        "Nutze Aliase (store_as) und referenziere sie in nachfolgenden Aktionen mit \"$alias\". "
-        "Wenn noch Daten fehlen, frage danach und gib einen leeren Plan {\"actions\":[]} zurück. "
-        "Antworte kurz, schreibe NICHT, dass du nur einen Plan erstellen kannst."
+        "Aliase ($alias) nutzen. Wenn noch Daten fehlen oder keine Zustimmung: nachfragen und auto_apply=false lassen. "
+        "Antworte kurz, kein 'ich kann nur Pläne erstellen'. "
     )
 
     chat_messages = [{"role": "system", "content": system_prompt}]
@@ -1041,7 +1598,41 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
 
     plan = extract_plan(reply)
     applied_results = None
-    if plan and isinstance(plan, dict) and isinstance(plan.get("actions"), list) and len(plan["actions"]) > 0:
+    should_auto_apply = False
+    # Normalize plan: lift auto_apply from misplaced action entries, clean actions
+    if plan and isinstance(plan, dict):
+        actions = plan.get("actions")
+        if isinstance(actions, list):
+            cleaned_actions = []
+            for a in actions:
+                if isinstance(a, dict) and "auto_apply" in a and "type" not in a:
+                    # Treat as misplaced flag
+                    plan["auto_apply"] = plan.get("auto_apply") or bool(a.get("auto_apply"))
+                    continue
+                cleaned_actions.append(a)
+            plan["actions"] = cleaned_actions
+        # Pre-flight validation first: if required fields missing, ask and do not apply
+        missing_msgs = _validate_actions(actions or [])
+        if missing_msgs:
+            missing_text = "; ".join(missing_msgs)
+            assistant_reply = f"Folgende Pflichtfelder fehlen/ungenau: {missing_text}\nBitte die fehlenden Angaben nennen, dann führe ich es aus."
+            assistant_msg = AssistantMessage(role="assistant", content=assistant_reply)
+            updated_messages = payload.messages + [assistant_msg]
+            # ensure no auto apply when missing
+            return AssistantChatResponse(messages=updated_messages, plan=None, reply=assistant_reply)
+
+        # Only auto-apply if explicitly requested
+        should_auto_apply = bool(plan.get("auto_apply") or (payload.context or {}).get("auto_apply"))
+        # Heuristic: if user just confirmed (ja/ok/ausführen) and plan has actions, auto-apply
+        if not should_auto_apply and actions:
+            last_user_msg = next((m for m in reversed(payload.messages) if m.role == "user"), None)
+            if last_user_msg and isinstance(last_user_msg.content, str):
+                txt = last_user_msg.content.strip().lower()
+                if any(word in txt for word in ["ja", "okay", "ok", "mach", "ausführen", "bitte", "go", "erstellen", "anlegen", "jetzt", "starten"]):
+                    should_auto_apply = True
+                    plan["auto_apply"] = True
+
+    if plan and isinstance(plan, dict) and isinstance(plan.get("actions"), list) and len(plan["actions"]) > 0 and should_auto_apply:
         try:
             # prefer context scenario if provided
             ctx = payload.context or {}
@@ -1049,6 +1640,26 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
             applied_results = _apply_plan(plan, current_user, initial_scenario_ref=initial_scenario_ref)
             print(f"[assistant] applied {len(applied_results)} actions")
         except HTTPException as exc:
+            # Friendly recovery for missing inputs (e.g. asset_id not provided)
+            detail_text = str(exc.detail).lower()
+            missing_question = None
+            if "asset_id required" in detail_text:
+                missing_question = "Für die Transaktion brauche ich ein Konto/Asset. Welches Konto oder Asset soll ich verwenden?"
+            if "scenario name is required" in detail_text or "missing fields for create_scenario" in detail_text:
+                missing_question = "Bitte nenne das Szenario (Name)."
+            if "start_year" in detail_text or "start_month" in detail_text or "start_year/start_month" in detail_text:
+                missing_question = "Bitte gib Start- und Enddatum für das Szenario an (Monat/Jahr), z.B. Start 01/2026, Ende 12/2050."
+            if "transaction name" in detail_text and "already exists" in detail_text:
+                missing_question = (
+                    "Es gibt schon eine Transaktion mit diesem Namen. Soll ich sie aktualisieren (update_transaction) "
+                    "oder die bestehende überschreiben (overwrite=true)?"
+                )
+            if missing_question:
+                assistant_reply = f"{reply}\n\n{missing_question}"
+                assistant_msg = AssistantMessage(role="assistant", content=assistant_reply)
+                updated_messages = payload.messages + [assistant_msg]
+                return AssistantChatResponse(messages=updated_messages, plan=plan, reply=assistant_reply)
+
             applied_results = {"error": exc.detail}
             print(f"[assistant] apply http error: {exc.detail}")
         except Exception as exc:  # pragma: no cover
@@ -1065,7 +1676,7 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
     assistant_msg = AssistantMessage(role="assistant", content=assistant_reply)
     updated_messages = payload.messages + [assistant_msg]
 
-    # If we applied, clear plan (already executed) but keep results
+    # If wir auto-applied, Plan leeren; ansonsten Plan zurückgeben (manuelle Bestätigung möglich)
     if applied_results is not None:
         return AssistantChatResponse(messages=updated_messages, plan=None, reply=assistant_reply)
     return AssistantChatResponse(messages=updated_messages, plan=plan, reply=assistant_reply)
@@ -1088,11 +1699,13 @@ def _apply_plan(plan: Dict[str, Any], current_user, initial_scenario_ref=None):
         return []
     applied = []
     aliases: Dict[str, str] = {}
+    interest_rates: Dict[str, float] = {}
+    state: Dict[str, Any] = {}
     last_scenario_id = _resolve_scenario_id(initial_scenario_ref, current_user, aliases, None)
     for action in actions:
         if not isinstance(action, dict):
             continue
-        applied_item = _apply_plan_action(action, current_user, aliases, last_scenario_id)
+        applied_item = _apply_plan_action(action, current_user, aliases, last_scenario_id, interest_rates, state)
         alias_key = action.get("store_as")
         if alias_key and isinstance(alias_key, str):
             if isinstance(applied_item, dict) and applied_item.get("id"):

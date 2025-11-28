@@ -24,6 +24,7 @@ const TransactionForm = ({
     const [interestRate, setInterestRate] = useState('');
     const [taxable, setTaxable] = useState(false);
     const [taxableAmount, setTaxableAmount] = useState('');
+    const [error, setError] = useState('');
 
     useEffect(() => {
         // Prefill form when editing or when the default asset changes
@@ -78,7 +79,7 @@ const TransactionForm = ({
             setAmount('');
             setMonth('');
             setYear('');
-            setType('one_time');
+            setType('');
             setFrequency('');
             setEndMonth('');
             setEndYear('');
@@ -100,9 +101,14 @@ const TransactionForm = ({
             setDoubleEntry(false);
             setCounterAssetId('');
         }
+        setError('');
     }, [type]);
 
     const handleSaveTransaction = () => {
+        if (!type) {
+            setError('Bitte zuerst den Transaktionstyp wählen.');
+            return;
+        }
         if (!assetId) return;
         const payload = {
             asset_id: assetId,
@@ -113,9 +119,23 @@ const TransactionForm = ({
             double_entry: doubleEntry,
         };
 
+        // Common required
+        if (!payload.start_month || !payload.start_year) {
+            setError('Bitte Startmonat und Startjahr angeben.');
+            return;
+        }
+        if (!name) {
+            setError('Bitte einen Namen eingeben.');
+            return;
+        }
+
         if (type !== 'mortgage_interest') {
             const parsedAmount = parseFloatSafe(amount);
-            payload.amount = Number.isFinite(parsedAmount) ? parsedAmount : 0;
+            if (!Number.isFinite(parsedAmount)) {
+                setError('Bitte einen Betrag eingeben.');
+                return;
+            }
+            payload.amount = parsedAmount;
         } else {
             payload.amount = 0;
         }
@@ -125,6 +145,10 @@ const TransactionForm = ({
             payload.end_year = parseIntSafe(endYear);
             payload.frequency = parseIntSafe(frequency);
             payload.annual_growth_rate = parseFloatSafe(annualGrowthRate);
+            if (!payload.frequency || !payload.end_month || !payload.end_year || payload.annual_growth_rate === undefined) {
+                setError('Für regelmäßige Zahlungen bitte Ende (Monat/Jahr), Frequenz und Wachstumsrate angeben.');
+                return;
+            }
         } else if (type === 'mortgage_interest') {
             payload.frequency = parseIntSafe(frequency);
             payload.mortgage_asset_id = mortgageAssetId;
@@ -133,7 +157,15 @@ const TransactionForm = ({
             payload.end_year = parseIntSafe(endYear) || payload.start_year;
             payload.double_entry = false;
             delete payload.counter_asset_id;
-        } else {
+            if (!payload.mortgage_asset_id || !payload.annual_interest_rate || !payload.frequency) {
+                setError('Für Hypothekenzinsen bitte Zahler-Konto, Hypothek, Zinssatz und Frequenz angeben.');
+                return;
+            }
+        } else if (type === 'one_time') {
+            if (!Number.isFinite(payload.amount)) {
+                setError('Bitte einen Betrag eingeben.');
+                return;
+            }
             delete payload.end_month;
             delete payload.end_year;
             delete payload.frequency;
@@ -143,7 +175,7 @@ const TransactionForm = ({
         if (type !== 'mortgage_interest' && doubleEntry && counterAssetId) {
             payload.counter_asset_id = counterAssetId;
         } else if (doubleEntry && !counterAssetId) {
-            // Require a counter asset for double-entry
+            setError('Bitte ein Gegenkonto für die Verbuchung wählen.');
             return;
         } else {
             delete payload.counter_asset_id;
@@ -161,6 +193,7 @@ const TransactionForm = ({
             payload.taxable_amount = undefined;
         }
 
+        setError('');
         onSave(transaction ? transaction.id : null, payload);
     };
 
@@ -215,6 +248,7 @@ const TransactionForm = ({
                         placeholder="Name"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
+                        disabled={!type}
                     />
                 </label>
                 <label>
@@ -224,7 +258,7 @@ const TransactionForm = ({
                         placeholder="Amount"
                         value={amount}
                         onChange={(e) => setAmount(e.target.value)}
-                        disabled={type === 'mortgage_interest'}
+                        disabled={type === 'mortgage_interest' || !type}
                         step="0.01"
                     />
                 </label>
@@ -235,6 +269,7 @@ const TransactionForm = ({
                         placeholder="Month"
                         value={month}
                         onChange={(e) => setMonth(e.target.value)}
+                        disabled={!type}
                     />
                 </label>
                 <label>
@@ -244,11 +279,13 @@ const TransactionForm = ({
                         placeholder="Year"
                         value={year}
                         onChange={(e) => setYear(e.target.value)}
+                        disabled={!type}
                     />
                 </label>
                 <label>
                     <span>Type</span>
                     <select value={type} onChange={(e) => setType(e.target.value)}>
+                        <option value="">Bitte wählen</option>
                         <option value="one_time">One-Time</option>
                         <option value="regular">Regular</option>
                         <option value="mortgage_interest">Mortgage Interest</option>
@@ -261,6 +298,7 @@ const TransactionForm = ({
                                 type="checkbox"
                                 checked={doubleEntry}
                                 onChange={(e) => setDoubleEntry(e.target.checked)}
+                                disabled={!type}
                             />
                             <span>Double entry (Debit/Credit)</span>
                         </label>
@@ -269,7 +307,7 @@ const TransactionForm = ({
                             <select
                                 value={counterAssetId}
                                 onChange={(e) => setCounterAssetId(e.target.value)}
-                                disabled={!doubleEntry}
+                                disabled={!doubleEntry || !type}
                             >
                                 <option value="">Select counter asset</option>
                                 {accounts
@@ -350,6 +388,7 @@ const TransactionForm = ({
                                 value={annualGrowthRate}
                                 onChange={(e) => setAnnualGrowthRate(e.target.value)}
                                 step="0.01"
+                                disabled={!type}
                             />
                         </label>
                     </>
@@ -387,6 +426,7 @@ const TransactionForm = ({
                 )}
             </div>
             <div className="transaction-form-actions">
+                {error && <div className="form-error">{error}</div>}
                 {transaction && onDelete && (
                     <button className="secondary danger" onClick={() => onDelete(transaction.id, transaction.asset_id)}>
                         Delete
