@@ -137,11 +137,30 @@ class ScenarioUpdate(BaseModel):
     wealth_tax_rate: Optional[float] = None
 
 
+class SimulationOverride(BaseModel):
+    income_change_pct: Optional[float] = Field(
+        default=None, description="Relative Änderung aller Einnahmen (z.B. -0.1 = -10%)"
+    )
+    expense_change_pct: Optional[float] = Field(
+        default=None, description="Relative Änderung aller Ausgaben (z.B. 0.05 = +5%)"
+    )
+    asset_growth_multiplier: Optional[float] = Field(
+        default=None,
+        description="Multiplikator für Wachstumsraten von Assets (z.B. 0.8 senkt Growth um 20%)",
+    )
+    mortgage_rate_change_pct: Optional[float] = Field(
+        default=None, description="Relativer Zins-Schock auf Hypothekenzinsen (z.B. 0.1 = +10%)"
+    )
+    income_tax_override: Optional[float] = Field(
+        default=None, description="Ersetzt den Einkommensteuersatz (z.B. 0.3 = 30%)"
+    )
+
+
 class AssetCreate(BaseModel):
     name: str
     annual_growth_rate: float = 0.0
     initial_balance: float = 0.0
-    asset_type: Literal["generic", "real_estate", "bank_account", "mortgage"] = "generic"
+    asset_type: Literal["generic", "real_estate", "bank_account", "mortgage", "portfolio"] = "generic"
     start_year: Optional[int] = None
     start_month: Optional[int] = None
     end_year: Optional[int] = None
@@ -152,7 +171,7 @@ class AssetUpdate(BaseModel):
     name: Optional[str] = None
     annual_growth_rate: Optional[float] = None
     initial_balance: Optional[float] = None
-    asset_type: Optional[Literal["generic", "real_estate", "bank_account", "mortgage"]] = None
+    asset_type: Optional[Literal["generic", "real_estate", "bank_account", "mortgage", "portfolio"]] = None
     start_year: Optional[int] = None
     start_month: Optional[int] = None
     end_year: Optional[int] = None
@@ -566,6 +585,21 @@ def simulate_scenario(scenario_id: str, current_user=Depends(get_current_user)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to view this scenario")
     try:
         return run_scenario_simulation(scenario_id, repo)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/scenarios/{scenario_id}/simulate/stress")
+def simulate_scenario_stress(
+    scenario_id: str, payload: SimulationOverride, current_user=Depends(get_current_user)
+):
+    scenario = repo.get_scenario(scenario_id)
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    if scenario["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to view this scenario")
+    try:
+        return run_scenario_simulation(scenario_id, repo, overrides=payload.dict(exclude_none=True))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

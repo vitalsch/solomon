@@ -55,6 +55,7 @@ const Account = ({
         bank_account: 'Konto',
         real_estate: 'Immobilie',
         mortgage: 'Hypothek',
+        portfolio: 'Portfolio',
     };
 
     return (
@@ -94,6 +95,7 @@ const Account = ({
                             <option value="bank_account">Konto</option>
                             <option value="real_estate">Immobilie</option>
                             <option value="mortgage">Hypothek</option>
+                            <option value="portfolio">Portfolio</option>
                         </select>
                     </label>
                     <label>

@@ -133,6 +133,11 @@ export const deleteTransaction = (transactionId) =>
 // Simulation ----------------------------------------------------------------
 export const simulateScenario = (scenarioId) =>
     request(`/scenarios/${scenarioId}/simulate`, { method: 'POST' });
+export const simulateScenarioStress = (scenarioId, overrides = {}) =>
+    request(`/scenarios/${scenarioId}/simulate/stress`, {
+        method: 'POST',
+        body: JSON.stringify(overrides),
+    });
 
 // AI Assistant (modular provider-ready) ------------------------------------
 export const sendAssistantMessage = (messages, context = {}) =>

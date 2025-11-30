@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Dict, List, Optional
+from copy import deepcopy
 
 from .domain import (
     Account,
@@ -110,7 +111,60 @@ def _build_transactions(transaction_docs, account_map, income_tax_rate: float = 
     return account_transactions, mortgage_interest_transactions
 
 
-def run_scenario_simulation(scenario_id: str, repo: Optional[WealthRepository] = None):
+def _apply_overrides(
+    scenario: Dict,
+    assets: List[Dict],
+    transactions: List[Dict],
+    overrides: Optional[Dict],
+):
+    if not overrides:
+        return scenario, assets, transactions
+
+    adjusted_scenario = {**scenario}
+    adjusted_assets: List[Dict] = [deepcopy(asset) for asset in assets]
+    adjusted_transactions: List[Dict] = [deepcopy(tx) for tx in transactions]
+
+    if overrides.get("income_tax_override") is not None:
+        adjusted_scenario["income_tax_rate"] = overrides.get("income_tax_override")
+
+    if overrides.get("asset_growth_multiplier") is not None:
+        multiplier = overrides.get("asset_growth_multiplier")
+        for asset in adjusted_assets:
+            asset["annual_growth_rate"] = (asset.get("annual_growth_rate") or 0.0) * multiplier
+
+    expense_pct = overrides.get("expense_change_pct")
+    income_pct = overrides.get("income_change_pct")
+    mortgage_pct = overrides.get("mortgage_rate_change_pct")
+
+    for tx in adjusted_transactions:
+        tx_type = tx.get("type")
+        if tx_type == "mortgage_interest":
+            if mortgage_pct is not None:
+                base_rate = tx.get("annual_interest_rate") or tx.get("annual_growth_rate") or 0.0
+                new_rate = base_rate * (1 + mortgage_pct)
+                tx["annual_interest_rate"] = new_rate
+                tx["annual_growth_rate"] = new_rate
+            continue
+
+        # Income/expense tweaks for non-mortgage transactions
+        amount = tx.get("amount", 0.0) or 0.0
+        is_expense = amount < 0 or tx.get("entry") == "credit"
+        delta_pct = expense_pct if is_expense else income_pct
+        if delta_pct is not None:
+            new_amount = amount * (1 + delta_pct)
+            tx["amount"] = new_amount
+            if tx.get("taxable"):
+                taxable_amount = tx.get("taxable_amount", amount)
+                tx["taxable_amount"] = taxable_amount * (1 + delta_pct)
+
+    return adjusted_scenario, adjusted_assets, adjusted_transactions
+
+
+def run_scenario_simulation(
+    scenario_id: str,
+    repo: Optional[WealthRepository] = None,
+    overrides: Optional[Dict] = None,
+):
     repo = repo or WealthRepository()
     scenario = repo.get_scenario(scenario_id)
     if not scenario:
@@ -121,6 +175,8 @@ def run_scenario_simulation(scenario_id: str, repo: Optional[WealthRepository] =
         raise ValueError("Scenario has no assets configured.")
 
     transactions = repo.list_transactions_for_scenario(scenario_id)
+
+    scenario, assets, transactions = _apply_overrides(scenario, assets, transactions, overrides)
 
     scenario_defaults = {
         "start_year": scenario.get("start_year"),

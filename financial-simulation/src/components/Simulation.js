@@ -34,6 +34,7 @@ import {
     deleteTransaction,
     deleteScenario,
     simulateScenario,
+    simulateScenarioStress,
     setAuthToken,
     getAuthToken,
 } from '../api';
@@ -104,6 +105,15 @@ const Simulation = () => {
     const [isRangeModalOpen, setIsRangeModalOpen] = useState(false);
     const [rangeStart, setRangeStart] = useState('');
     const [rangeEnd, setRangeEnd] = useState('');
+    const [stressOverrides, setStressOverrides] = useState({
+        mortgageRateDelta: '2',
+        assetGrowthDelta: '-20',
+        incomeDelta: '0',
+        expenseDelta: '5',
+        incomeTaxOverride: '',
+    });
+    const [stressResult, setStressResult] = useState(null);
+    const [stressLoading, setStressLoading] = useState(false);
     const formatCurrency = (value) => {
         const num = Number(value);
         const safe = Number.isFinite(num) ? num : 0;
@@ -158,14 +168,37 @@ const Simulation = () => {
         return grouping;
     }, [accounts, accountTransactions]);
 
-    const allTransactions = useMemo(() => {
+    const categorizeTransaction = useCallback((tx) => {
+        const rawAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount) || 0;
+        if (tx.type === 'mortgage_interest') return 'expense';
+        if (tx.entry === 'credit') return 'expense';
+        if (tx.entry === 'debit') return 'income';
+        return rawAmount < 0 ? 'expense' : 'income';
+    }, []);
+
+    const { allTransactions, incomeTransactions, expenseTransactions } = useMemo(() => {
         const flattened = Object.values(groupedTransactions || {}).flat();
-        return flattened.sort((a, b) => {
-            const aKey = (a.start_year || 0) * 100 + (a.start_month || 0);
-            const bKey = (b.start_year || 0) * 100 + (b.start_month || 0);
-            return bKey - aKey;
+        const withCategory = flattened.map((tx) => {
+            const category = categorizeTransaction(tx);
+            const sortKey = (tx.start_year || 0) * 100 + (tx.start_month || 0);
+            return { ...tx, category, sortKey };
         });
-    }, [groupedTransactions]);
+        const sortFn = (a, b) => {
+            const categoryOrder = a.category === 'expense' ? 0 : 1;
+            const otherOrder = b.category === 'expense' ? 0 : 1;
+            if (categoryOrder !== otherOrder) {
+                return categoryOrder - otherOrder;
+            }
+            if (b.sortKey !== a.sortKey) {
+                return b.sortKey - a.sortKey;
+            }
+            return (a.name || '').localeCompare(b.name || '');
+        };
+        const sorted = [...withCategory].sort(sortFn);
+        const income = sorted.filter((tx) => tx.category === 'income');
+        const expenses = sorted.filter((tx) => tx.category === 'expense');
+        return { allTransactions: sorted, incomeTransactions: income, expenseTransactions: expenses };
+    }, [groupedTransactions, categorizeTransaction]);
 
     const cashFlowData = useMemo(() => {
         if (!cashFlows || !cashFlows.length) return [];
@@ -789,195 +822,51 @@ const Simulation = () => {
         }
     };
 
-    const handleDownloadPdf = useCallback(() => {
-        const doc = new jsPDF();
-        const marginX = 14;
-        let cursorY = 18;
-        const today = new Date().toLocaleString('de-CH');
+    const parsePercentInput = useCallback((value) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? num / 100 : null;
+    }, []);
 
-        const title = 'Financial Simulation Report';
-        doc.setFontSize(16);
-        doc.text(title, marginX, cursorY);
-        doc.setFontSize(10);
-        doc.text(`Stand: ${today}`, marginX, (cursorY += 8));
-        cursorY += 6;
+    const buildStressPayload = useCallback(() => {
+        const mortgagePct = parsePercentInput(stressOverrides.mortgageRateDelta);
+        const incomePct = parsePercentInput(stressOverrides.incomeDelta);
+        const expensePct = parsePercentInput(stressOverrides.expenseDelta);
+        const assetGrowthDeltaPct = parsePercentInput(stressOverrides.assetGrowthDelta);
+        const assetGrowthMultiplier = assetGrowthDeltaPct === null ? null : 1 + assetGrowthDeltaPct;
+        const incomeTaxOverride = parsePercentInput(stressOverrides.incomeTaxOverride);
 
-        const addBlockTitle = (text) => {
-            doc.setFontSize(12);
-            doc.text(text, marginX, cursorY);
-            cursorY += 4;
+        const payload = {
+            mortgage_rate_change_pct: mortgagePct === null ? undefined : mortgagePct,
+            income_change_pct: incomePct === null ? undefined : incomePct,
+            expense_change_pct: expensePct === null ? undefined : expensePct,
+            asset_growth_multiplier: assetGrowthMultiplier === null ? undefined : assetGrowthMultiplier,
+            income_tax_override: incomeTaxOverride === null ? undefined : incomeTaxOverride,
         };
+        return Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined && v !== null));
+    }, [parsePercentInput, stressOverrides]);
 
-        addBlockTitle('Benutzer');
-        autoTable(doc, {
-            startY: cursorY,
-            head: [['Name', 'E-Mail']],
-            body: [[selectedUser?.name || '–', selectedUser?.email || '–']],
-            styles: { fontSize: 9 },
-            headStyles: { fillColor: [17, 24, 39], textColor: 255 },
-            alternateRowStyles: { fillColor: [245, 247, 250] },
-            theme: 'striped',
-            margin: { left: marginX, right: marginX },
-        });
-        cursorY = doc.lastAutoTable.finalY + 10;
-
-        addBlockTitle('Szenario');
-        autoTable(doc, {
-            startY: cursorY,
-            head: [['Name', 'Zeitraum', 'Assets', 'Transaktionen']],
-            body: [
-                [
-                    currentScenario?.name || '–',
-                    formatScenarioRange(currentScenario) || '–',
-                    accounts.length,
-                    allTransactions.length,
-                ],
-            ],
-            styles: { fontSize: 9 },
-            headStyles: { fillColor: [30, 64, 175], textColor: 255 },
-            alternateRowStyles: { fillColor: [245, 247, 250] },
-            theme: 'striped',
-            margin: { left: marginX, right: marginX },
-        });
-        cursorY = doc.lastAutoTable.finalY + 10;
-
-        addBlockTitle('Assets');
-        autoTable(doc, {
-            startY: cursorY,
-            head: [['Name', 'Typ', 'Wachstum p.a.', 'Startsaldo']],
-            body: accounts.map((acc) => [
-                acc.name,
-                acc.asset_type || '–',
-                `${((acc.annual_growth_rate || 0) * 100).toFixed(2)} %`,
-                formatCurrency(acc.initial_balance || 0),
-            ]),
-            styles: { fontSize: 9 },
-            headStyles: { fillColor: [16, 185, 129], textColor: 255 },
-            alternateRowStyles: { fillColor: [245, 247, 250] },
-            theme: 'striped',
-            margin: { left: marginX, right: marginX },
-        });
-        cursorY = doc.lastAutoTable.finalY + 10;
-
-        const txRows = allTransactions.slice(0, 30).map((tx) => [
-            tx.name,
-            accountNameMap[tx.asset_id] || tx.asset_id,
-            tx.type,
-            formatCurrency(tx.amount || 0),
-            `${tx.start_month || 1}/${tx.start_year || ''}`,
-            tx.end_year ? `${tx.end_month || 1}/${tx.end_year}` : '–',
-        ]);
-
-        addBlockTitle('Transaktionen (Top 30)');
-        autoTable(doc, {
-            startY: cursorY,
-            head: [['Name', 'Account', 'Typ', 'Betrag', 'Start', 'Ende']],
-            body: txRows.length ? txRows : [['–', '–', '–', '–', '–', '–']],
-            styles: { fontSize: 9 },
-            headStyles: { fillColor: [59, 130, 246], textColor: 255 },
-            alternateRowStyles: { fillColor: [245, 247, 250] },
-            theme: 'striped',
-            margin: { left: marginX, right: marginX },
-        });
-        cursorY = doc.lastAutoTable.finalY + 10;
-
-        addBlockTitle('Simulation');
-        const totals = currentSimulation?.total_wealth || [];
-        const firstValue = totals[0]?.value ?? null;
-        const lastValue = totals[totals.length - 1]?.value ?? null;
-        autoTable(doc, {
-            startY: cursorY,
-            head: [['Startwert', 'Endwert', 'Δ Absolut']],
-            body: [
-                [
-                    firstValue !== null ? formatCurrency(firstValue) : '–',
-                    lastValue !== null ? formatCurrency(lastValue) : '–',
-                    firstValue !== null && lastValue !== null
-                        ? formatCurrency(lastValue - firstValue)
-                        : '–',
-                ],
-            ],
-            styles: { fontSize: 9 },
-            headStyles: { fillColor: [75, 85, 99], textColor: 255 },
-            alternateRowStyles: { fillColor: [245, 247, 250] },
-            theme: 'striped',
-            margin: { left: marginX, right: marginX },
-        });
-
-        cursorY = doc.lastAutoTable.finalY + 10;
-        addBlockTitle('Cashflow Entwicklung');
-
-        const cfRows = yearlyCashFlow.map((entry) => [
-            entry.year,
-            formatCurrency(entry.income || 0),
-            formatCurrency(entry.expenses || 0),
-            formatCurrency(entry.net || 0),
-        ]);
-        autoTable(doc, {
-            startY: cursorY,
-            head: [['Jahr', 'Einnahmen', 'Ausgaben', 'Netto']],
-            body: cfRows.length ? cfRows : [['–', '–', '–', '–']],
-            styles: { fontSize: 9 },
-            headStyles: { fillColor: [99, 102, 241], textColor: 255 },
-            alternateRowStyles: { fillColor: [245, 247, 250] },
-            theme: 'striped',
-            margin: { left: marginX, right: marginX },
-        });
-        cursorY = doc.lastAutoTable.finalY + 8;
-
-        if (yearlyCashFlow.length) {
-            const chartWidth = doc.internal.pageSize.getWidth() - marginX * 2;
-            const chartHeight = 50;
-            const chartTop = cursorY;
-            const chartBottom = chartTop + chartHeight;
-            const minNet = Math.min(...yearlyCashFlow.map((y) => y.net));
-            const maxNet = Math.max(...yearlyCashFlow.map((y) => y.net));
-            const range = Math.max(1, maxNet - minNet || 1);
-            const toX = (idx) =>
-                marginX +
-                (yearlyCashFlow.length === 1 ? chartWidth / 2 : (chartWidth * idx) / (yearlyCashFlow.length - 1));
-            const toY = (val) => chartBottom - ((val - minNet) / range) * chartHeight;
-
-            // axes
-            doc.setDrawColor(120);
-            doc.line(marginX, chartBottom, marginX + chartWidth, chartBottom);
-            doc.line(marginX, chartTop, marginX, chartBottom);
-
-            // line
-            doc.setDrawColor(59, 130, 246);
-            yearlyCashFlow.forEach((entry, idx) => {
-                const x = toX(idx);
-                const y = toY(entry.net);
-                if (idx > 0) {
-                    const prev = yearlyCashFlow[idx - 1];
-                    doc.line(toX(idx - 1), toY(prev.net), x, y);
-                }
-                doc.circle(x, y, 1.5, 'F');
-            });
-
-            // labels
-            doc.setFontSize(8);
-            doc.setTextColor(55);
-            const firstYear = yearlyCashFlow[0].year;
-            const lastYear = yearlyCashFlow[yearlyCashFlow.length - 1].year;
-            doc.text(String(firstYear), marginX, chartBottom + 6);
-            doc.text(String(lastYear), marginX + chartWidth, chartBottom + 6, { align: 'right' });
-            doc.text(formatCurrency(maxNet), marginX + chartWidth, chartTop - 2, { align: 'right' });
-            doc.text(formatCurrency(minNet), marginX + chartWidth, chartBottom + 4, { align: 'right' });
-            cursorY = chartBottom + 12;
-        }
-
-        doc.save(`financial-simulation-${new Date().toISOString().slice(0, 10)}.pdf`);
-    }, [
-        accounts,
-        accountNameMap,
-        allTransactions,
-        currentScenario,
-        currentSimulation,
-        selectedUser,
-        formatScenarioRange,
-        yearlyCashFlow,
-    ]);
+    const summarizeSimulation = useCallback((simulation) => {
+        if (!simulation) return null;
+        const totals = simulation.total_wealth || [];
+        const startValue = totals[0]?.value ?? null;
+        const endValue = totals[totals.length - 1]?.value ?? null;
+        const cashFlowsSummary = (simulation.cash_flows || []).reduce(
+            (acc, entry) => {
+                acc.income += entry.income || 0;
+                acc.expenses += entry.expenses || 0;
+                acc.taxes += entry.taxes || 0;
+                acc.net += entry.net || entry.income + entry.expenses + (entry.taxes || 0);
+                return acc;
+            },
+            { income: 0, expenses: 0, taxes: 0, net: 0 }
+        );
+        return {
+            startValue,
+            endValue,
+            delta: startValue !== null && endValue !== null ? endValue - startValue : null,
+            ...cashFlowsSummary,
+        };
+    }, []);
 
     const handleSimulate = useCallback(async (scenarioIdOverride) => {
         const scenarioKey = normalizeId(scenarioIdOverride || currentScenarioId);
@@ -1002,6 +891,190 @@ const Simulation = () => {
             setLoading(false);
         }
     }, [currentScenarioId, selectedScenarios, selectedUserId]);
+
+    const handleStressSimulate = useCallback(async () => {
+        const scenarioKey = normalizeId(currentScenarioId);
+        if (!scenarioKey) {
+            setError('Bitte zuerst ein Szenario auswählen.');
+            return;
+        }
+        setStressLoading(true);
+        setError(null);
+        try {
+            const payload = buildStressPayload();
+            const result = await simulateScenarioStress(scenarioKey, payload);
+            setStressResult(result);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setStressLoading(false);
+        }
+    }, [buildStressPayload, currentScenarioId]);
+
+    const handleDownloadPdf = useCallback(async () => {
+        // Always refresh simulation before exporting to ensure current data
+        await handleSimulate();
+        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+        const marginX = 14;
+        let cursorY = 16;
+        const today = new Date().toLocaleString('de-CH');
+
+        const totals = currentSimulation?.total_wealth || [];
+        const firstValue = totals[0]?.value ?? null;
+        const lastValue = totals[totals.length - 1]?.value ?? null;
+        const cashflowTotals = yearlyCashFlow.reduce(
+            (acc, entry) => {
+                acc.income += entry.income || 0;
+                acc.expenses += entry.expenses || 0;
+                acc.taxes += entry.taxes || 0;
+                acc.net += entry.net || entry.income + entry.expenses + (entry.taxes || 0);
+                return acc;
+            },
+            { income: 0, expenses: 0, taxes: 0, net: 0 }
+        );
+
+        const addSectionTitle = (text) => {
+            if (cursorY > 270) {
+                doc.addPage();
+                cursorY = marginX;
+            }
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(12);
+            doc.text(text, marginX, cursorY);
+            cursorY += 4;
+        };
+
+        const addTable = (head, body) => {
+            const tableBody = body.length ? body : [new Array(head.length).fill('–')];
+            autoTable(doc, {
+                startY: cursorY,
+                head: [head],
+                body: tableBody,
+                styles: { fontSize: 9, cellPadding: 2, textColor: 25 },
+                headStyles: { fillColor: [240, 240, 240], textColor: 20, fontStyle: 'bold' },
+                bodyStyles: { textColor: 25 },
+                alternateRowStyles: { fillColor: [248, 248, 248] },
+                theme: 'grid',
+                margin: { left: marginX, right: marginX },
+            });
+            cursorY = doc.lastAutoTable.finalY + 8;
+        };
+
+        const formatPercent = (value) => {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return '–';
+            return `${(num * 100).toFixed(2)} %`;
+        };
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(16);
+        doc.text('Finanzsimulation – Bericht', marginX, cursorY);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.text(`Erstellt: ${today}`, marginX, (cursorY += 8));
+        cursorY += 6;
+
+        addSectionTitle('Überblick');
+        addTable(
+            ['Benutzer', 'E-Mail', 'Szenario', 'Zeitraum', 'Assets', 'Transaktionen'],
+            [
+                [
+                    selectedUser?.name || '–',
+                    selectedUser?.email || '–',
+                    currentScenario?.name || '–',
+                    formatScenarioRange(currentScenario) || '–',
+                    accounts.length,
+                    allTransactions.length,
+                ],
+            ]
+        );
+
+        addSectionTitle('Szenario-Details');
+        addTable(
+            ['Beschreibung', 'Inflation p.a.', 'Einkommensteuer', 'Vermögenssteuer'],
+            [
+                [
+                    currentScenario?.description || '–',
+                    formatPercent(inflationRate),
+                    formatPercent(incomeTaxRate),
+                    formatPercent(wealthTaxRate),
+                ],
+            ]
+        );
+
+        addSectionTitle('Assets');
+        addTable(
+            ['Name', 'Typ', 'Start', 'Ende', 'Wachstum p.a.', 'Startsaldo'],
+            accounts.map((acc) => [
+                acc.name,
+                acc.asset_type || '–',
+                acc.start_month && acc.start_year ? `${acc.start_month}/${acc.start_year}` : '–',
+                acc.end_month && acc.end_year ? `${acc.end_month}/${acc.end_year}` : '–',
+                `${((acc.annual_growth_rate || 0) * 100).toFixed(2)} %`,
+                formatCurrency(acc.initial_balance || 0),
+            ])
+        );
+
+        addSectionTitle('Transaktionen (alle)');
+        addTable(
+            ['Name', 'Kategorie', 'Typ', 'Asset', 'Gegenkonto', 'Betrag', 'Start', 'Ende', 'Frequenz', 'Steuerbar'],
+            allTransactions.map((tx) => [
+                tx.name,
+                tx.category === 'expense' ? 'Ausgabe' : 'Einnahme',
+                tx.type === 'mortgage_interest' ? 'Hypothekenzins' : tx.type === 'regular' ? 'Regelmäßig' : 'Einmalig',
+                accountNameMap[tx.asset_id] || tx.asset_id || '–',
+                tx.counter_asset_id ? accountNameMap[tx.counter_asset_id] || tx.counter_asset_id : '–',
+                formatCurrency(tx.amount || 0),
+                tx.start_month && tx.start_year ? `${tx.start_month}/${tx.start_year}` : '–',
+                tx.end_month && tx.end_year ? `${tx.end_month}/${tx.end_year}` : '–',
+                tx.frequency || tx.frequency === 0 ? tx.frequency : '–',
+                tx.taxable ? formatCurrency(tx.taxable_amount || tx.amount || 0) : '–',
+            ])
+        );
+
+        addSectionTitle('Simulation Kennzahlen');
+        addTable(
+            ['Startwert', 'Endwert', 'Veränderung', 'Summe Einnahmen', 'Summe Ausgaben', 'Summe Steuern', 'Netto'],
+            [
+                [
+                    firstValue !== null ? formatCurrency(firstValue) : '–',
+                    lastValue !== null ? formatCurrency(lastValue) : '–',
+                    firstValue !== null && lastValue !== null ? formatCurrency(lastValue - firstValue) : '–',
+                    formatCurrency(cashflowTotals.income),
+                    formatCurrency(cashflowTotals.expenses),
+                    formatCurrency(cashflowTotals.taxes),
+                    formatCurrency(cashflowTotals.net),
+                ],
+            ]
+        );
+
+        addSectionTitle('Cashflow nach Jahr');
+        addTable(
+            ['Jahr', 'Einnahmen', 'Ausgaben', 'Steuern', 'Netto'],
+            yearlyCashFlow.map((entry) => [
+                entry.year,
+                formatCurrency(entry.income || 0),
+                formatCurrency(entry.expenses || 0),
+                formatCurrency(entry.taxes || 0),
+                formatCurrency(entry.net || entry.income + entry.expenses + (entry.taxes || 0)),
+            ])
+        );
+
+        doc.save(`financial-simulation-${new Date().toISOString().slice(0, 10)}.pdf`);
+    }, [
+        accounts,
+        accountNameMap,
+        allTransactions,
+        currentScenario,
+        currentSimulation,
+        selectedUser,
+        formatScenarioRange,
+        yearlyCashFlow,
+        inflationRate,
+        incomeTaxRate,
+        wealthTaxRate,
+        handleSimulate,
+    ]);
 
     const refreshScenarioList = useCallback(async () => {
         try {
@@ -1174,6 +1247,73 @@ const Simulation = () => {
             currency: 'CHF',
         })}`;
     }, []);
+
+    const baseSummary = useMemo(() => summarizeSimulation(currentSimulation), [currentSimulation, summarizeSimulation]);
+    const stressSummary = useMemo(() => summarizeSimulation(stressResult), [stressResult, summarizeSimulation]);
+
+    const renderTransactionItem = (tx) => {
+        const assetName = accountNameMap[tx.asset_id] || 'Unbekannt';
+        const counterName = tx.counter_asset_id ? accountNameMap[tx.counter_asset_id] : null;
+        const taxRate = scenarioDetails?.income_tax_rate || 0;
+        const grossAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount) || 0;
+        const taxableAmount = tx.taxable
+            ? (Number.isFinite(tx.taxable_amount)
+                  ? tx.taxable_amount
+                  : Number(tx.taxable_amount) || grossAmount)
+            : 0;
+        const taxEffect = tx.taxable ? taxableAmount * taxRate : 0;
+        const netAmount = tx.type === 'mortgage_interest' ? 0 : grossAmount - taxEffect;
+        const isExpense = tx.category === 'expense';
+
+        return (
+            <li
+                key={tx.id}
+                className="transaction-row"
+                onClick={() => openTransactionModal(accounts.find((a) => a.id === tx.asset_id) || null, tx)}
+            >
+                <div>
+                    <div className="tx-title">{tx.name}</div>
+                    <div className="tx-subtitle">
+                        {tx.type === 'regular'
+                            ? 'Regular'
+                            : tx.type === 'mortgage_interest'
+                            ? 'Mortgage Interest'
+                            : 'One-time'}{' '}
+                        · {tx.start_month}/{tx.start_year}
+                        {tx.end_month && tx.end_year ? ` - ${tx.end_month}/${tx.end_year}` : ''}
+                    </div>
+                    {annualLabel(tx) && <div className="txn-annual">{annualLabel(tx)}</div>}
+                    <div className="transaction-meta">
+                        <span className={`badge ${isExpense ? 'expense' : 'income'}`}>
+                            {isExpense ? 'Ausgabe' : 'Einnahme'}
+                        </span>
+                        <span className="badge">{assetName}</span>
+                        {counterName && <span className="badge secondary">↔ {counterName}</span>}
+                        {tx.entry && <span className="badge muted">{tx.entry}</span>}
+                        {tx.taxable && <span className="badge muted">steuerbar</span>}
+                    </div>
+                </div>
+                <div className="transaction-actions">
+                    {tx.type === 'mortgage_interest' ? (
+                        <span className="amount muted">
+                            Auto · {(((tx.annual_interest_rate ?? tx.annual_growth_rate ?? 0) * 100) || 0).toFixed(2)}%
+                        </span>
+                    ) : (
+                        <div className="amount tax-breakdown">
+                            <div>Brutto {formatCurrency(grossAmount)}</div>
+                            {tx.taxable && (
+                                <div className="muted small">
+                                    Steuer ({(taxRate * 100).toFixed(2)}% auf {formatCurrency(taxableAmount)}): -
+                                    {formatCurrency(taxEffect)}
+                                </div>
+                            )}
+                            <div>Netto {formatCurrency(netAmount)}</div>
+                        </div>
+                    )}
+                </div>
+            </li>
+        );
+    };
 
     const modalAsset = accounts.find((acc) => acc.id === transactionModalAssetId);
 
@@ -1353,6 +1493,9 @@ const Simulation = () => {
                             <button className="secondary" onClick={() => handleSimulate()} disabled={!currentScenarioId}>
                                 Simulation starten
                             </button>
+                            <button className="secondary" onClick={handleDownloadPdf} disabled={!selectedUserId || !currentScenarioId}>
+                                PDF herunterladen
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -1498,13 +1641,6 @@ const Simulation = () => {
                                                 Szenario simulieren
                                             </button>
                                             <button
-                                                className="secondary"
-                                                onClick={handleDownloadPdf}
-                                                disabled={!selectedUserId}
-                                            >
-                                                PDF herunterladen
-                                            </button>
-                                            <button
                                                 className="secondary danger"
                                                 onClick={() => handleDeleteScenario(currentScenarioId)}
                                                 disabled={!currentScenarioId}
@@ -1633,77 +1769,34 @@ const Simulation = () => {
                                     {allTransactions.length === 0 ? (
                                         <p className="placeholder">Keine Transaktionen.</p>
                                     ) : (
-                                        <ul className="transaction-list">
-                                            {allTransactions.map((tx) => {
-                                                const assetName = accountNameMap[tx.asset_id] || 'Unbekannt';
-                                                const counterName = tx.counter_asset_id
-                                                    ? accountNameMap[tx.counter_asset_id]
-                                                    : null;
-                                                const taxRate = scenarioDetails?.income_tax_rate || 0;
-                                                const grossAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount) || 0;
-                                                const taxableAmount = tx.taxable
-                                                    ? (Number.isFinite(tx.taxable_amount)
-                                                          ? tx.taxable_amount
-                                                          : Number(tx.taxable_amount) || grossAmount)
-                                                    : 0;
-                                                const taxEffect = tx.taxable ? taxableAmount * taxRate : 0;
-                                                const netAmount = tx.type === 'mortgage_interest' ? 0 : grossAmount - taxEffect;
-                                                return (
-                                                    <li
-                                                        key={tx.id}
-                                                        className="transaction-row"
-                                                        onClick={() => openTransactionModal(accounts.find((a) => a.id === tx.asset_id) || null, tx)}
-                                                    >
-                                                        <div>
-                                                            <div className="tx-title">{tx.name}</div>
-                                                            <div className="tx-subtitle">
-                                                                {tx.type === 'regular'
-                                                                    ? 'Regular'
-                                                                    : tx.type === 'mortgage_interest'
-                                                                    ? 'Mortgage Interest'
-                                                                    : 'One-time'}{' '}
-                                                                · {tx.start_month}/{tx.start_year}
-                                                                {tx.end_month && tx.end_year
-                                                                    ? ` - ${tx.end_month}/${tx.end_year}`
-                                                                    : ''}
-                                                            </div>
-                                                            {annualLabel(tx) && (
-                                                                <div className="txn-annual">{annualLabel(tx)}</div>
-                                                            )}
-                                                            <div className="transaction-meta">
-                                                                <span className="badge">{assetName}</span>
-                                                                {counterName && <span className="badge secondary">↔ {counterName}</span>}
-                                                                {tx.entry && <span className="badge muted">{tx.entry}</span>}
-                                                                {tx.taxable && <span className="badge muted">steuerbar</span>}
-                                                            </div>
-                                                        </div>
-                                                        <div className="transaction-actions">
-                                                            {tx.type === 'mortgage_interest' ? (
-                                                                <span className="amount muted">
-                                                                    Auto · {((
-                                                                        tx.annual_interest_rate ??
-                                                                        tx.annual_growth_rate ??
-                                                                        0
-                                                                    ) * 100).toFixed(2)}
-                                                                    %
-                                                                </span>
-                                                            ) : (
-                                                                <div className="amount tax-breakdown">
-                                                                    <div>Brutto {formatCurrency(grossAmount)}</div>
-                                                                    {tx.taxable && (
-                                                                        <div className="muted small">
-                                                                            Steuer ({(taxRate * 100).toFixed(2)}% auf{' '}
-                                                                            {formatCurrency(taxableAmount)}): -{formatCurrency(taxEffect)}
-                                                                        </div>
-                                                                    )}
-                                                                    <div>Netto {formatCurrency(netAmount)}</div>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    </li>
-                                                );
-                                            })}
-                                        </ul>
+                                        <div className="transaction-groups">
+                                            <div className="transaction-group income-group">
+                                                <div className="transaction-group-header">
+                                                    <h4>Einnahmen</h4>
+                                                    <span className="pill muted">{incomeTransactions.length}</span>
+                                                </div>
+                                                {incomeTransactions.length === 0 ? (
+                                                    <p className="placeholder">Keine Einnahmen erfasst.</p>
+                                                ) : (
+                                                    <ul className="transaction-list">
+                                                        {incomeTransactions.map((tx) => renderTransactionItem(tx))}
+                                                    </ul>
+                                                )}
+                                            </div>
+                                            <div className="transaction-group expense-group">
+                                                <div className="transaction-group-header">
+                                                    <h4>Ausgaben</h4>
+                                                    <span className="pill muted">{expenseTransactions.length}</span>
+                                                </div>
+                                                {expenseTransactions.length === 0 ? (
+                                                    <p className="placeholder">Keine Ausgaben erfasst.</p>
+                                                ) : (
+                                                    <ul className="transaction-list">
+                                                        {expenseTransactions.map((tx) => renderTransactionItem(tx))}
+                                                    </ul>
+                                                )}
+                                            </div>
+                                        </div>
                                     )}
                                 </div>
                             )}
@@ -2084,6 +2177,136 @@ const Simulation = () => {
                         </div>
                     </div>
                 </div>
+
+                <div className="panel">
+                    <div className="panel-header">
+                        <div>
+                            <p className="eyebrow">Risiko</p>
+                            <h3>Stress & Sensitivität</h3>
+                        </div>
+                        <div className="panel-actions">
+                            <span className="pill muted">{stressResult ? 'Stress simuliert' : 'Basis'}</span>
+                        </div>
+                    </div>
+                    <div className="panel-body">
+                        <div className="risk-grid">
+                            <label className="stacked">
+                                <span>Zins-Schock Hypotheken (%)</span>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={stressOverrides.mortgageRateDelta}
+                                    onChange={(e) =>
+                                        setStressOverrides((prev) => ({
+                                            ...prev,
+                                            mortgageRateDelta: e.target.value,
+                                        }))
+                                    }
+                                />
+                            </label>
+                            <label className="stacked">
+                                <span>Wachstum Assets Δ (%)</span>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={stressOverrides.assetGrowthDelta}
+                                    onChange={(e) =>
+                                        setStressOverrides((prev) => ({
+                                            ...prev,
+                                            assetGrowthDelta: e.target.value,
+                                        }))
+                                    }
+                                />
+                            </label>
+                            <label className="stacked">
+                                <span>Einnahmen Δ (%)</span>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={stressOverrides.incomeDelta}
+                                    onChange={(e) =>
+                                        setStressOverrides((prev) => ({
+                                            ...prev,
+                                            incomeDelta: e.target.value,
+                                        }))
+                                    }
+                                />
+                            </label>
+                            <label className="stacked">
+                                <span>Ausgaben Δ (%)</span>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={stressOverrides.expenseDelta}
+                                    onChange={(e) =>
+                                        setStressOverrides((prev) => ({
+                                            ...prev,
+                                            expenseDelta: e.target.value,
+                                        }))
+                                    }
+                                />
+                            </label>
+                            <label className="stacked">
+                                <span>Einkommensteuer Override (%)</span>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={stressOverrides.incomeTaxOverride}
+                                    onChange={(e) =>
+                                        setStressOverrides((prev) => ({
+                                            ...prev,
+                                            incomeTaxOverride: e.target.value,
+                                        }))
+                                    }
+                                />
+                            </label>
+                        </div>
+                        <div className="risk-actions">
+                            <div className="muted small">
+                                Angaben in % (z.B. 2 = +2%, -20 = -20%). Wachstums-Δ wirkt als Faktor auf die Asset-Wachstumsrate.
+                            </div>
+                            <button className="secondary" onClick={handleStressSimulate} disabled={!currentScenarioId || stressLoading}>
+                                {stressLoading ? 'Berechne...' : 'Stress simulieren'}
+                            </button>
+                        </div>
+                        <div className="risk-summary">
+                            <div className="summary-card">
+                                <span className="label">Endwert Basis</span>
+                                <strong>
+                                    {baseSummary?.endValue !== null && baseSummary?.endValue !== undefined
+                                        ? formatCurrency(baseSummary.endValue)
+                                        : '–'}
+                                </strong>
+                            </div>
+                            <div className="summary-card">
+                                <span className="label">Endwert Stress</span>
+                                <strong>
+                                    {stressSummary?.endValue !== null && stressSummary?.endValue !== undefined
+                                        ? formatCurrency(stressSummary.endValue)
+                                        : '–'}
+                                </strong>
+                            </div>
+                            <div className="summary-card">
+                                <span className="label">Delta Vermögen</span>
+                                <strong>
+                                    {baseSummary?.endValue !== null &&
+                                    baseSummary?.endValue !== undefined &&
+                                    stressSummary?.endValue !== null &&
+                                    stressSummary?.endValue !== undefined
+                                        ? formatCurrency(stressSummary.endValue - baseSummary.endValue)
+                                        : '–'}
+                                </strong>
+                            </div>
+                            <div className="summary-card">
+                                <span className="label">Netto Cashflow (Stress)</span>
+                                <strong>{stressSummary ? formatCurrency(stressSummary.net) : '–'}</strong>
+                                {baseSummary && stressSummary && (
+                                    <div className="muted small">Delta vs Basis {formatCurrency(stressSummary.net - baseSummary.net)}</div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {isTransactionModalOpen && (
@@ -2181,6 +2404,7 @@ const Simulation = () => {
                                     <option value="bank_account">Konto</option>
                                     <option value="real_estate">Immobilie</option>
                                     <option value="mortgage">Hypothek</option>
+                                    <option value="portfolio">Portfolio</option>
                                 </select>
                             </label>
                         </div>

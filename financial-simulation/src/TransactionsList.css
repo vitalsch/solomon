@@ -32,6 +32,32 @@
   cursor: not-allowed;
 }
 
+.transaction-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.25rem;
+}
+
+.transaction-group.income-group {
+  order: 0;
+}
+
+.transaction-group.expense-group {
+  order: 1;
+}
+
+.transaction-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.transaction-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .transaction-list {
   list-style: none;
   padding: 0;
@@ -82,6 +108,16 @@
 .transaction-row .badge.secondary {
   background: #e0f2fe;
   color: #1d4ed8;
+}
+
+.transaction-row .badge.expense {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.transaction-row .badge.income {
+  background: #ecfdf3;
+  color: #15803d;
 }
 
 .transaction-row .badge.muted {
