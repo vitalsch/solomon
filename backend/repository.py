@@ -418,3 +418,41 @@ class WealthRepository:
             return result.deleted_count > 0
         result = self.db.transactions.delete_one({"_id": _ensure_object_id(transaction_id)})
         return result.deleted_count > 0
+
+    # Stress Profiles ------------------------------------------------------
+    def list_stress_profiles(self, user_id: str) -> List[Dict[str, Any]]:
+        return [
+            _serialize(doc)
+            for doc in self.db.stress_profiles.find({"user_id": _ensure_object_id(user_id)})
+        ]
+
+    def create_stress_profile(
+        self, user_id: str, name: str, description: str | None, overrides: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        doc = {
+            "user_id": _ensure_object_id(user_id),
+            "name": name,
+            "description": description,
+            "overrides": overrides,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        }
+        res = self.db.stress_profiles.insert_one(doc)
+        doc["_id"] = res.inserted_id
+        return _serialize(doc)
+
+    def update_stress_profile(self, profile_id: str, user_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        allowed = {k: v for k, v in updates.items() if k in {"name", "description", "overrides"} and v is not None}
+        if not allowed:
+            return None
+        allowed["updated_at"] = datetime.utcnow()
+        doc = self.db.stress_profiles.find_one_and_update(
+            {"_id": _ensure_object_id(profile_id), "user_id": _ensure_object_id(user_id)},
+            {"$set": allowed},
+            return_document=ReturnDocument.AFTER,
+        )
+        return _serialize(doc) if doc else None
+
+    def delete_stress_profile(self, profile_id: str, user_id: str) -> bool:
+        res = self.db.stress_profiles.delete_one({"_id": _ensure_object_id(profile_id), "user_id": _ensure_object_id(user_id)})
+        return res.deleted_count > 0

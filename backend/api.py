@@ -160,6 +160,15 @@ class SimulationOverride(BaseModel):
     income_tax_shocks: Optional[List[PortfolioShock]] = None
     inflation_shocks: Optional[List[PortfolioShock]] = None
 
+class StressProfileCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    overrides: Dict[str, Any]
+
+class StressProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    overrides: Optional[Dict[str, Any]] = None
 
 class AssetCreate(BaseModel):
     name: str
@@ -607,6 +616,33 @@ def simulate_scenario_stress(
         return run_scenario_simulation(scenario_id, repo, overrides=payload.dict(exclude_none=True))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# Stress Profiles ----------------------------------------------------------
+@app.get("/stress-profiles")
+def list_stress_profiles(current_user=Depends(get_current_user)):
+    return repo.list_stress_profiles(current_user["id"])
+
+
+@app.post("/stress-profiles")
+def create_stress_profile(payload: StressProfileCreate, current_user=Depends(get_current_user)):
+    return repo.create_stress_profile(current_user["id"], payload.name, payload.description, payload.overrides)
+
+
+@app.patch("/stress-profiles/{profile_id}")
+def update_stress_profile(profile_id: str, payload: StressProfileUpdate, current_user=Depends(get_current_user)):
+    updated = repo.update_stress_profile(profile_id, current_user["id"], {k: v for k, v in payload.dict().items() if v is not None})
+    if not updated:
+        raise HTTPException(status_code=404, detail="Stress profile not found")
+    return updated
+
+
+@app.delete("/stress-profiles/{profile_id}")
+def delete_stress_profile(profile_id: str, current_user=Depends(get_current_user)):
+    ok = repo.delete_stress_profile(profile_id, current_user["id"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="Stress profile not found")
+    return {"status": "deleted"}
 
 
 def _ensure_scenario_access(scenario_id: str, current_user):

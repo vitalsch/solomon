@@ -35,6 +35,10 @@ import {
     deleteScenario,
     simulateScenario,
     simulateScenarioStress,
+    listStressProfiles,
+    createStressProfile,
+    updateStressProfile,
+    deleteStressProfileApi,
     setAuthToken,
     getAuthToken,
 } from '../api';
@@ -111,14 +115,7 @@ const Simulation = () => {
         ],
     });
     const [showNewProfileEditor, setShowNewProfileEditor] = useState(false);
-    const [stressProfiles, setStressProfiles] = useState(() => {
-        try {
-            const raw = localStorage.getItem('stressProfiles');
-            return raw ? JSON.parse(raw) : [];
-        } catch {
-            return [];
-        }
-    });
+    const [stressProfiles, setStressProfiles] = useState([]);
     const [profileName, setProfileName] = useState('');
     const [profileDescription, setProfileDescription] = useState('');
     const [profileResults, setProfileResults] = useState({});
@@ -451,6 +448,23 @@ const Simulation = () => {
     useEffect(() => {
         loadCurrentUser();
     }, [loadCurrentUser]);
+
+    const fetchStressProfilesRemote = useCallback(async () => {
+        try {
+            const profiles = await listStressProfiles();
+            setStressProfiles(profiles || []);
+        } catch (err) {
+            setError(err.message);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (selectedUserId) {
+            fetchStressProfilesRemote();
+        } else {
+            setStressProfiles([]);
+        }
+    }, [selectedUserId, fetchStressProfilesRemote]);
 
     const handleRegister = async () => {
         if (!newUsername || !newUserPassword) {
@@ -1339,38 +1353,30 @@ const Simulation = () => {
     const baseSummary = useMemo(() => summarizeSimulation(currentSimulation), [currentSimulation, summarizeSimulation]);
     const stressSummary = useMemo(() => summarizeSimulation(stressResult), [stressResult, summarizeSimulation]);
 
-    const persistProfiles = useCallback((profiles) => {
+    const handleSaveProfile = useCallback(async () => {
+        if (!profileName.trim()) return;
         try {
-            localStorage.setItem('stressProfiles', JSON.stringify(profiles));
-        } catch {
-            // ignore
+            const created = await createStressProfile({
+                name: profileName.trim(),
+                description: profileDescription.trim(),
+                overrides: stressOverrides,
+            });
+            setStressProfiles((prev) => [...prev, created]);
+            setProfileName('');
+            setProfileDescription('');
+        } catch (err) {
+            setError(err.message);
+        }
+    }, [profileName, profileDescription, stressOverrides]);
+
+    const handleDeleteProfile = useCallback(async (profileId) => {
+        try {
+            await deleteStressProfileApi(profileId);
+            setStressProfiles((prev) => prev.filter((p) => p.id !== profileId));
+        } catch (err) {
+            setError(err.message);
         }
     }, []);
-
-    const handleSaveProfile = useCallback(() => {
-        if (!profileName.trim()) return;
-        const nextProfile = {
-            id: `profile-${Date.now()}`,
-            name: profileName.trim(),
-            description: profileDescription.trim(),
-            overrides: stressOverrides,
-        };
-        setStressProfiles((prev) => {
-            const updated = [...prev, nextProfile];
-            persistProfiles(updated);
-            return updated;
-        });
-        setProfileName('');
-        setProfileDescription('');
-    }, [profileName, profileDescription, stressOverrides, persistProfiles]);
-
-    const handleDeleteProfile = useCallback((profileId) => {
-        setStressProfiles((prev) => {
-            const updated = prev.filter((p) => p.id !== profileId);
-            persistProfiles(updated);
-            return updated;
-        });
-    }, [persistProfiles]);
 
     const recomputeProfileResult = useCallback(
         async (profile) => {
@@ -1412,22 +1418,17 @@ const Simulation = () => {
     const handleSaveProfileEdits = useCallback(async () => {
         if (!editingProfileId) return;
         let updatedProfileRef = null;
-        setStressProfiles((prev) => {
-            const updated = prev.map((p) => {
-                if (p.id === editingProfileId) {
-                    updatedProfileRef = {
-                        ...p,
-                        name: editingProfileName.trim() || p.name,
-                        description: editingProfileDescription.trim(),
-                        overrides: editingProfileOverrides,
-                    };
-                    return updatedProfileRef;
-                }
-                return p;
+        try {
+            const updated = await updateStressProfile(editingProfileId, {
+                name: editingProfileName.trim() || undefined,
+                description: editingProfileDescription.trim(),
+                overrides: editingProfileOverrides,
             });
-            persistProfiles(updated);
-            return updated;
-        });
+            setStressProfiles((prev) => prev.map((p) => (p.id === editingProfileId ? updated : p)));
+            updatedProfileRef = updated;
+        } catch (err) {
+            setError(err.message);
+        }
         setEditingProfileId('');
         setEditingProfileName('');
         setEditingProfileDescription('');
@@ -1440,7 +1441,6 @@ const Simulation = () => {
         editingProfileId,
         editingProfileName,
         editingProfileOverrides,
-        persistProfiles,
         recomputeProfileResult,
     ]);
 

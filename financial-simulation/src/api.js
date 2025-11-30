@@ -139,6 +139,15 @@ export const simulateScenarioStress = (scenarioId, overrides = {}) =>
         body: JSON.stringify(overrides),
     });
 
+// Stress Profiles ---------------------------------------------------------
+export const listStressProfiles = () => request('/stress-profiles');
+export const createStressProfile = (payload) =>
+    request('/stress-profiles', { method: 'POST', body: JSON.stringify(payload) });
+export const updateStressProfile = (profileId, payload) =>
+    request(`/stress-profiles/${profileId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+export const deleteStressProfileApi = (profileId) =>
+    request(`/stress-profiles/${profileId}`, { method: 'DELETE' });
+
 // AI Assistant (modular provider-ready) ------------------------------------
 export const sendAssistantMessage = (messages, context = {}) =>
     request(`/assistant/chat`, {
