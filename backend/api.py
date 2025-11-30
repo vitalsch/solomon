@@ -157,6 +157,8 @@ class SimulationOverride(BaseModel):
     portfolio_shocks: Optional[List[PortfolioShock]] = None
     real_estate_shocks: Optional[List[PortfolioShock]] = None
     mortgage_rate_shocks: Optional[List[PortfolioShock]] = None
+    income_tax_shocks: Optional[List[PortfolioShock]] = None
+    inflation_shocks: Optional[List[PortfolioShock]] = None
 
 
 class AssetCreate(BaseModel):

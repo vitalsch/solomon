@@ -855,11 +855,13 @@ const Simulation = () => {
         const portfolioShocks = buildList(stressOverrides.shocks, 'portfolio');
         const realEstateShocks = buildList(stressOverrides.shocks, 'real_estate');
         const mortgageRateShocks = buildList(stressOverrides.shocks, 'mortgage_interest');
+        const incomeTaxShocks = buildList(stressOverrides.shocks, 'income_tax');
 
         return {
             ...(portfolioShocks.length ? { portfolio_shocks: portfolioShocks } : {}),
             ...(realEstateShocks.length ? { real_estate_shocks: realEstateShocks } : {}),
             ...(mortgageRateShocks.length ? { mortgage_rate_shocks: mortgageRateShocks } : {}),
+            ...(incomeTaxShocks.length ? { income_tax_shocks: incomeTaxShocks } : {}),
         };
     }, [parseMonthInput, parsePercentInput, stressOverrides]);
 
@@ -2226,6 +2228,7 @@ const Simulation = () => {
                                             <option value="portfolio">Portfolio</option>
                                             <option value="real_estate">Immobilie</option>
                                             <option value="mortgage_interest">Zins (Hypothek)</option>
+                                            <option value="income_tax">Einkommensteuer</option>
                                         </select>
                                     </label>
                                     <label className="stacked">

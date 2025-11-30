@@ -102,9 +102,29 @@ class Transaction:
         self.month = month
         self.year = year
         self.internal = internal
+        self.inflation_schedule = getattr(self, "inflation_schedule", [])
 
     def is_applicable(self, current_month: int, current_year: int) -> bool:
         return self.month == current_month and self.year == current_year
+
+    def adjusted_amount(self, current_month: int, current_year: int) -> float:
+        amt = self.amount
+        if not self.inflation_schedule:
+            return amt
+        current_key = (current_year or 0) * 100 + (current_month or 0)
+        for entry in self.inflation_schedule:
+            start = entry.get("start")
+            end = entry.get("end")
+            pct = entry.get("pct")
+            if pct is None:
+                continue
+            if start and current_key < start:
+                continue
+            if end is not None and current_key > end:
+                continue
+            amt = amt * (1 + pct)
+            break
+        return amt
 
 
 class RegularTransaction(Transaction):
@@ -281,7 +301,8 @@ def simulate_account_balances_and_total_wealth(
                 continue
             for transaction in account_transactions.get(account, []):
                 if transaction.is_applicable(current_date.month, current_date.year):
-                    account.update_balance(transaction.amount)
+                    applied_amount = transaction.adjusted_amount(current_date.month, current_date.year)
+                    account.update_balance(applied_amount)
                     if getattr(transaction, "tax_effect", 0):
                         account.update_balance(getattr(transaction, "tax_effect"))
                         monthly_tax += getattr(transaction, "tax_effect")
@@ -294,7 +315,7 @@ def simulate_account_balances_and_total_wealth(
                         )
                     if getattr(transaction, "internal", False):
                         continue
-                    amount = transaction.amount
+                    amount = applied_amount
                     if amount >= 0:
                         monthly_income += amount
                         income_details.append(

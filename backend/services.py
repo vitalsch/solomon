@@ -41,6 +41,7 @@ def _create_transaction_instance(tx_doc, amount_override=None, scenario_defaults
     start_year, start_month, end_year, end_month = _coalesce_dates(tx_doc, scenario_defaults)
     frequency = tx_doc.get("frequency") or 1
     annual_growth_rate = tx_doc.get("annual_growth_rate", 0.0) or 0.0
+    inflation_schedule = tx_doc.get("inflation_schedule", [])
     if tx_type == "regular":
         tx_instance = RegularTransaction(
             tx_doc.get("name", "Regular Transaction"),
@@ -60,6 +61,7 @@ def _create_transaction_instance(tx_doc, amount_override=None, scenario_defaults
             start_year,
         )
     setattr(tx_instance, "internal", is_internal)
+    setattr(tx_instance, "inflation_schedule", inflation_schedule)
     return tx_instance
 
 
@@ -189,6 +191,7 @@ def _apply_overrides(
 
     real_estate_shocks = collect_shocks("real_estate_shocks")
     mortgage_rate_shocks = collect_shocks("mortgage_rate_shocks")
+    inflation_shocks = collect_shocks("inflation_shocks")
 
     def apply_shocks(asset_list, shocks):
         if not shocks:
@@ -219,6 +222,20 @@ def _apply_overrides(
                         "start": entry.get("start"),
                         "end": entry.get("end"),
                         "rate": base_rate + entry["pct"],
+                    }
+                )
+
+    if inflation_shocks:
+        for tx in adjusted_transactions:
+            if tx.get("type") == "mortgage_interest":
+                continue
+            tx.setdefault("inflation_schedule", [])
+            for entry in inflation_shocks:
+                tx["inflation_schedule"].append(
+                    {
+                        "start": entry.get("start"),
+                        "end": entry.get("end"),
+                        "pct": entry.get("pct"),
                     }
                 )
 
@@ -268,6 +285,43 @@ def run_scenario_simulation(
         )
 
     income_tax_rate = scenario.get("income_tax_rate") or 0.0
+
+    # Apply income tax shocks (additive) with optional windows
+    if overrides:
+        tax_shocks = []
+        for entry in overrides.get("income_tax_shocks") or []:
+            pct = entry.get("pct")
+            if pct is None:
+                continue
+            tax_shocks.append(
+                {
+                    "pct": pct,
+                    "start": _to_key(entry.get("start_year"), entry.get("start_month")),
+                    "end": _to_key(entry.get("end_year"), entry.get("end_month")),
+                }
+            )
+        if tax_shocks:
+            def _tax_in_window(start, end):
+                if start is None:
+                    return True
+                return not (end is not None and scenario_defaults["start_year"] and start > _to_key(scenario_defaults["end_year"], scenario_defaults["end_month"]))
+            # Choose first matching shock window; if none matches, fallback to base
+            scenario_start = _to_key(scenario_defaults.get("start_year"), scenario_defaults.get("start_month"))
+            scenario_end = _to_key(scenario_defaults.get("end_year"), scenario_defaults.get("end_month"))
+            applied_tax = income_tax_rate
+            for shock in tax_shocks:
+                start = shock.get("start") or scenario_start
+                end = shock.get("end") or scenario_end
+                # If scenario overlaps the window, apply the shock additively
+                if start is None:
+                    applied_tax = income_tax_rate + shock["pct"]
+                    break
+                # simple overlap check
+                if scenario_start is None or not (scenario_end and start > scenario_end) and not (end and scenario_start and scenario_start > end):
+                    applied_tax = income_tax_rate + shock["pct"]
+                    break
+            income_tax_rate = applied_tax
+
     account_transactions, mortgage_interest_transactions = _build_transactions(
         transactions, account_map, income_tax_rate, scenario_defaults
     )
