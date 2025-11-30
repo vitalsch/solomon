@@ -13,6 +13,21 @@ const Account = ({
     const [annualGrowthRate, setAnnualGrowthRate] = useState(account.annual_growth_rate * 100);
     const [initialBalance, setInitialBalance] = useState(account.initial_balance);
     const [assetType, setAssetType] = useState(account.asset_type || 'generic');
+    const formatMonthInput = (year, month) => {
+        if (!year || !month) return '';
+        return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`;
+    };
+    const [startMonthInput, setStartMonthInput] = useState(formatMonthInput(account.start_year, account.start_month));
+    const [endMonthInput, setEndMonthInput] = useState(formatMonthInput(account.end_year, account.end_month));
+
+    const parseMonthValue = (value) => {
+        if (!value) return null;
+        const [yearStr, monthStr] = value.split('-');
+        const year = Number(yearStr);
+        const month = Number(monthStr);
+        if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+        return { year, month };
+    };
 
     const handleUpdateAccount = () => {
         const payload = {
@@ -21,6 +36,16 @@ const Account = ({
             initial_balance: parseFloat(initialBalance),
             asset_type: assetType,
         };
+        const startParts = parseMonthValue(startMonthInput);
+        const endParts = parseMonthValue(endMonthInput);
+        if (startParts) {
+            payload.start_year = startParts.year;
+            payload.start_month = startParts.month;
+        }
+        if (endParts) {
+            payload.end_year = endParts.year;
+            payload.end_month = endParts.month;
+        }
         updateAccount(account.id, payload);
         setIsEditing(false);
     };
@@ -70,6 +95,22 @@ const Account = ({
                             <option value="real_estate">Immobilie</option>
                             <option value="mortgage">Hypothek</option>
                         </select>
+                    </label>
+                    <label>
+                        <span>Start (optional)</span>
+                        <input
+                            type="month"
+                            value={startMonthInput}
+                            onChange={(e) => setStartMonthInput(e.target.value)}
+                        />
+                    </label>
+                    <label>
+                        <span>Ende (optional)</span>
+                        <input
+                            type="month"
+                            value={endMonthInput}
+                            onChange={(e) => setEndMonthInput(e.target.value)}
+                        />
                     </label>
                     <div className="account-actions">
                         <button onClick={handleUpdateAccount}>Speichern</button>

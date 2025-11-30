@@ -9,6 +9,135 @@
   margin: 0 auto;
 }
 
+/* Hero */
+.market-hero {
+  background: linear-gradient(135deg, #eaf2ff, #dfe7f5);
+  border: 1px solid #cfd8ea;
+  box-shadow: 0 18px 40px rgba(70, 100, 160, 0.16);
+  border-radius: 20px;
+  padding: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  position: relative;
+  overflow: visible;
+}
+
+.market-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(111, 158, 255, 0.2), transparent 42%),
+    radial-gradient(circle at 82% 8%, rgba(72, 118, 190, 0.16), transparent 38%),
+    radial-gradient(circle at 30% 120%, rgba(255, 255, 255, 0.4), transparent 42%);
+  pointer-events: none;
+}
+
+.hero-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
+}
+
+.hero-main h1 {
+  margin: 0;
+  font-size: clamp(1.85rem, 2.6vw, 2.35rem);
+  letter-spacing: -0.01em;
+}
+
+.hero-meta {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  z-index: 1;
+}
+
+.hero-subline {
+  color: var(--muted);
+  font-size: 0.95rem;
+  margin-top: 0.25rem;
+  z-index: 1;
+}
+
+.scenario-pill-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.scenario-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 240px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 32px rgba(25, 37, 57, 0.14);
+  overflow: hidden;
+  z-index: 60;
+}
+
+.scenario-dropdown-item {
+  width: 100%;
+  text-align: left;
+  padding: 0.65rem 0.85rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.scenario-dropdown-item:hover {
+  background: rgba(31, 111, 235, 0.08);
+}
+
+.scenario-dropdown-item.manage {
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.scenario-dropdown-title {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.scenario-dropdown-sub {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.scenario-dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0.25rem 0;
+}
+
+.market-hero .pill {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 10px 22px rgba(25, 37, 57, 0.08);
+}
+
+.market-hero .pill.muted {
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.hero-actions button {
+  box-shadow: 0 12px 28px rgba(25, 37, 57, 0.14);
+}
+
 .dual-range {
   margin-bottom: 1rem;
 }
@@ -65,37 +194,38 @@
   cursor: pointer;
 }
 
-.user-sidebar {
-  width: min(340px, 100%);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem;
-  transition: transform 140ms ease, opacity 140ms ease, max-height 140ms ease;
-  box-shadow: var(--shadow);
-}
-
-.simulation-layout.sidebar-closed .user-sidebar {
-  transform: translateX(-120%);
+.user-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  max-width: 360px;
+  width: 92vw;
+  background: #f5f6f8;
+  border-right: 1px solid #cfd4de;
+  border-radius: 0;
+  padding: 1.5rem 1.25rem;
+  box-shadow: 12px 0 28px rgba(15, 23, 42, 0.1);
+  transform: translateX(-100%);
   opacity: 0;
   pointer-events: none;
-  max-height: 0;
-  padding: 0;
-  margin: 0;
-  border: none;
+  transition: transform 180ms ease, opacity 180ms ease;
+  z-index: 40;
+  overflow-y: auto;
 }
 
-.simulation-layout.sidebar-closed .simulation-main {
-  margin-left: 0;
-  max-width: 100%;
-  flex: 1 1 100%;
+.user-drawer.open {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .user-search,
 .new-user input,
 label.stacked input,
 label.stacked select,
-.account-form input {
+.account-form input,
+textarea {
   width: 100%;
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--border);
@@ -108,19 +238,26 @@ label.stacked select,
 .new-user input:focus,
 label.stacked input:focus,
 label.stacked select:focus,
-.account-form input:focus {
+.account-form input:focus,
+textarea:focus {
   outline: 1px solid var(--accent);
   box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.15);
 }
 
 .user-buttons {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
 .user-buttons button {
   flex: 1;
+  padding: 0.65rem 1rem;
+  box-shadow: 0 10px 22px rgba(25, 37, 57, 0.12);
+}
+
+.new-user input {
+  margin-bottom: 0.65rem;
 }
 
 .user-sidebar h3 {
@@ -494,16 +631,18 @@ label.stacked span {
   align-items: center;
 }
 
- .panel-actions button,
- .panel-header button {
-  background: linear-gradient(135deg, #22d3ee, #06b6d4);
-  color: #0b1020;
+.panel-actions button,
+.panel-header button {
+  background: linear-gradient(135deg, #62c7e6, #58c1e2);
+  color: #19455a;
   border: none;
-  padding: 0.55rem 0.9rem;
-  border-radius: 10px;
+  padding: 0.65rem 1.4rem;
+  border-radius: 16px;
   cursor: pointer;
-  font-weight: 700;
-  box-shadow: 0 10px 20px rgba(6, 182, 212, 0.35);
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  box-shadow: 0 16px 36px rgba(88, 193, 226, 0.35);
+  transition: transform 100ms ease, box-shadow 120ms ease;
 }
 
 .panel-actions button:disabled,
@@ -526,10 +665,13 @@ label.stacked span {
   border-radius: 6px;
 }
 
- button.secondary {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text);
-  border: 1px solid var(--border);
+button.secondary {
+  background: #eef1f7;
+  color: #1a1f2b;
+  border: 1px solid #d9dde6;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 12px 24px rgba(26, 31, 43, 0.08);
+  font-weight: 800;
+  letter-spacing: 0.01em;
 }
 
 button.secondary.danger {
@@ -541,6 +683,15 @@ button.secondary.danger {
 button.tiny {
   padding: 0.2rem 0.6rem;
   font-size: 0.75rem;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 38px rgba(88, 193, 226, 0.38);
+}
+
+button.secondary:hover {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 14px 24px rgba(26, 31, 43, 0.12);
 }
 
  .cashflow-table {
@@ -885,4 +1036,18 @@ button.tiny {
     left: 8px;
     width: auto;
   }
+}
+.user-burger {
+  position: fixed;
+  left: clamp(1rem, 3vw, 1.25rem);
+  top: clamp(1rem, 3vw, 1.25rem);
+  z-index: 45;
+  padding: 0.5rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--text);
+  box-shadow: 0 12px 28px rgba(25, 37, 57, 0.14);
+  cursor: pointer;
+  font-weight: 700;
 }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import {
     Chart as ChartJS,
@@ -63,7 +63,7 @@ const Simulation = () => {
     const [scenarios, setScenarios] = useState([]);
     const [currentScenarioId, setCurrentScenarioId] = useState('');
     const [scenarioDetails, setScenarioDetails] = useState(null);
-    const [showScenarios, setShowScenarios] = useState(true);
+    const [showScenarios, setShowScenarios] = useState(false);
     const [showAccounts, setShowAccounts] = useState(true);
     const [showTransactions, setShowTransactions] = useState(true);
     const [showCashflow, setShowCashflow] = useState(true);
@@ -74,6 +74,8 @@ const Simulation = () => {
     const [newAccountGrowthRate, setNewAccountGrowthRate] = useState('');
     const [newAccountInitialBalance, setNewAccountInitialBalance] = useState('');
     const [newAccountType, setNewAccountType] = useState('generic');
+    const [newAccountStart, setNewAccountStart] = useState('');
+    const [newAccountEnd, setNewAccountEnd] = useState('');
     const [newScenarioName, setNewScenarioName] = useState('');
     const [cloneScenarioId, setCloneScenarioId] = useState('');
     const [newScenarioStart, setNewScenarioStart] = useState('2024-05');
@@ -81,6 +83,8 @@ const Simulation = () => {
     const [inflationRate, setInflationRate] = useState('');
     const [incomeTaxRate, setIncomeTaxRate] = useState('');
     const [wealthTaxRate, setWealthTaxRate] = useState('');
+    const [newScenarioDescription, setNewScenarioDescription] = useState('');
+    const [scenarioDescription, setScenarioDescription] = useState('');
     const [selectedScenarios, setSelectedScenarios] = useState([]);
     const [simulationCache, setSimulationCache] = useState({});
     const [cashFlows, setCashFlows] = useState([]);
@@ -92,8 +96,14 @@ const Simulation = () => {
     const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
     const [chartRange, setChartRange] = useState({ start: 0, end: null });
     const [expandedYears, setExpandedYears] = useState([]);
-    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [scenarioCount, setScenarioCount] = useState(0);
+    const scenarioSectionRef = useRef(null);
+    const scenarioMenuRef = useRef(null);
+    const [isScenarioMenuOpen, setIsScenarioMenuOpen] = useState(false);
+    const [isRangeModalOpen, setIsRangeModalOpen] = useState(false);
+    const [rangeStart, setRangeStart] = useState('');
+    const [rangeEnd, setRangeEnd] = useState('');
     const formatCurrency = (value) => {
         const num = Number(value);
         const safe = Number.isFinite(num) ? num : 0;
@@ -118,15 +128,24 @@ const Simulation = () => {
         () => users.find((user) => normalizeId(user.id) === normalizeId(selectedUserId)),
         [users, selectedUserId]
     );
-    const currentSimulation = useMemo(
-        () => simulationCache[cacheKey(selectedUserId, currentScenarioId)] || null,
-        [simulationCache, selectedUserId, currentScenarioId]
-    );
     const formatScenarioRange = useCallback((scenario) => {
         if (!scenario) return null;
         const { start_year, start_month, end_year, end_month } = scenario;
         if (!start_year || !start_month || !end_year || !end_month) return null;
         return `${start_month}/${start_year} - ${end_month}/${end_year}`;
+    }, []);
+    const currentSimulation = useMemo(
+        () => simulationCache[cacheKey(selectedUserId, currentScenarioId)] || null,
+        [simulationCache, selectedUserId, currentScenarioId]
+    );
+    const scenarioRangeLabel = useMemo(() => formatScenarioRange(currentScenario), [currentScenario, formatScenarioRange]);
+    const openScenarioSection = useCallback(() => {
+        setShowScenarios(true);
+        requestAnimationFrame(() => {
+            if (scenarioSectionRef.current) {
+                scenarioSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        });
     }, []);
 
     const groupedTransactions = useMemo(() => {
@@ -280,6 +299,7 @@ const Simulation = () => {
                     ? ''
                     : scenarioDetails.wealth_tax_rate
             );
+            setScenarioDescription(scenarioDetails.description || '');
         }
     }, [scenarioDetails]);
 
@@ -433,6 +453,20 @@ const Simulation = () => {
         }
     };
 
+    const parseMonthValue = (value) => {
+        if (!value) return null;
+        const [yearStr, monthStr] = value.split('-');
+        const year = Number(yearStr);
+        const month = Number(monthStr);
+        if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+        return { year, month };
+    };
+
+    const toMonthInput = (year, month) => {
+        if (!year || !month) return '';
+        return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`;
+    };
+
     const handleAddAccount = async () => {
         if (!currentScenarioId || !newAccountName) {
             return;
@@ -446,6 +480,16 @@ const Simulation = () => {
                 initial_balance: parseFloat(newAccountInitialBalance || 0),
                 asset_type: newAccountType,
             };
+            const startParts = parseMonthValue(newAccountStart);
+            const endParts = parseMonthValue(newAccountEnd);
+            if (startParts) {
+                payload.start_year = startParts.year;
+                payload.start_month = startParts.month;
+            }
+            if (endParts) {
+                payload.end_year = endParts.year;
+                payload.end_month = endParts.month;
+            }
             const account = await createAsset(currentScenarioId, payload);
             setAccounts((prev) => [...prev, account]);
             setAccountTransactions((prev) => ({ ...prev, [account.id]: [] }));
@@ -453,6 +497,8 @@ const Simulation = () => {
             setNewAccountGrowthRate('');
             setNewAccountInitialBalance('');
             setNewAccountType('generic');
+            setNewAccountStart('');
+            setNewAccountEnd('');
             closeAssetModal();
             if (currentScenarioId) {
                 await handleSimulate();
@@ -650,6 +696,7 @@ const Simulation = () => {
         try {
             const scenario = await createScenario({
                 name: newScenarioName,
+                description: newScenarioDescription || undefined,
                 start_year: startYear,
                 start_month: startMonth,
                 end_year: endYear,
@@ -666,6 +713,7 @@ const Simulation = () => {
             setScenarios((prev) => [...prev, scenario]);
             setCurrentScenarioId(normalizeId(scenario.id));
             setNewScenarioName('');
+            setNewScenarioDescription('');
             setCloneScenarioId('');
             await handleSimulate();
         } catch (err) {
@@ -722,11 +770,18 @@ const Simulation = () => {
         setError(null);
         try {
             const updated = await updateScenario(currentScenarioId, {
+                description: scenarioDescription || null,
                 inflation_rate: inflationRate === '' ? null : parseFloat(inflationRate),
                 income_tax_rate: incomeTaxRate === '' ? null : parseFloat(incomeTaxRate),
                 wealth_tax_rate: wealthTaxRate === '' ? null : parseFloat(wealthTaxRate),
             });
             setScenarioDetails(updated);
+            setSimulationCache((prev) => {
+                const next = { ...prev };
+                delete next[cacheKey(selectedUserId, normalizeId(currentScenarioId))];
+                return next;
+            });
+            await handleSimulate(updated.id);
         } catch (err) {
             setError(err.message);
         } finally {
@@ -1122,81 +1177,206 @@ const Simulation = () => {
 
     const modalAsset = accounts.find((acc) => acc.id === transactionModalAssetId);
 
+    const openScenariosFromHero = () => {
+        setShowScenarios(true);
+        requestAnimationFrame(() => {
+            if (scenarioSectionRef.current) {
+                scenarioSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        });
+    };
+
+    const openRangeModal = () => {
+        if (!currentScenarioId || !scenarioDetails) {
+            setError('Bitte zuerst ein Szenario auswählen.');
+            return;
+        }
+        setRangeStart(toMonthInput(scenarioDetails.start_year, scenarioDetails.start_month));
+        setRangeEnd(toMonthInput(scenarioDetails.end_year, scenarioDetails.end_month));
+        setIsRangeModalOpen(true);
+    };
+
+    const handleSaveRange = async () => {
+        if (!currentScenarioId) {
+            setError('Bitte zuerst ein Szenario auswählen.');
+            return;
+        }
+        const startParts = parseMonthValue(rangeStart);
+        const endParts = parseMonthValue(rangeEnd);
+        if (!startParts || !endParts) {
+            setError('Bitte Start und Ende (Monat/Jahr) angeben.');
+            return;
+        }
+        const previousEndYear = scenarioDetails?.end_year;
+        const previousEndMonth = scenarioDetails?.end_month;
+        setLoading(true);
+        setError(null);
+        try {
+            const updated = await updateScenario(currentScenarioId, {
+                start_year: startParts.year,
+                start_month: startParts.month,
+                end_year: endParts.year,
+                end_month: endParts.month,
+            });
+            setScenarioDetails(updated);
+            setScenarios((prev) => prev.map((s) => (normalizeId(s.id) === normalizeId(updated.id) ? updated : s)));
+            setIsRangeModalOpen(false);
+            setSimulationCache((prev) => {
+                const next = { ...prev };
+                delete next[cacheKey(selectedUserId, normalizeId(currentScenarioId))];
+                return next;
+            });
+            if (previousEndYear && previousEndMonth) {
+                const updatedAccounts = await Promise.all(
+                    accounts.map(async (account) => {
+                        const matchPrev =
+                            account.end_year === previousEndYear && account.end_month === previousEndMonth;
+                        if (matchPrev) {
+                            const refreshed = await updateAsset(account.id, {
+                                end_year: endParts.year,
+                                end_month: endParts.month,
+                            });
+                            return refreshed;
+                        }
+                        return account;
+                    })
+                );
+                setAccounts(updatedAccounts);
+            }
+            await handleSimulate(updated.id);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSelectScenarioFromMenu = async (scenarioId) => {
+        const key = normalizeId(scenarioId);
+        setCurrentScenarioId(key);
+        setSelectedScenarios([key]);
+        setIsScenarioMenuOpen(false);
+        await handleSimulate(key);
+    };
+
+    useEffect(() => {
+        const onClickOutside = (e) => {
+            if (scenarioMenuRef.current && !scenarioMenuRef.current.contains(e.target)) {
+                setIsScenarioMenuOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', onClickOutside);
+        return () => document.removeEventListener('mousedown', onClickOutside);
+    }, []);
+
+    useEffect(() => {
+        if (!showScenarios) return undefined;
+        const handleClick = (e) => {
+            if (scenarioSectionRef.current && !scenarioSectionRef.current.contains(e.target)) {
+                setShowScenarios(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [showScenarios]);
+
     return (
         <>
             <div className="simulation">
-                <h1>Financial Simulation</h1>
-                <div className={`simulation-layout ${isSidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
+                <div className="market-hero">
                     <button
-                        className="sidebar-toggle"
+                        className="user-burger"
                         onClick={() => setIsSidebarOpen((prev) => !prev)}
                         aria-expanded={isSidebarOpen}
                         aria-controls="user-sidebar"
+                        title="Benutzer verwalten"
                     >
-                        {isSidebarOpen ? '×' : '☰'} Benutzer
+                        ☰
                     </button>
-                    <aside id="user-sidebar" className="user-sidebar">
-                        <h3>User Management</h3>
-                        <div className="new-user">
-                            <input
-                                type="text"
-                                placeholder="Benutzername"
-                                value={newUsername}
-                                onChange={(e) => setNewUsername(e.target.value)}
-                            />
-                            <input
-                                type="password"
-                                placeholder="Passwort"
-                                value={newUserPassword}
-                                onChange={(e) => setNewUserPassword(e.target.value)}
-                            />
-                            <input
-                                type="text"
-                                placeholder="Anzeigename (optional)"
-                                value={newUserName}
-                                onChange={(e) => setNewUserName(e.target.value)}
-                            />
-                            <input
-                                type="email"
-                                placeholder="E-Mail (optional)"
-                                value={newUserEmail}
-                                onChange={(e) => setNewUserEmail(e.target.value)}
-                            />
-                            <div className="user-buttons">
-                                <button onClick={handleRegister}>Registrieren</button>
-                                <button onClick={handleLogin}>Login</button>
-                                <button onClick={loadCurrentUser}>Aktualisieren</button>
+                    <div className="hero-main">
+                        <div>
+                            <p className="eyebrow">Financials Overview</p>
+                            <h1>Portfolio Simulation</h1>
+                            <div className="hero-meta">
+                                <div className="scenario-pill-menu" ref={scenarioMenuRef}>
+                                    <button
+                                        type="button"
+                                        className="pill clickable"
+                                        onClick={() => setIsScenarioMenuOpen((prev) => !prev)}
+                                    >
+                                        Szenario: {currentScenario?.name || 'Kein Szenario'}
+                                    </button>
+                                    {isScenarioMenuOpen && (
+                                        <div className="scenario-dropdown">
+                                            {scenarios.map((scenario) => (
+                                                <button
+                                                    key={`menu-${scenario.id}`}
+                                                    type="button"
+                                                    className="scenario-dropdown-item"
+                                                    onClick={() => handleSelectScenarioFromMenu(scenario.id)}
+                                                >
+                                                    <div className="scenario-dropdown-title">{scenario.name}</div>
+                                                    <div className="scenario-dropdown-sub">
+                                                        {formatScenarioRange(scenario) || 'Zeitraum offen'}
+                                                    </div>
+                                                </button>
+                                            ))}
+                                            <div className="scenario-dropdown-divider" />
+                                            <button
+                                                type="button"
+                                                className="scenario-dropdown-item manage"
+                                                onClick={() => {
+                                                    setIsScenarioMenuOpen(false);
+                                                    openScenariosFromHero();
+                                                }}
+                                            >
+                                                Szenarien verwalten
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                                <button type="button" className="pill clickable" onClick={openRangeModal}>
+                                    {scenarioRangeLabel || 'Zeitraum offen'}
+                                </button>
+                                <span className="pill muted">{scenarios.length} Szenarien</span>
                             </div>
-                            {selectedUserId && (
-                                <p className="active-user">
-                                    Eingeloggt als: <code>{selectedUser?.name || selectedUser?.username || selectedUserId}</code>
-                                </p>
-                            )}
+                            <div className="hero-meta">
+                                <span className="pill muted">Assets: {accounts.length}</span>
+                                <span className="pill muted">Transaktionen: {allTransactions.length}</span>
+                            </div>
+                            <div className="hero-subline">
+                                {currentScenario?.description || 'Beschreibung hinzufügen, um das Szenario schneller wiederzuerkennen.'}
+                            </div>
                         </div>
-                    </aside>
+                        <div className="hero-actions">
+                            <button onClick={openScenarioSection}>Szenario verwalten</button>
+                            <button className="secondary" onClick={() => handleSimulate()} disabled={!currentScenarioId}>
+                                Simulation starten
+                            </button>
+                        </div>
+                    </div>
+                </div>
 
+                <div className="simulation-layout">
                     <div className="simulation-main">
                         {error && <p className="error">{error}</p>}
                         {loading && <p>Loading...</p>}
 
-                        <div className="panel">
-                            <div className="panel-header">
-                                <div>
-                                    <p className="eyebrow">Szenarien</p>
-                                    <h3>Planen & vergleichen</h3>
-                                </div>
-                                <div className="panel-actions">
-                                    <div className="scenario-chip">
-                                        <span>Aktiv</span>
-                                        <strong>{currentScenario?.name || 'Kein Szenario'}</strong>
+                        {showScenarios && (
+                            <div className="panel" ref={scenarioSectionRef}>
+                                <div className="panel-header">
+                                    <div>
+                                        <p className="eyebrow">Szenarien</p>
+                                        <h3>Planen & vergleichen</h3>
                                     </div>
-                                    <button className="secondary" onClick={() => setShowScenarios((v) => !v)}>
-                                        {showScenarios ? 'Einklappen' : 'Ausklappen'}
-                                    </button>
+                                    <div className="panel-actions">
+                                        <div className="scenario-chip">
+                                            <span>Aktiv</span>
+                                            <strong>{currentScenario?.name || 'Kein Szenario'}</strong>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
 
-                            {showScenarios && (
                                 <div className="scenario-grid">
                                     <div className="scenario-card">
                                         <div className="scenario-card-header">
@@ -1216,21 +1396,30 @@ const Simulation = () => {
                                                     onChange={(e) => setNewScenarioName(e.target.value)}
                                                 />
                                             </label>
-                                            <label className="stacked">
-                                                <span>Inflation p.a.</span>
-                                                <input
-                                                    type="number"
-                                                    placeholder="z.B. 0.02 für 2%"
-                                                    value={inflationRate}
-                                                    onChange={(e) => setInflationRate(e.target.value)}
-                                                    step="0.0001"
-                                                />
-                                            </label>
-                                            <label className="stacked">
-                                                <span>Einkommensteuersatz</span>
-                                                <input
-                                                    type="number"
-                                                    placeholder="z.B. 0.25"
+                                        <label className="stacked">
+                                            <span>Inflation p.a.</span>
+                                            <input
+                                                type="number"
+                                                placeholder="z.B. 0.02 für 2%"
+                                                value={inflationRate}
+                                                onChange={(e) => setInflationRate(e.target.value)}
+                                                step="0.0001"
+                                            />
+                                        </label>
+                                        <label className="stacked">
+                                            <span>Beschreibung</span>
+                                            <textarea
+                                                rows={3}
+                                                placeholder="Kurzbeschreibung des Szenarios"
+                                                value={newScenarioDescription}
+                                                onChange={(e) => setNewScenarioDescription(e.target.value)}
+                                            />
+                                        </label>
+                                        <label className="stacked">
+                                            <span>Einkommensteuersatz</span>
+                                            <input
+                                                type="number"
+                                                placeholder="z.B. 0.25"
                                                     value={incomeTaxRate}
                                                     onChange={(e) => setIncomeTaxRate(e.target.value)}
                                                     step="0.0001"
@@ -1330,6 +1519,10 @@ const Simulation = () => {
                                                 <strong>{formatScenarioRange(scenarioDetails) || '–'}</strong>
                                             </div>
                                             <div className="scenario-detail">
+                                                <span className="label">Beschreibung</span>
+                                                <strong>{scenarioDetails?.description || '–'}</strong>
+                                            </div>
+                                            <div className="scenario-detail">
                                                 <span className="label">Assets</span>
                                                 <strong>{accounts.length}</strong>
                                             </div>
@@ -1348,6 +1541,14 @@ const Simulation = () => {
                                                         value={inflationRate}
                                                         onChange={(e) => setInflationRate(e.target.value)}
                                                         step="0.0001"
+                                                    />
+                                                </label>
+                                                <label className="stacked">
+                                                    <span>Beschreibung</span>
+                                                    <textarea
+                                                        rows={3}
+                                                        value={scenarioDescription}
+                                                        onChange={(e) => setScenarioDescription(e.target.value)}
                                                     />
                                                 </label>
                                                 <label className="stacked">
@@ -1375,9 +1576,8 @@ const Simulation = () => {
                                         </div>
                                     </div>
                                 </div>
-                            )}
-                        </div>
-
+                            </div>
+                        )}
                         <div className="panel">
                             <div className="panel-header">
                                 <div>
@@ -1463,6 +1663,9 @@ const Simulation = () => {
                                                                     ? 'Mortgage Interest'
                                                                     : 'One-time'}{' '}
                                                                 · {tx.start_month}/{tx.start_year}
+                                                                {tx.end_month && tx.end_year
+                                                                    ? ` - ${tx.end_month}/${tx.end_year}`
+                                                                    : ''}
                                                             </div>
                                                             {annualLabel(tx) && (
                                                                 <div className="txn-annual">{annualLabel(tx)}</div>
@@ -1953,6 +2156,22 @@ const Simulation = () => {
                                 />
                             </label>
                             <label className="stacked">
+                                <span>Start (optional)</span>
+                                <input
+                                    type="month"
+                                    value={newAccountStart}
+                                    onChange={(e) => setNewAccountStart(e.target.value)}
+                                />
+                            </label>
+                            <label className="stacked">
+                                <span>Ende (optional)</span>
+                                <input
+                                    type="month"
+                                    value={newAccountEnd}
+                                    onChange={(e) => setNewAccountEnd(e.target.value)}
+                                />
+                            </label>
+                            <label className="stacked">
                                 <span>Typ</span>
                                 <select
                                     value={newAccountType}
@@ -1968,6 +2187,90 @@ const Simulation = () => {
                         <div className="modal-actions">
                             <button onClick={handleAddAccount} disabled={!currentScenarioId}>
                                 Asset erstellen
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            <div id="user-sidebar" className={`user-drawer ${isSidebarOpen ? 'open' : ''}`}>
+                <div className="user-drawer-header">
+                    <h3>User Management</h3>
+                    <button className="secondary" onClick={() => setIsSidebarOpen(false)}>
+                        Schließen
+                    </button>
+                </div>
+                <div className="new-user">
+                    <input
+                        type="text"
+                        placeholder="Benutzername"
+                        value={newUsername}
+                        onChange={(e) => setNewUsername(e.target.value)}
+                    />
+                    <input
+                        type="password"
+                        placeholder="Passwort"
+                        value={newUserPassword}
+                        onChange={(e) => setNewUserPassword(e.target.value)}
+                    />
+                    <input
+                        type="text"
+                        placeholder="Anzeigename (optional)"
+                        value={newUserName}
+                        onChange={(e) => setNewUserName(e.target.value)}
+                    />
+                    <input
+                        type="email"
+                        placeholder="E-Mail (optional)"
+                        value={newUserEmail}
+                        onChange={(e) => setNewUserEmail(e.target.value)}
+                    />
+                    <div className="user-buttons">
+                        <button onClick={handleRegister}>Registrieren</button>
+                        <button onClick={handleLogin}>Login</button>
+                        <button onClick={loadCurrentUser}>Aktualisieren</button>
+                    </div>
+                    {selectedUserId && (
+                        <p className="active-user">
+                            Eingeloggt als: <code>{selectedUser?.name || selectedUser?.username || selectedUserId}</code>
+                        </p>
+                    )}
+                </div>
+            </div>
+            {isRangeModalOpen && (
+                <div className="modal-overlay" onClick={() => setIsRangeModalOpen(false)}>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <div>
+                                <p className="eyebrow">Zeitraum anpassen</p>
+                                <h3>{currentScenario?.name || 'Szenario'}</h3>
+                            </div>
+                            <div className="modal-header-actions">
+                                <button className="secondary" onClick={() => setIsRangeModalOpen(false)}>
+                                    Schließen
+                                </button>
+                            </div>
+                        </div>
+                        <div className="modal-grid">
+                            <label className="stacked">
+                                <span>Start</span>
+                                <input
+                                    type="month"
+                                    value={rangeStart}
+                                    onChange={(e) => setRangeStart(e.target.value)}
+                                />
+                            </label>
+                            <label className="stacked">
+                                <span>Ende</span>
+                                <input
+                                    type="month"
+                                    value={rangeEnd}
+                                    onChange={(e) => setRangeEnd(e.target.value)}
+                                />
+                            </label>
+                        </div>
+                        <div className="modal-actions">
+                            <button onClick={handleSaveRange} disabled={!rangeStart || !rangeEnd}>
+                                Zeitraum speichern
                             </button>
                         </div>
                     </div>

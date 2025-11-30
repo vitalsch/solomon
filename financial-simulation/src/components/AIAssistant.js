@@ -12,7 +12,6 @@ const AIAssistant = ({ currentScenarioId, accounts, scenarios, onDataChanged }) 
     const [messages, setMessages] = useState([initialBotMessage]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
-    const [pendingPlan, setPendingPlan] = useState(null);
     const [statusNote, setStatusNote] = useState('');
     const bottomRef = useRef(null);
 
@@ -56,7 +55,6 @@ const AIAssistant = ({ currentScenarioId, accounts, scenarios, onDataChanged }) 
                     content: resp?.reply || 'Ich habe deine Anfrage verstanden.',
                 });
             }
-            setPendingPlan(resp?.plan || null);
             if (!resp?.plan) {
                 setStatusNote('Kein automatischer Plan erkannt – bitte mehr Details geben.');
             }
