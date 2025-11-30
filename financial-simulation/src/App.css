@@ -120,8 +120,25 @@
 
 .risk-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.risk-column {
+  display: flex;
+  flex-direction: column;
   gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.risk-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem;
+  align-items: flex-end;
 }
 
 .risk-actions {
@@ -131,6 +148,12 @@
   gap: 0.75rem;
   flex-wrap: wrap;
   margin-top: 0.5rem;
+}
+
+.risk-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .risk-summary {

@@ -106,19 +106,9 @@ const Simulation = () => {
     const [rangeStart, setRangeStart] = useState('');
     const [rangeEnd, setRangeEnd] = useState('');
     const [stressOverrides, setStressOverrides] = useState({
-        mortgageRateDelta: '2',
-        mortgageStart: '',
-        mortgageEnd: '',
-        assetGrowthDelta: '-20',
-        portfolioStart: '',
-        portfolioEnd: '',
-        incomeDelta: '0',
-        incomeStart: '',
-        incomeEnd: '',
-        expenseDelta: '5',
-        expenseStart: '',
-        expenseEnd: '',
-        incomeTaxOverride: '',
+        shocks: [
+            { id: 'shock-1', assetType: 'portfolio', delta: '-20', start: '', end: '' },
+        ],
     });
     const [stressResult, setStressResult] = useState(null);
     const [stressLoading, setStressLoading] = useState(false);
@@ -845,44 +835,30 @@ const Simulation = () => {
     }, []);
 
     const buildStressPayload = useCallback(() => {
-        const mortgagePct = parsePercentInput(stressOverrides.mortgageRateDelta);
-        const incomePct = parsePercentInput(stressOverrides.incomeDelta);
-        const expensePct = parsePercentInput(stressOverrides.expenseDelta);
-        const assetGrowthDeltaPct = parsePercentInput(stressOverrides.assetGrowthDelta);
-        const incomeTaxOverride = parsePercentInput(stressOverrides.incomeTaxOverride);
-        const portfolioStart = parseMonthInput(stressOverrides.portfolioStart);
-        const portfolioEnd = parseMonthInput(stressOverrides.portfolioEnd);
-        const mortgageStart = parseMonthInput(stressOverrides.mortgageStart);
-        const mortgageEnd = parseMonthInput(stressOverrides.mortgageEnd);
-        const incomeStart = parseMonthInput(stressOverrides.incomeStart);
-        const incomeEnd = parseMonthInput(stressOverrides.incomeEnd);
-        const expenseStart = parseMonthInput(stressOverrides.expenseStart);
-        const expenseEnd = parseMonthInput(stressOverrides.expenseEnd);
+        const buildList = (items, assetType) =>
+            (items || [])
+                .filter((shock) => (assetType ? shock.assetType === assetType : true))
+                .map((shock) => {
+                    const pct = parsePercentInput(shock.delta);
+                    const start = parseMonthInput(shock.start);
+                    const end = parseMonthInput(shock.end);
+                    return {
+                        pct: pct === null ? undefined : pct,
+                        start_year: start?.year,
+                        start_month: start?.month,
+                        end_year: end?.year,
+                        end_month: end?.month,
+                    };
+                })
+                .filter((entry) => entry.pct !== undefined);
 
-        const payload = {
-            mortgage_rate_change_pct: mortgagePct === null ? undefined : mortgagePct,
-            income_change_pct: incomePct === null ? undefined : incomePct,
-            expense_change_pct: expensePct === null ? undefined : expensePct,
-            portfolio_growth_pct: assetGrowthDeltaPct === null ? undefined : assetGrowthDeltaPct,
-            income_tax_override: incomeTaxOverride === null ? undefined : incomeTaxOverride,
-            portfolio_start_year: portfolioStart?.year,
-            portfolio_start_month: portfolioStart?.month,
-            portfolio_end_year: portfolioEnd?.year,
-            portfolio_end_month: portfolioEnd?.month,
-            mortgage_start_year: mortgageStart?.year,
-            mortgage_start_month: mortgageStart?.month,
-            mortgage_end_year: mortgageEnd?.year,
-            mortgage_end_month: mortgageEnd?.month,
-            income_start_year: incomeStart?.year,
-            income_start_month: incomeStart?.month,
-            income_end_year: incomeEnd?.year,
-            income_end_month: incomeEnd?.month,
-            expense_start_year: expenseStart?.year,
-            expense_start_month: expenseStart?.month,
-            expense_end_year: expenseEnd?.year,
-            expense_end_month: expenseEnd?.month,
+        const portfolioShocks = buildList(stressOverrides.shocks, 'portfolio');
+        const realEstateShocks = buildList(stressOverrides.shocks, 'real_estate');
+
+        return {
+            ...(portfolioShocks.length ? { portfolio_shocks: portfolioShocks } : {}),
+            ...(realEstateShocks.length ? { real_estate_shocks: realEstateShocks } : {}),
         };
-        return Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined && v !== null));
     }, [parseMonthInput, parsePercentInput, stressOverrides]);
 
     const summarizeSimulation = useCallback((simulation) => {
@@ -2229,189 +2205,104 @@ const Simulation = () => {
                         </div>
                     </div>
                     <div className="panel-body">
-                        <div className="risk-grid">
-                            <label className="stacked">
-                                <span>Zins-Schock Hypotheken (%)</span>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={stressOverrides.mortgageRateDelta}
-                                    onChange={(e) =>
-                                        setStressOverrides((prev) => ({
-                                            ...prev,
-                                            mortgageRateDelta: e.target.value,
-                                        }))
-                                    }
-                                    />
-                                </label>
-                                <label className="stacked">
-                                    <span>Zins-Schock Start</span>
-                                    <input
-                                        type="month"
-                                        value={stressOverrides.mortgageStart}
-                                        onChange={(e) =>
-                                            setStressOverrides((prev) => ({
-                                                ...prev,
-                                                mortgageStart: e.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                                <label className="stacked">
-                                    <span>Zins-Schock Ende</span>
-                                    <input
-                                        type="month"
-                                        value={stressOverrides.mortgageEnd}
-                                        onChange={(e) =>
-                                            setStressOverrides((prev) => ({
-                                                ...prev,
-                                                mortgageEnd: e.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                            <label className="stacked">
-                                <span>Wachstum Assets Δ (%)</span>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={stressOverrides.assetGrowthDelta}
-                                    onChange={(e) =>
-                                        setStressOverrides((prev) => ({
-                                            ...prev,
-                                            assetGrowthDelta: e.target.value,
-                                        }))
-                                    }
-                                    />
-                                </label>
-                                <label className="stacked">
-                                    <span>Portfolio Δ Start</span>
-                                    <input
-                                        type="month"
-                                        value={stressOverrides.portfolioStart}
-                                        onChange={(e) =>
-                                            setStressOverrides((prev) => ({
-                                                ...prev,
-                                                portfolioStart: e.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                                <label className="stacked">
-                                    <span>Portfolio Δ Ende</span>
-                                    <input
-                                        type="month"
-                                        value={stressOverrides.portfolioEnd}
-                                        onChange={(e) =>
-                                            setStressOverrides((prev) => ({
-                                                ...prev,
-                                                portfolioEnd: e.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                            <label className="stacked">
-                                <span>Einnahmen Δ (%)</span>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={stressOverrides.incomeDelta}
-                                    onChange={(e) =>
-                                        setStressOverrides((prev) => ({
-                                            ...prev,
-                                            incomeDelta: e.target.value,
-                                        }))
-                                    }
-                                    />
-                                </label>
-                                <label className="stacked">
-                                    <span>Einnahmen Δ Start</span>
-                                    <input
-                                        type="month"
-                                        value={stressOverrides.incomeStart}
-                                        onChange={(e) =>
-                                            setStressOverrides((prev) => ({
-                                                ...prev,
-                                                incomeStart: e.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                                <label className="stacked">
-                                    <span>Einnahmen Δ Ende</span>
-                                    <input
-                                        type="month"
-                                        value={stressOverrides.incomeEnd}
-                                        onChange={(e) =>
-                                            setStressOverrides((prev) => ({
-                                                ...prev,
-                                                incomeEnd: e.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                            <label className="stacked">
-                                <span>Ausgaben Δ (%)</span>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={stressOverrides.expenseDelta}
-                                    onChange={(e) =>
-                                        setStressOverrides((prev) => ({
-                                            ...prev,
-                                            expenseDelta: e.target.value,
-                                        }))
-                                    }
-                                    />
-                                </label>
-                                <label className="stacked">
-                                    <span>Ausgaben Δ Start</span>
-                                    <input
-                                        type="month"
-                                        value={stressOverrides.expenseStart}
-                                        onChange={(e) =>
-                                            setStressOverrides((prev) => ({
-                                                ...prev,
-                                                expenseStart: e.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                                <label className="stacked">
-                                    <span>Ausgaben Δ Ende</span>
-                                    <input
-                                        type="month"
-                                        value={stressOverrides.expenseEnd}
-                                        onChange={(e) =>
-                                            setStressOverrides((prev) => ({
-                                                ...prev,
-                                                expenseEnd: e.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                            <label className="stacked">
-                                <span>Einkommensteuer Override (%)</span>
-                                <input
-                                    type="number"
-                                    step="0.1"
-                                    value={stressOverrides.incomeTaxOverride}
-                                    onChange={(e) =>
-                                        setStressOverrides((prev) => ({
-                                            ...prev,
-                                            incomeTaxOverride: e.target.value,
-                                        }))
-                                    }
-                                />
-                            </label>
+                        <div className="risk-grid single">
+                            {(stressOverrides.shocks || []).map((shock, idx) => (
+                                <div className="risk-row" key={shock.id}>
+                                    <label className="stacked">
+                                        <span>Risiko {idx + 1} Typ</span>
+                                        <select
+                                            value={shock.assetType}
+                                            onChange={(e) =>
+                                                setStressOverrides((prev) => ({
+                                                    ...prev,
+                                                    shocks: prev.shocks.map((s) =>
+                                                        s.id === shock.id ? { ...s, assetType: e.target.value } : s
+                                                    ),
+                                                }))
+                                            }
+                                        >
+                                            <option value="portfolio">Portfolio</option>
+                                            <option value="real_estate">Immobilie</option>
+                                        </select>
+                                    </label>
+                                    <label className="stacked">
+                                        <span>Δ (%)</span>
+                                        <input
+                                            type="number"
+                                            step="0.1"
+                                            value={shock.delta}
+                                            onChange={(e) =>
+                                                setStressOverrides((prev) => ({
+                                                    ...prev,
+                                                    shocks: prev.shocks.map((s) =>
+                                                        s.id === shock.id ? { ...s, delta: e.target.value } : s
+                                                    ),
+                                                }))
+                                            }
+                                        />
+                                    </label>
+                                    <label className="stacked">
+                                        <span>Start</span>
+                                        <input
+                                            type="month"
+                                            value={shock.start}
+                                            onChange={(e) =>
+                                                setStressOverrides((prev) => ({
+                                                    ...prev,
+                                                    shocks: prev.shocks.map((s) =>
+                                                        s.id === shock.id ? { ...s, start: e.target.value } : s
+                                                    ),
+                                                }))
+                                            }
+                                        />
+                                    </label>
+                                    <label className="stacked">
+                                        <span>Ende</span>
+                                        <input
+                                            type="month"
+                                            value={shock.end}
+                                            onChange={(e) =>
+                                                setStressOverrides((prev) => ({
+                                                    ...prev,
+                                                    shocks: prev.shocks.map((s) =>
+                                                        s.id === shock.id ? { ...s, end: e.target.value } : s
+                                                    ),
+                                                }))
+                                            }
+                                        />
+                                    </label>
+                                </div>
+                            ))}
                         </div>
-                        <div className="risk-actions">
-                            <div className="muted small">
-                                Angaben in % (z.B. 2 = +2%, -20 = -20%). Wachstums-Δ wirkt als Faktor auf die Asset-Wachstumsrate.
+                            <div className="risk-actions">
+                                <div className="muted small">
+                                Angaben in % (z.B. 2 = +2%, -20 = -20%). Wirkt auf Assets vom Typ Portfolio bzw. Immobilie.
                             </div>
-                            <button className="secondary" onClick={handleStressSimulate} disabled={!currentScenarioId || stressLoading}>
-                                {stressLoading ? 'Berechne...' : 'Stress simulieren'}
-                            </button>
+                            <div className="risk-buttons">
+                                <button
+                                    className="secondary"
+                                    onClick={() =>
+                                        setStressOverrides((prev) => ({
+                                            ...prev,
+                                            shocks: [
+                                                ...(prev.shocks || []),
+                                                {
+                                                    id: `shock-${(prev.shocks || []).length + 1}-${Date.now()}`,
+                                                    assetType: 'portfolio',
+                                                    delta: '0',
+                                                    start: '',
+                                                    end: '',
+                                                },
+                                            ],
+                                        }))
+                                    }
+                                >
+                                    Neues Risiko
+                                </button>
+                                <button className="secondary" onClick={handleStressSimulate} disabled={!currentScenarioId || stressLoading}>
+                                    {stressLoading ? 'Berechne...' : 'Stress simulieren'}
+                                </button>
+                            </div>
                         </div>
                         <div className="risk-summary">
                             <div className="summary-card">

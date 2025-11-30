@@ -151,64 +151,63 @@ def _apply_overrides(
         "start": _to_key(overrides.get("portfolio_start_year"), overrides.get("portfolio_start_month")),
         "end": _to_key(overrides.get("portfolio_end_year"), overrides.get("portfolio_end_month")),
     }
-    mortgage_window = {
-        "start": _to_key(overrides.get("mortgage_start_year"), overrides.get("mortgage_start_month")),
-        "end": _to_key(overrides.get("mortgage_end_year"), overrides.get("mortgage_end_month")),
-    }
-    income_window = {
-        "start": _to_key(overrides.get("income_start_year"), overrides.get("income_start_month")),
-        "end": _to_key(overrides.get("income_end_year"), overrides.get("income_end_month")),
-    }
-    expense_window = {
-        "start": _to_key(overrides.get("expense_start_year"), overrides.get("expense_start_month")),
-        "end": _to_key(overrides.get("expense_end_year"), overrides.get("expense_end_month")),
-    }
 
-    if overrides.get("portfolio_growth_pct") is not None:
-        delta_pct = overrides.get("portfolio_growth_pct")
-        for asset in adjusted_assets:
-            if asset.get("asset_type") != "portfolio":
+    # Build shock list: prefer explicit list, fallback to single legacy fields (portfolio)
+    portfolio_shocks = []
+    if overrides.get("portfolio_shocks"):
+        for entry in overrides.get("portfolio_shocks") or []:
+            pct = entry.get("pct")
+            if pct is None:
                 continue
-            start_y, start_m, end_y, end_m = _coalesce_asset_dates(asset, scenario)
-            if not _in_window(start_y, start_m, end_y, end_m, portfolio_window):
+            portfolio_shocks.append(
+                {
+                    "pct": pct,
+                    "start": _to_key(entry.get("start_year"), entry.get("start_month")),
+                    "end": _to_key(entry.get("end_year"), entry.get("end_month")),
+                }
+            )
+    elif overrides.get("portfolio_growth_pct") is not None:
+        portfolio_shocks.append(
+            {
+                "pct": overrides.get("portfolio_growth_pct"),
+                "start": portfolio_window.get("start"),
+                "end": portfolio_window.get("end"),
+            }
+        )
+
+    real_estate_shocks = []
+    if overrides.get("real_estate_shocks"):
+        for entry in overrides.get("real_estate_shocks") or []:
+            pct = entry.get("pct")
+            if pct is None:
                 continue
+            real_estate_shocks.append(
+                {
+                    "pct": pct,
+                    "start": _to_key(entry.get("start_year"), entry.get("start_month")),
+                    "end": _to_key(entry.get("end_year"), entry.get("end_month")),
+                }
+            )
+
+    def apply_shocks(asset_list, shocks):
+        if not shocks:
+            return
+        for asset in asset_list:
             base = asset.get("annual_growth_rate") or 0.0
-            asset["annual_growth_rate"] = base * (1 + delta_pct)
+            for entry in shocks:
+                asset.setdefault("growth_schedule", []).append(
+                    {
+                        "start": entry.get("start"),
+                        "end": entry.get("end"),
+                        "rate": base * (1 + entry["pct"]),
+                    }
+                )
 
-        expense_pct = overrides.get("expense_change_pct")
-        income_pct = overrides.get("income_change_pct")
-        mortgage_pct = overrides.get("mortgage_rate_change_pct")
+    apply_shocks([a for a in adjusted_assets if a.get("asset_type") == "portfolio"], portfolio_shocks)
+    apply_shocks([a for a in adjusted_assets if a.get("asset_type") == "real_estate"], real_estate_shocks)
 
-    for tx in adjusted_transactions:
-        tx_type = tx.get("type")
-        if tx_type == "mortgage_interest":
-            start_year, start_month, end_year, end_month = _coalesce_dates(tx, scenario)
-            if mortgage_pct is not None and _in_window(start_year, start_month, end_year, end_month, mortgage_window):
-                base_rate = tx.get("annual_interest_rate") or tx.get("annual_growth_rate") or 0.0
-                new_rate = base_rate * (1 + mortgage_pct)
-                tx["annual_interest_rate"] = new_rate
-                tx["annual_growth_rate"] = new_rate
-            continue
-
-        # Income/expense tweaks for non-mortgage transactions
-        amount = tx.get("amount", 0.0) or 0.0
-        is_expense = amount < 0 or tx.get("entry") == "credit"
-        start_year, start_month, end_year, end_month = _coalesce_dates(tx, scenario)
-        delta_pct = None
-        if is_expense:
-            if tx_type != "mortgage_interest" and expense_pct is not None and _in_window(
-                start_year, start_month, end_year, end_month, expense_window
-            ):
-                delta_pct = expense_pct
-        else:
-            if income_pct is not None and _in_window(start_year, start_month, end_year, end_month, income_window):
-                delta_pct = income_pct
-        if delta_pct is not None:
-            new_amount = amount * (1 + delta_pct)
-            tx["amount"] = new_amount
-            if tx.get("taxable"):
-                taxable_amount = tx.get("taxable_amount", amount)
-                tx["taxable_amount"] = taxable_amount * (1 + delta_pct)
+    # No other overrides when only growth is present
+    # Transactions remain unchanged for this stress profile
 
     return adjusted_scenario, adjusted_assets, adjusted_transactions
 
@@ -248,6 +247,8 @@ def run_scenario_simulation(
             start_month,
             end_year,
             end_month,
+            asset_type=asset.get("asset_type"),
+            growth_schedule=asset.get("growth_schedule"),
         )
 
     income_tax_rate = scenario.get("income_tax_rate") or 0.0

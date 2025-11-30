@@ -137,39 +137,25 @@ class ScenarioUpdate(BaseModel):
     wealth_tax_rate: Optional[float] = None
 
 
+class PortfolioShock(BaseModel):
+    pct: float = Field(..., description="Relative Anpassung (z.B. -0.2 = -20%, 0.1 = +10%)")
+    start_year: Optional[int] = None
+    start_month: Optional[int] = None
+    end_year: Optional[int] = None
+    end_month: Optional[int] = None
+
+
 class SimulationOverride(BaseModel):
-    income_change_pct: Optional[float] = Field(
-        default=None, description="Relative Änderung aller Einnahmen (z.B. -0.1 = -10%)"
-    )
-    expense_change_pct: Optional[float] = Field(
-        default=None, description="Relative Änderung aller Ausgaben (z.B. 0.05 = +5%)"
-    )
     portfolio_growth_pct: Optional[float] = Field(
         default=None,
-        description="Relative Anpassung der Wachstumsrate für Portfolio-Assets (z.B. -0.2 = -20%)",
-    )
-    mortgage_rate_change_pct: Optional[float] = Field(
-        default=None, description="Relativer Zins-Schock auf Hypothekenzinsen (z.B. 0.1 = +10%)"
-    )
-    income_tax_override: Optional[float] = Field(
-        default=None, description="Ersetzt den Einkommensteuersatz (z.B. 0.3 = 30%)"
+        description="Relative Anpassung der Wachstumsrate für Portfolio-Assets (z.B. -0.2 = -20%). Wird ignoriert, wenn portfolio_shocks gesetzt ist.",
     )
     portfolio_start_year: Optional[int] = None
     portfolio_start_month: Optional[int] = None
     portfolio_end_year: Optional[int] = None
     portfolio_end_month: Optional[int] = None
-    mortgage_start_year: Optional[int] = None
-    mortgage_start_month: Optional[int] = None
-    mortgage_end_year: Optional[int] = None
-    mortgage_end_month: Optional[int] = None
-    income_start_year: Optional[int] = None
-    income_start_month: Optional[int] = None
-    income_end_year: Optional[int] = None
-    income_end_month: Optional[int] = None
-    expense_start_year: Optional[int] = None
-    expense_start_month: Optional[int] = None
-    expense_end_year: Optional[int] = None
-    expense_end_month: Optional[int] = None
+    portfolio_shocks: Optional[List[PortfolioShock]] = None
+    real_estate_shocks: Optional[List[PortfolioShock]] = None
 
 
 class AssetCreate(BaseModel):

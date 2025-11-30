@@ -16,10 +16,14 @@ class Account:
         start_month: int | None = None,
         end_year: int | None = None,
         end_month: int | None = None,
+        asset_type: str | None = None,
+        growth_schedule: list[dict] | None = None,
     ):
         self.name = name
-        self.annual_growth_rate = annual_growth_rate
-        self.monthly_growth_rate = (1 + annual_growth_rate) ** (1 / 12) - 1
+        self.asset_type = asset_type
+        self.base_annual_growth_rate = annual_growth_rate
+        self.growth_schedule = growth_schedule or []
+        self.set_growth_rate(annual_growth_rate)
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.start_year = start_year
@@ -27,10 +31,40 @@ class Account:
         self.end_year = end_year
         self.end_month = end_month
 
+    def set_growth_rate(self, annual_rate: float) -> None:
+        self.annual_growth_rate = annual_rate
+        self.monthly_growth_rate = (1 + annual_rate) ** (1 / 12) - 1
+
     def reset_balance(self) -> None:
         self.balance = self.initial_balance
 
     def apply_growth(self) -> None:
+        # Dynamische Wachstumsrate je nach Zeitfenster
+        def _to_key(year: int | None, month: int | None):
+            if year is None or month is None:
+                return None
+            return year * 100 + month
+
+        def _in_window(key: int, start: int | None, end: int | None):
+            if start is None:
+                return True
+            if key < start:
+                return False
+            if end is not None and key > end:
+                return False
+            return True
+
+        current_key = _to_key(getattr(self, "_current_year", None), getattr(self, "_current_month", None))
+        rate_to_use = self.base_annual_growth_rate
+        if current_key is not None:
+            for window in self.growth_schedule:
+                start = window.get("start")
+                end = window.get("end")
+                rate = window.get("rate")
+                if rate is not None and _in_window(current_key, start, end):
+                    rate_to_use = rate
+                    break
+        self.set_growth_rate(rate_to_use)
         self.balance += self.balance * self.monthly_growth_rate
 
     def update_balance(self, amount: float) -> None:
@@ -41,6 +75,9 @@ class Account:
 
     def is_active(self, current_month: int, current_year: int) -> bool:
         """Return True if the account is within its configured active window (inclusive)."""
+        # store for growth schedule evaluation
+        self._current_month = current_month
+        self._current_year = current_year
         if self.start_year is not None and self.start_month is not None:
             starts_before_or_now = current_year > self.start_year or (
                 current_year == self.start_year and current_month >= self.start_month
