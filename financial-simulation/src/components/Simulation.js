@@ -110,6 +110,16 @@ const Simulation = () => {
             { id: 'shock-1', assetType: 'portfolio', delta: '-20', start: '', end: '' },
         ],
     });
+    const [stressProfiles, setStressProfiles] = useState(() => {
+        try {
+            const raw = localStorage.getItem('stressProfiles');
+            return raw ? JSON.parse(raw) : [];
+        } catch {
+            return [];
+        }
+    });
+    const [profileName, setProfileName] = useState('');
+    const [profileDescription, setProfileDescription] = useState('');
     const [stressResult, setStressResult] = useState(null);
     const [stressLoading, setStressLoading] = useState(false);
     const formatCurrency = (value) => {
@@ -1271,6 +1281,46 @@ const Simulation = () => {
     const baseSummary = useMemo(() => summarizeSimulation(currentSimulation), [currentSimulation, summarizeSimulation]);
     const stressSummary = useMemo(() => summarizeSimulation(stressResult), [stressResult, summarizeSimulation]);
 
+    const persistProfiles = useCallback((profiles) => {
+        try {
+            localStorage.setItem('stressProfiles', JSON.stringify(profiles));
+        } catch {
+            // ignore
+        }
+    }, []);
+
+    const handleSaveProfile = useCallback(() => {
+        if (!profileName.trim()) return;
+        const nextProfile = {
+            id: `profile-${Date.now()}`,
+            name: profileName.trim(),
+            description: profileDescription.trim(),
+            overrides: stressOverrides,
+        };
+        setStressProfiles((prev) => {
+            const updated = [...prev, nextProfile];
+            persistProfiles(updated);
+            return updated;
+        });
+        setProfileName('');
+        setProfileDescription('');
+    }, [profileName, profileDescription, stressOverrides, persistProfiles]);
+
+    const handleApplyProfile = useCallback((profileId) => {
+        const profile = (stressProfiles || []).find((p) => p.id === profileId);
+        if (profile) {
+            setStressOverrides(profile.overrides);
+        }
+    }, [stressProfiles]);
+
+    const handleDeleteProfile = useCallback((profileId) => {
+        setStressProfiles((prev) => {
+            const updated = prev.filter((p) => p.id !== profileId);
+            persistProfiles(updated);
+            return updated;
+        });
+    }, [persistProfiles]);
+
     const renderTransactionItem = (tx) => {
         const assetName = accountNameMap[tx.asset_id] || 'Unbekannt';
         const counterName = tx.counter_asset_id ? accountNameMap[tx.counter_asset_id] : null;
@@ -2229,6 +2279,7 @@ const Simulation = () => {
                                             <option value="real_estate">Immobilie</option>
                                             <option value="mortgage_interest">Zins (Hypothek)</option>
                                             <option value="income_tax">Einkommensteuer</option>
+                                            <option value="inflation">Inflation</option>
                                         </select>
                                     </label>
                                     <label className="stacked">
@@ -2294,8 +2345,8 @@ const Simulation = () => {
                                 </div>
                             ))}
                         </div>
-                            <div className="risk-actions">
-                                <div className="muted small">
+                        <div className="risk-actions">
+                            <div className="muted small">
                                 Angaben in % (z.B. 2 = +2 %-Punkte, -20 = -20 %-Punkte). Der Wert wird additiv zur aktuellen Wachstumsrate der gewählten Asset-Klasse angewendet.
                             </div>
                             <div className="risk-buttons">
@@ -2334,6 +2385,46 @@ const Simulation = () => {
                                 <button className="secondary" onClick={handleStressSimulate} disabled={!currentScenarioId || stressLoading}>
                                     {stressLoading ? 'Berechne...' : 'Stress simulieren'}
                                 </button>
+                            </div>
+                            <div className="risk-profiles">
+                                <div className="profile-form">
+                                    <input
+                                        type="text"
+                                        placeholder="Profilname"
+                                        value={profileName}
+                                        onChange={(e) => setProfileName(e.target.value)}
+                                    />
+                                    <input
+                                        type="text"
+                                        placeholder="Beschreibung (optional)"
+                                        value={profileDescription}
+                                        onChange={(e) => setProfileDescription(e.target.value)}
+                                    />
+                                    <button className="secondary" onClick={handleSaveProfile} disabled={!profileName.trim()}>
+                                        Speichern
+                                    </button>
+                                </div>
+                                <div className="profile-list">
+                                    {(stressProfiles || []).map((p) => (
+                                        <div className="profile-item" key={p.id}>
+                                            <div>
+                                                <strong>{p.name}</strong>
+                                                {p.description ? <div className="muted small">{p.description}</div> : null}
+                                            </div>
+                                            <div className="profile-actions">
+                                                <button className="secondary" onClick={() => handleApplyProfile(p.id)}>
+                                                    Laden
+                                                </button>
+                                                <button className="secondary danger" onClick={() => handleDeleteProfile(p.id)}>
+                                                    Löschen
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {(!stressProfiles || stressProfiles.length === 0) && (
+                                        <div className="muted small">Noch keine Profile gespeichert.</div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                         <div className="risk-summary">
