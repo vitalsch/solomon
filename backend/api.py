@@ -144,9 +144,9 @@ class SimulationOverride(BaseModel):
     expense_change_pct: Optional[float] = Field(
         default=None, description="Relative Änderung aller Ausgaben (z.B. 0.05 = +5%)"
     )
-    asset_growth_multiplier: Optional[float] = Field(
+    portfolio_growth_pct: Optional[float] = Field(
         default=None,
-        description="Multiplikator für Wachstumsraten von Assets (z.B. 0.8 senkt Growth um 20%)",
+        description="Relative Anpassung der Wachstumsrate für Portfolio-Assets (z.B. -0.2 = -20%)",
     )
     mortgage_rate_change_pct: Optional[float] = Field(
         default=None, description="Relativer Zins-Schock auf Hypothekenzinsen (z.B. 0.1 = +10%)"
@@ -154,6 +154,22 @@ class SimulationOverride(BaseModel):
     income_tax_override: Optional[float] = Field(
         default=None, description="Ersetzt den Einkommensteuersatz (z.B. 0.3 = 30%)"
     )
+    portfolio_start_year: Optional[int] = None
+    portfolio_start_month: Optional[int] = None
+    portfolio_end_year: Optional[int] = None
+    portfolio_end_month: Optional[int] = None
+    mortgage_start_year: Optional[int] = None
+    mortgage_start_month: Optional[int] = None
+    mortgage_end_year: Optional[int] = None
+    mortgage_end_month: Optional[int] = None
+    income_start_year: Optional[int] = None
+    income_start_month: Optional[int] = None
+    income_end_year: Optional[int] = None
+    income_end_month: Optional[int] = None
+    expense_start_year: Optional[int] = None
+    expense_start_month: Optional[int] = None
+    expense_end_year: Optional[int] = None
+    expense_end_month: Optional[int] = None
 
 
 class AssetCreate(BaseModel):

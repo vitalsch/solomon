@@ -127,19 +127,63 @@ def _apply_overrides(
     if overrides.get("income_tax_override") is not None:
         adjusted_scenario["income_tax_rate"] = overrides.get("income_tax_override")
 
-    if overrides.get("asset_growth_multiplier") is not None:
-        multiplier = overrides.get("asset_growth_multiplier")
-        for asset in adjusted_assets:
-            asset["annual_growth_rate"] = (asset.get("annual_growth_rate") or 0.0) * multiplier
+    def _to_key(year, month):
+        if not year or not month:
+            return None
+        return year * 100 + month
 
-    expense_pct = overrides.get("expense_change_pct")
-    income_pct = overrides.get("income_change_pct")
-    mortgage_pct = overrides.get("mortgage_rate_change_pct")
+    def _in_window(start_year, start_month, end_year, end_month, window):
+        if not window:
+            return True
+        start_key = _to_key(start_year, start_month)
+        end_key = _to_key(end_year, end_month) or start_key
+        win_start = window.get("start")
+        win_end = window.get("end") or win_start
+        if win_start is None:
+            return True
+        if start_key is None:
+            return False
+        return not (end_key is not None and win_start is not None and end_key < win_start) and not (
+            win_end is not None and start_key is not None and start_key > win_end
+        )
+
+    portfolio_window = {
+        "start": _to_key(overrides.get("portfolio_start_year"), overrides.get("portfolio_start_month")),
+        "end": _to_key(overrides.get("portfolio_end_year"), overrides.get("portfolio_end_month")),
+    }
+    mortgage_window = {
+        "start": _to_key(overrides.get("mortgage_start_year"), overrides.get("mortgage_start_month")),
+        "end": _to_key(overrides.get("mortgage_end_year"), overrides.get("mortgage_end_month")),
+    }
+    income_window = {
+        "start": _to_key(overrides.get("income_start_year"), overrides.get("income_start_month")),
+        "end": _to_key(overrides.get("income_end_year"), overrides.get("income_end_month")),
+    }
+    expense_window = {
+        "start": _to_key(overrides.get("expense_start_year"), overrides.get("expense_start_month")),
+        "end": _to_key(overrides.get("expense_end_year"), overrides.get("expense_end_month")),
+    }
+
+    if overrides.get("portfolio_growth_pct") is not None:
+        delta_pct = overrides.get("portfolio_growth_pct")
+        for asset in adjusted_assets:
+            if asset.get("asset_type") != "portfolio":
+                continue
+            start_y, start_m, end_y, end_m = _coalesce_asset_dates(asset, scenario)
+            if not _in_window(start_y, start_m, end_y, end_m, portfolio_window):
+                continue
+            base = asset.get("annual_growth_rate") or 0.0
+            asset["annual_growth_rate"] = base * (1 + delta_pct)
+
+        expense_pct = overrides.get("expense_change_pct")
+        income_pct = overrides.get("income_change_pct")
+        mortgage_pct = overrides.get("mortgage_rate_change_pct")
 
     for tx in adjusted_transactions:
         tx_type = tx.get("type")
         if tx_type == "mortgage_interest":
-            if mortgage_pct is not None:
+            start_year, start_month, end_year, end_month = _coalesce_dates(tx, scenario)
+            if mortgage_pct is not None and _in_window(start_year, start_month, end_year, end_month, mortgage_window):
                 base_rate = tx.get("annual_interest_rate") or tx.get("annual_growth_rate") or 0.0
                 new_rate = base_rate * (1 + mortgage_pct)
                 tx["annual_interest_rate"] = new_rate
@@ -149,7 +193,16 @@ def _apply_overrides(
         # Income/expense tweaks for non-mortgage transactions
         amount = tx.get("amount", 0.0) or 0.0
         is_expense = amount < 0 or tx.get("entry") == "credit"
-        delta_pct = expense_pct if is_expense else income_pct
+        start_year, start_month, end_year, end_month = _coalesce_dates(tx, scenario)
+        delta_pct = None
+        if is_expense:
+            if tx_type != "mortgage_interest" and expense_pct is not None and _in_window(
+                start_year, start_month, end_year, end_month, expense_window
+            ):
+                delta_pct = expense_pct
+        else:
+            if income_pct is not None and _in_window(start_year, start_month, end_year, end_month, income_window):
+                delta_pct = income_pct
         if delta_pct is not None:
             new_amount = amount * (1 + delta_pct)
             tx["amount"] = new_amount

@@ -107,9 +107,17 @@ const Simulation = () => {
     const [rangeEnd, setRangeEnd] = useState('');
     const [stressOverrides, setStressOverrides] = useState({
         mortgageRateDelta: '2',
+        mortgageStart: '',
+        mortgageEnd: '',
         assetGrowthDelta: '-20',
+        portfolioStart: '',
+        portfolioEnd: '',
         incomeDelta: '0',
+        incomeStart: '',
+        incomeEnd: '',
         expenseDelta: '5',
+        expenseStart: '',
+        expenseEnd: '',
         incomeTaxOverride: '',
     });
     const [stressResult, setStressResult] = useState(null);
@@ -827,23 +835,55 @@ const Simulation = () => {
         return Number.isFinite(num) ? num / 100 : null;
     }, []);
 
+    const parseMonthInput = useCallback((value) => {
+        if (!value) return null;
+        const [yearStr, monthStr] = value.split('-');
+        const year = Number(yearStr);
+        const month = Number(monthStr);
+        if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+        return { year, month };
+    }, []);
+
     const buildStressPayload = useCallback(() => {
         const mortgagePct = parsePercentInput(stressOverrides.mortgageRateDelta);
         const incomePct = parsePercentInput(stressOverrides.incomeDelta);
         const expensePct = parsePercentInput(stressOverrides.expenseDelta);
         const assetGrowthDeltaPct = parsePercentInput(stressOverrides.assetGrowthDelta);
-        const assetGrowthMultiplier = assetGrowthDeltaPct === null ? null : 1 + assetGrowthDeltaPct;
         const incomeTaxOverride = parsePercentInput(stressOverrides.incomeTaxOverride);
+        const portfolioStart = parseMonthInput(stressOverrides.portfolioStart);
+        const portfolioEnd = parseMonthInput(stressOverrides.portfolioEnd);
+        const mortgageStart = parseMonthInput(stressOverrides.mortgageStart);
+        const mortgageEnd = parseMonthInput(stressOverrides.mortgageEnd);
+        const incomeStart = parseMonthInput(stressOverrides.incomeStart);
+        const incomeEnd = parseMonthInput(stressOverrides.incomeEnd);
+        const expenseStart = parseMonthInput(stressOverrides.expenseStart);
+        const expenseEnd = parseMonthInput(stressOverrides.expenseEnd);
 
         const payload = {
             mortgage_rate_change_pct: mortgagePct === null ? undefined : mortgagePct,
             income_change_pct: incomePct === null ? undefined : incomePct,
             expense_change_pct: expensePct === null ? undefined : expensePct,
-            asset_growth_multiplier: assetGrowthMultiplier === null ? undefined : assetGrowthMultiplier,
+            portfolio_growth_pct: assetGrowthDeltaPct === null ? undefined : assetGrowthDeltaPct,
             income_tax_override: incomeTaxOverride === null ? undefined : incomeTaxOverride,
+            portfolio_start_year: portfolioStart?.year,
+            portfolio_start_month: portfolioStart?.month,
+            portfolio_end_year: portfolioEnd?.year,
+            portfolio_end_month: portfolioEnd?.month,
+            mortgage_start_year: mortgageStart?.year,
+            mortgage_start_month: mortgageStart?.month,
+            mortgage_end_year: mortgageEnd?.year,
+            mortgage_end_month: mortgageEnd?.month,
+            income_start_year: incomeStart?.year,
+            income_start_month: incomeStart?.month,
+            income_end_year: incomeEnd?.year,
+            income_end_month: incomeEnd?.month,
+            expense_start_year: expenseStart?.year,
+            expense_start_month: expenseStart?.month,
+            expense_end_year: expenseEnd?.year,
+            expense_end_month: expenseEnd?.month,
         };
         return Object.fromEntries(Object.entries(payload).filter(([, v]) => v !== undefined && v !== null));
-    }, [parsePercentInput, stressOverrides]);
+    }, [parseMonthInput, parsePercentInput, stressOverrides]);
 
     const summarizeSimulation = useCallback((simulation) => {
         if (!simulation) return null;
@@ -2202,8 +2242,34 @@ const Simulation = () => {
                                             mortgageRateDelta: e.target.value,
                                         }))
                                     }
-                                />
-                            </label>
+                                    />
+                                </label>
+                                <label className="stacked">
+                                    <span>Zins-Schock Start</span>
+                                    <input
+                                        type="month"
+                                        value={stressOverrides.mortgageStart}
+                                        onChange={(e) =>
+                                            setStressOverrides((prev) => ({
+                                                ...prev,
+                                                mortgageStart: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className="stacked">
+                                    <span>Zins-Schock Ende</span>
+                                    <input
+                                        type="month"
+                                        value={stressOverrides.mortgageEnd}
+                                        onChange={(e) =>
+                                            setStressOverrides((prev) => ({
+                                                ...prev,
+                                                mortgageEnd: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                </label>
                             <label className="stacked">
                                 <span>Wachstum Assets Δ (%)</span>
                                 <input
@@ -2216,8 +2282,34 @@ const Simulation = () => {
                                             assetGrowthDelta: e.target.value,
                                         }))
                                     }
-                                />
-                            </label>
+                                    />
+                                </label>
+                                <label className="stacked">
+                                    <span>Portfolio Δ Start</span>
+                                    <input
+                                        type="month"
+                                        value={stressOverrides.portfolioStart}
+                                        onChange={(e) =>
+                                            setStressOverrides((prev) => ({
+                                                ...prev,
+                                                portfolioStart: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className="stacked">
+                                    <span>Portfolio Δ Ende</span>
+                                    <input
+                                        type="month"
+                                        value={stressOverrides.portfolioEnd}
+                                        onChange={(e) =>
+                                            setStressOverrides((prev) => ({
+                                                ...prev,
+                                                portfolioEnd: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                </label>
                             <label className="stacked">
                                 <span>Einnahmen Δ (%)</span>
                                 <input
@@ -2230,8 +2322,34 @@ const Simulation = () => {
                                             incomeDelta: e.target.value,
                                         }))
                                     }
-                                />
-                            </label>
+                                    />
+                                </label>
+                                <label className="stacked">
+                                    <span>Einnahmen Δ Start</span>
+                                    <input
+                                        type="month"
+                                        value={stressOverrides.incomeStart}
+                                        onChange={(e) =>
+                                            setStressOverrides((prev) => ({
+                                                ...prev,
+                                                incomeStart: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className="stacked">
+                                    <span>Einnahmen Δ Ende</span>
+                                    <input
+                                        type="month"
+                                        value={stressOverrides.incomeEnd}
+                                        onChange={(e) =>
+                                            setStressOverrides((prev) => ({
+                                                ...prev,
+                                                incomeEnd: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                </label>
                             <label className="stacked">
                                 <span>Ausgaben Δ (%)</span>
                                 <input
@@ -2244,8 +2362,34 @@ const Simulation = () => {
                                             expenseDelta: e.target.value,
                                         }))
                                     }
-                                />
-                            </label>
+                                    />
+                                </label>
+                                <label className="stacked">
+                                    <span>Ausgaben Δ Start</span>
+                                    <input
+                                        type="month"
+                                        value={stressOverrides.expenseStart}
+                                        onChange={(e) =>
+                                            setStressOverrides((prev) => ({
+                                                ...prev,
+                                                expenseStart: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                </label>
+                                <label className="stacked">
+                                    <span>Ausgaben Δ Ende</span>
+                                    <input
+                                        type="month"
+                                        value={stressOverrides.expenseEnd}
+                                        onChange={(e) =>
+                                            setStressOverrides((prev) => ({
+                                                ...prev,
+                                                expenseEnd: e.target.value,
+                                            }))
+                                        }
+                                    />
+                                </label>
                             <label className="stacked">
                                 <span>Einkommensteuer Override (%)</span>
                                 <input
