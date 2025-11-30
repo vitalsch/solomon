@@ -110,6 +110,7 @@ const Simulation = () => {
             { id: 'shock-1', assetType: 'portfolio', delta: '-20', start: '', end: '' },
         ],
     });
+    const [showNewProfileEditor, setShowNewProfileEditor] = useState(false);
     const [stressProfiles, setStressProfiles] = useState(() => {
         try {
             const raw = localStorage.getItem('stressProfiles');
@@ -123,6 +124,10 @@ const Simulation = () => {
     const [profileResults, setProfileResults] = useState({});
     const [openProfileId, setOpenProfileId] = useState('');
     const [profileLoadingId, setProfileLoadingId] = useState('');
+    const [editingProfileId, setEditingProfileId] = useState('');
+    const [editingProfileName, setEditingProfileName] = useState('');
+    const [editingProfileDescription, setEditingProfileDescription] = useState('');
+    const [editingProfileOverrides, setEditingProfileOverrides] = useState({ shocks: [] });
     const [stressResult, setStressResult] = useState(null);
     const [stressLoading, setStressLoading] = useState(false);
     const formatCurrency = (value) => {
@@ -980,6 +985,9 @@ const Simulation = () => {
                     profileRows.push([
                         profile.name || 'Profil',
                         profile.description || '–',
+                        baseSummaryLocal?.endValue !== null && baseSummaryLocal?.endValue !== undefined
+                            ? formatCurrency(baseSummaryLocal.endValue)
+                            : '–',
                         summary?.endValue !== null && summary?.endValue !== undefined ? formatCurrency(summary.endValue) : '–',
                         summary?.endValue !== null &&
                         summary?.endValue !== undefined &&
@@ -1131,7 +1139,7 @@ const Simulation = () => {
         if (profileRows.length) {
             addSectionTitle('Gespeicherte Stress-Profile');
             addTable(
-                ['Profil', 'Beschreibung', 'Endwert Stress', 'Δ Vermögen', 'Netto Stress', 'Δ Netto'],
+                ['Profil', 'Beschreibung', 'Endwert Basis', 'Endwert Stress', 'Δ Vermögen', 'Netto Stress', 'Δ Netto'],
                 profileRows
             );
         }
@@ -1356,13 +1364,6 @@ const Simulation = () => {
         setProfileDescription('');
     }, [profileName, profileDescription, stressOverrides, persistProfiles]);
 
-    const handleApplyProfile = useCallback((profileId) => {
-        const profile = (stressProfiles || []).find((p) => p.id === profileId);
-        if (profile) {
-            setStressOverrides(profile.overrides);
-        }
-    }, [stressProfiles]);
-
     const handleDeleteProfile = useCallback((profileId) => {
         setStressProfiles((prev) => {
             const updated = prev.filter((p) => p.id !== profileId);
@@ -1371,15 +1372,9 @@ const Simulation = () => {
         });
     }, [persistProfiles]);
 
-    const handleToggleProfile = useCallback(
+    const recomputeProfileResult = useCallback(
         async (profile) => {
-            const isOpen = openProfileId === profile.id;
-            setOpenProfileId(isOpen ? '' : profile.id);
-            if (isOpen) return;
-            if (!currentScenarioId) {
-                setError('Bitte zuerst ein Szenario auswählen.');
-                return;
-            }
+            if (!currentScenarioId) return;
             setProfileLoadingId(profile.id);
             try {
                 const scenarioKey = normalizeId(currentScenarioId);
@@ -1393,8 +1388,61 @@ const Simulation = () => {
                 setProfileLoadingId('');
             }
         },
-        [buildStressPayload, currentScenarioId, openProfileId, summarizeSimulation]
+        [buildStressPayload, currentScenarioId, summarizeSimulation]
     );
+
+    const handleEditProfile = useCallback((profile) => {
+        setEditingProfileId(profile.id);
+        setEditingProfileName(profile.name || '');
+        setEditingProfileDescription(profile.description || '');
+        setEditingProfileOverrides(profile.overrides || { shocks: [] });
+        setOpenProfileId(profile.id);
+    }, []);
+
+    const handleToggleProfile = useCallback(
+        async (profile) => {
+            const isOpen = openProfileId === profile.id;
+            setOpenProfileId(isOpen ? '' : profile.id);
+            if (isOpen) return;
+            await recomputeProfileResult(profile);
+        },
+        [openProfileId, recomputeProfileResult]
+    );
+
+    const handleSaveProfileEdits = useCallback(async () => {
+        if (!editingProfileId) return;
+        let updatedProfileRef = null;
+        setStressProfiles((prev) => {
+            const updated = prev.map((p) => {
+                if (p.id === editingProfileId) {
+                    updatedProfileRef = {
+                        ...p,
+                        name: editingProfileName.trim() || p.name,
+                        description: editingProfileDescription.trim(),
+                        overrides: editingProfileOverrides,
+                    };
+                    return updatedProfileRef;
+                }
+                return p;
+            });
+            persistProfiles(updated);
+            return updated;
+        });
+        setEditingProfileId('');
+        setEditingProfileName('');
+        setEditingProfileDescription('');
+        setEditingProfileOverrides({ shocks: [] });
+        if (updatedProfileRef) {
+            await recomputeProfileResult(updatedProfileRef);
+        }
+    }, [
+        editingProfileDescription,
+        editingProfileId,
+        editingProfileName,
+        editingProfileOverrides,
+        persistProfiles,
+        recomputeProfileResult,
+    ]);
 
     const renderTransactionItem = (tx) => {
         const assetName = accountNameMap[tx.asset_id] || 'Unbekannt';
@@ -2348,7 +2396,7 @@ const Simulation = () => {
                                                     className="secondary"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        handleApplyProfile(p.id);
+                                                        handleEditProfile(p);
                                                     }}
                                                 >
                                                     Bearbeiten
@@ -2418,6 +2466,144 @@ const Simulation = () => {
                                                         </div>
                                                     </div>
                                                 )}
+                                                {editingProfileId === p.id && (
+                                                    <div className="profile-edit">
+                                                        <div className="profile-form inline">
+                                                            <input
+                                                                type="text"
+                                                                placeholder="Profilname"
+                                                                value={editingProfileName}
+                                                                onChange={(e) => setEditingProfileName(e.target.value)}
+                                                            />
+                                                            <input
+                                                                type="text"
+                                                                placeholder="Beschreibung (optional)"
+                                                                value={editingProfileDescription}
+                                                                onChange={(e) => setEditingProfileDescription(e.target.value)}
+                                                            />
+                                                        </div>
+                                                        <div className="risk-grid single">
+                                                            {(editingProfileOverrides.shocks || []).map((shock, idx) => (
+                                                                <div className="risk-row" key={shock.id}>
+                                                                    <label className="stacked">
+                                                                        <span>Risiko {idx + 1} Typ</span>
+                                                                        <select
+                                                                            value={shock.assetType}
+                                                                            onChange={(e) =>
+                                                                                setEditingProfileOverrides((prev) => ({
+                                                                                    ...prev,
+                                                                                    shocks: prev.shocks.map((s) =>
+                                                                                        s.id === shock.id ? { ...s, assetType: e.target.value } : s
+                                                                                    ),
+                                                                                }))
+                                                                            }
+                                                                        >
+                                                                            <option value="portfolio">Portfolio</option>
+                                                                            <option value="real_estate">Immobilie</option>
+                                                                            <option value="mortgage_interest">Zins (Hypothek)</option>
+                                                                            <option value="income_tax">Einkommensteuer</option>
+                                                                            <option value="inflation">Inflation</option>
+                                                                        </select>
+                                                                    </label>
+                                                                    <label className="stacked">
+                                                                        <span>Δ (%)</span>
+                                                                        <input
+                                                                            type="number"
+                                                                            step="0.1"
+                                                                            value={shock.delta}
+                                                                            onChange={(e) =>
+                                                                                setEditingProfileOverrides((prev) => ({
+                                                                                    ...prev,
+                                                                                    shocks: prev.shocks.map((s) =>
+                                                                                        s.id === shock.id ? { ...s, delta: e.target.value } : s
+                                                                                    ),
+                                                                                }))
+                                                                            }
+                                                                        />
+                                                                    </label>
+                                                                    <label className="stacked">
+                                                                        <span>Start</span>
+                                                                        <input
+                                                                            type="month"
+                                                                            value={shock.start}
+                                                                            onChange={(e) =>
+                                                                                setEditingProfileOverrides((prev) => ({
+                                                                                    ...prev,
+                                                                                    shocks: prev.shocks.map((s) =>
+                                                                                        s.id === shock.id ? { ...s, start: e.target.value } : s
+                                                                                    ),
+                                                                                }))
+                                                                            }
+                                                                        />
+                                                                    </label>
+                                                                    <label className="stacked">
+                                                                        <span>Ende</span>
+                                                                        <input
+                                                                            type="month"
+                                                                            value={shock.end}
+                                                                            onChange={(e) =>
+                                                                                setEditingProfileOverrides((prev) => ({
+                                                                                    ...prev,
+                                                                                    shocks: prev.shocks.map((s) =>
+                                                                                        s.id === shock.id ? { ...s, end: e.target.value } : s
+                                                                                    ),
+                                                                                }))
+                                                                            }
+                                                                        />
+                                                                    </label>
+                                                                    <div className="risk-row-actions">
+                                                                        <button
+                                                                            className="secondary danger"
+                                                                            type="button"
+                                                                            onClick={() =>
+                                                                                setEditingProfileOverrides((prev) => ({
+                                                                                    ...prev,
+                                                                                    shocks: (prev.shocks || []).filter((s) => s.id !== shock.id),
+                                                                                }))
+                                                                            }
+                                                                        >
+                                                                            Löschen
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                        <div className="risk-buttons">
+                                                            <button
+                                                                className="secondary"
+                                                                onClick={() =>
+                                                                    setEditingProfileOverrides((prev) => ({
+                                                                        ...prev,
+                                                                        shocks: [
+                                                                            ...(prev.shocks || []),
+                                                                            {
+                                                                                id: `edit-${(prev.shocks || []).length + 1}-${Date.now()}`,
+                                                                                assetType: 'portfolio',
+                                                                                delta: '0',
+                                                                                start: '',
+                                                                                end: '',
+                                                                            },
+                                                                        ],
+                                                                    }))
+                                                                }
+                                                            >
+                                                                Neues Risiko
+                                                            </button>
+                                                            <button className="secondary" onClick={handleSaveProfileEdits}>
+                                                                Änderungen speichern
+                                                            </button>
+                                                            <button
+                                                                className="secondary danger"
+                                                                onClick={() => {
+                                                                    setEditingProfileId('');
+                                                                    setEditingProfileOverrides({ shocks: [] });
+                                                                }}
+                                                            >
+                                                                Abbrechen
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
@@ -2427,6 +2613,14 @@ const Simulation = () => {
                                 )}
                             </div>
                         </div>
+                        {!showNewProfileEditor ? (
+                            <div className="risk-new-toggle">
+                                <button className="secondary" onClick={() => setShowNewProfileEditor(true)}>
+                                    Neues Profil erstellen
+                                </button>
+                            </div>
+                        ) : (
+                        <>
                         <div className="risk-grid single">
                             {(stressOverrides.shocks || []).map((shock, idx) => (
                                 <div className="risk-row" key={shock.id}>
@@ -2610,6 +2804,8 @@ const Simulation = () => {
                                 )}
                             </div>
                         </div>
+                            </>
+                        )}
                     </div>
                 </div>
             </div>
