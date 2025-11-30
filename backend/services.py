@@ -79,6 +79,13 @@ def _build_transactions(transaction_docs, account_map, income_tax_rate: float = 
             frequency = tx.get("frequency") or 1
             # Use the same annual_growth_rate field to carry interest for consistency with other tx
             annual_interest_rate = tx.get("annual_interest_rate") or tx.get("annual_growth_rate") or 0.0
+            # Optional rate schedule from stress overrides
+            rate_schedule = []
+            for entry in tx.get("rate_schedule", []):
+                start_key = (entry.get("start") or 0)
+                end_key = entry.get("end")
+                rate_schedule.append((start_key, end_key, entry.get("rate")))
+
             interest_tx = MortgageInterestTransaction(
                 tx.get("name", "Mortgage Interest"),
                 mortgage,
@@ -90,6 +97,7 @@ def _build_transactions(transaction_docs, account_map, income_tax_rate: float = 
                 end_month,
                 end_year,
             )
+            setattr(interest_tx, "rate_schedule", rate_schedule)
             # carry tax info so simulation can include tax effects
             setattr(interest_tx, "taxable", bool(tx.get("taxable")))
             setattr(interest_tx, "tax_rate", income_tax_rate or 0.0)
@@ -153,20 +161,24 @@ def _apply_overrides(
     }
 
     # Build shock list: prefer explicit list, fallback to single legacy fields (portfolio)
-    portfolio_shocks = []
-    if overrides.get("portfolio_shocks"):
-        for entry in overrides.get("portfolio_shocks") or []:
-            pct = entry.get("pct")
-            if pct is None:
-                continue
-            portfolio_shocks.append(
-                {
-                    "pct": pct,
-                    "start": _to_key(entry.get("start_year"), entry.get("start_month")),
-                    "end": _to_key(entry.get("end_year"), entry.get("end_month")),
-                }
-            )
-    elif overrides.get("portfolio_growth_pct") is not None:
+    def collect_shocks(key, default_window=None):
+        shocks = []
+        if overrides.get(key):
+            for entry in overrides.get(key) or []:
+                pct = entry.get("pct")
+                if pct is None:
+                    continue
+                shocks.append(
+                    {
+                        "pct": pct,
+                        "start": _to_key(entry.get("start_year"), entry.get("start_month")),
+                        "end": _to_key(entry.get("end_year"), entry.get("end_month")),
+                    }
+                )
+        return shocks
+
+    portfolio_shocks = collect_shocks("portfolio_shocks")
+    if not portfolio_shocks and overrides.get("portfolio_growth_pct") is not None:
         portfolio_shocks.append(
             {
                 "pct": overrides.get("portfolio_growth_pct"),
@@ -175,19 +187,8 @@ def _apply_overrides(
             }
         )
 
-    real_estate_shocks = []
-    if overrides.get("real_estate_shocks"):
-        for entry in overrides.get("real_estate_shocks") or []:
-            pct = entry.get("pct")
-            if pct is None:
-                continue
-            real_estate_shocks.append(
-                {
-                    "pct": pct,
-                    "start": _to_key(entry.get("start_year"), entry.get("start_month")),
-                    "end": _to_key(entry.get("end_year"), entry.get("end_month")),
-                }
-            )
+    real_estate_shocks = collect_shocks("real_estate_shocks")
+    mortgage_rate_shocks = collect_shocks("mortgage_rate_shocks")
 
     def apply_shocks(asset_list, shocks):
         if not shocks:
@@ -199,12 +200,27 @@ def _apply_overrides(
                     {
                         "start": entry.get("start"),
                         "end": entry.get("end"),
-                        "rate": base * (1 + entry["pct"]),
+                        "rate": base + entry["pct"],
                     }
                 )
 
     apply_shocks([a for a in adjusted_assets if a.get("asset_type") == "portfolio"], portfolio_shocks)
     apply_shocks([a for a in adjusted_assets if a.get("asset_type") == "real_estate"], real_estate_shocks)
+
+    if mortgage_rate_shocks:
+        for tx in adjusted_transactions:
+            if tx.get("type") != "mortgage_interest":
+                continue
+            base_rate = tx.get("annual_interest_rate") or tx.get("annual_growth_rate") or 0.0
+            tx.setdefault("rate_schedule", [])
+            for entry in mortgage_rate_shocks:
+                tx["rate_schedule"].append(
+                    {
+                        "start": entry.get("start"),
+                        "end": entry.get("end"),
+                        "rate": base_rate + entry["pct"],
+                    }
+                )
 
     # No other overrides when only growth is present
     # Transactions remain unchanged for this stress profile

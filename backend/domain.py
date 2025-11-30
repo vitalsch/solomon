@@ -179,9 +179,26 @@ class MortgageInterestTransaction(Transaction):
         self.end_month = end_month
         self.end_year = end_year
         self.annual_interest_rate = annual_interest_rate
+        self.rate_schedule = getattr(self, "rate_schedule", [])
+        self._current_year = None
+        self._current_month = None
 
     def _periodic_interest(self) -> float:
-        periodic_rate = self.annual_interest_rate * (self.frequency / 12)
+        # Choose rate from schedule if applicable
+        periodic_rate = self.annual_interest_rate
+        current_year = self._current_year or self.year
+        current_month = self._current_month or self.month
+        if self.rate_schedule:
+            current_key = (current_year or 0) * 100 + (current_month or 0)
+            for start, end, rate in self.rate_schedule:
+                if start and current_key < start:
+                    continue
+                if end is not None and current_key > end:
+                    continue
+                if rate is not None:
+                    periodic_rate = rate
+                    break
+        periodic_rate = periodic_rate * (self.frequency / 12)
         balance = self.mortgage_account.get_balance()
         return abs(balance) * periodic_rate
 
@@ -196,6 +213,8 @@ class MortgageInterestTransaction(Transaction):
         if not (starts_before_or_now and ends_after_or_now):
             return False
 
+        self._current_month = current_month
+        self._current_year = current_year
         months_since_start = (current_year - self.year) * 12 + (current_month - self.month)
         if months_since_start % self.frequency != 0:
             return False

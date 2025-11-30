@@ -136,7 +136,7 @@
 
 .risk-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 0.5rem;
   align-items: flex-end;
 }
@@ -154,6 +154,11 @@
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+.risk-row-actions {
+  display: flex;
+  align-items: flex-end;
 }
 
 .risk-summary {

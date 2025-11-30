@@ -138,7 +138,7 @@ class ScenarioUpdate(BaseModel):
 
 
 class PortfolioShock(BaseModel):
-    pct: float = Field(..., description="Relative Anpassung (z.B. -0.2 = -20%, 0.1 = +10%)")
+    pct: float = Field(..., description="Additive Anpassung in Dezimal (z.B. -0.2 = -20 %-Punkte, 0.1 = +10 %-Punkte)")
     start_year: Optional[int] = None
     start_month: Optional[int] = None
     end_year: Optional[int] = None
@@ -156,6 +156,7 @@ class SimulationOverride(BaseModel):
     portfolio_end_month: Optional[int] = None
     portfolio_shocks: Optional[List[PortfolioShock]] = None
     real_estate_shocks: Optional[List[PortfolioShock]] = None
+    mortgage_rate_shocks: Optional[List[PortfolioShock]] = None
 
 
 class AssetCreate(BaseModel):

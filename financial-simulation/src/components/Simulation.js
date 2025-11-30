@@ -854,10 +854,12 @@ const Simulation = () => {
 
         const portfolioShocks = buildList(stressOverrides.shocks, 'portfolio');
         const realEstateShocks = buildList(stressOverrides.shocks, 'real_estate');
+        const mortgageRateShocks = buildList(stressOverrides.shocks, 'mortgage_interest');
 
         return {
             ...(portfolioShocks.length ? { portfolio_shocks: portfolioShocks } : {}),
             ...(realEstateShocks.length ? { real_estate_shocks: realEstateShocks } : {}),
+            ...(mortgageRateShocks.length ? { mortgage_rate_shocks: mortgageRateShocks } : {}),
         };
     }, [parseMonthInput, parsePercentInput, stressOverrides]);
 
@@ -2223,6 +2225,7 @@ const Simulation = () => {
                                         >
                                             <option value="portfolio">Portfolio</option>
                                             <option value="real_estate">Immobilie</option>
+                                            <option value="mortgage_interest">Zins (Hypothek)</option>
                                         </select>
                                     </label>
                                     <label className="stacked">
@@ -2271,12 +2274,26 @@ const Simulation = () => {
                                             }
                                         />
                                     </label>
+                                    <div className="risk-row-actions">
+                                        <button
+                                            className="secondary danger"
+                                            type="button"
+                                            onClick={() =>
+                                                setStressOverrides((prev) => ({
+                                                    ...prev,
+                                                    shocks: (prev.shocks || []).filter((s) => s.id !== shock.id),
+                                                }))
+                                            }
+                                        >
+                                            Löschen
+                                        </button>
+                                    </div>
                                 </div>
                             ))}
                         </div>
                             <div className="risk-actions">
                                 <div className="muted small">
-                                Angaben in % (z.B. 2 = +2%, -20 = -20%). Wirkt auf Assets vom Typ Portfolio bzw. Immobilie.
+                                Angaben in % (z.B. 2 = +2 %-Punkte, -20 = -20 %-Punkte). Der Wert wird additiv zur aktuellen Wachstumsrate der gewählten Asset-Klasse angewendet.
                             </div>
                             <div className="risk-buttons">
                                 <button
@@ -2298,6 +2315,18 @@ const Simulation = () => {
                                     }
                                 >
                                     Neues Risiko
+                                </button>
+                                <button
+                                    className="secondary danger"
+                                    onClick={() =>
+                                        setStressOverrides((prev) => ({
+                                            ...prev,
+                                            shocks: (prev.shocks || []).slice(0, -1),
+                                        }))
+                                    }
+                                    disabled={!stressOverrides.shocks || stressOverrides.shocks.length === 0}
+                                >
+                                    Letztes Risiko löschen
                                 </button>
                                 <button className="secondary" onClick={handleStressSimulate} disabled={!currentScenarioId || stressLoading}>
                                     {stressLoading ? 'Berechne...' : 'Stress simulieren'}
