@@ -120,6 +120,9 @@ const Simulation = () => {
     });
     const [profileName, setProfileName] = useState('');
     const [profileDescription, setProfileDescription] = useState('');
+    const [profileResults, setProfileResults] = useState({});
+    const [openProfileId, setOpenProfileId] = useState('');
+    const [profileLoadingId, setProfileLoadingId] = useState('');
     const [stressResult, setStressResult] = useState(null);
     const [stressLoading, setStressLoading] = useState(false);
     const formatCurrency = (value) => {
@@ -844,7 +847,7 @@ const Simulation = () => {
         return { year, month };
     }, []);
 
-    const buildStressPayload = useCallback(() => {
+    const buildStressPayload = useCallback((overridesSource = stressOverrides) => {
         const buildList = (items, assetType) =>
             (items || [])
                 .filter((shock) => (assetType ? shock.assetType === assetType : true))
@@ -862,16 +865,18 @@ const Simulation = () => {
                 })
                 .filter((entry) => entry.pct !== undefined);
 
-        const portfolioShocks = buildList(stressOverrides.shocks, 'portfolio');
-        const realEstateShocks = buildList(stressOverrides.shocks, 'real_estate');
-        const mortgageRateShocks = buildList(stressOverrides.shocks, 'mortgage_interest');
-        const incomeTaxShocks = buildList(stressOverrides.shocks, 'income_tax');
+        const portfolioShocks = buildList(overridesSource.shocks, 'portfolio');
+        const realEstateShocks = buildList(overridesSource.shocks, 'real_estate');
+        const mortgageRateShocks = buildList(overridesSource.shocks, 'mortgage_interest');
+        const incomeTaxShocks = buildList(overridesSource.shocks, 'income_tax');
+        const inflationShocks = buildList(overridesSource.shocks, 'inflation');
 
         return {
             ...(portfolioShocks.length ? { portfolio_shocks: portfolioShocks } : {}),
             ...(realEstateShocks.length ? { real_estate_shocks: realEstateShocks } : {}),
             ...(mortgageRateShocks.length ? { mortgage_rate_shocks: mortgageRateShocks } : {}),
             ...(incomeTaxShocks.length ? { income_tax_shocks: incomeTaxShocks } : {}),
+            ...(inflationShocks.length ? { inflation_shocks: inflationShocks } : {}),
         };
     }, [parseMonthInput, parsePercentInput, stressOverrides]);
 
@@ -962,6 +967,39 @@ const Simulation = () => {
             },
             { income: 0, expenses: 0, taxes: 0, net: 0 }
         );
+        const baseSummaryLocal = summarizeSimulation(currentSimulation);
+
+        // Precompute saved profile results (stress) relative to current base
+        const profileRows = [];
+        if (stressProfiles && stressProfiles.length && currentScenarioId) {
+            for (const profile of stressProfiles) {
+                try {
+                    const payload = buildStressPayload(profile.overrides);
+                    const result = await simulateScenarioStress(currentScenarioId, payload);
+                    const summary = summarizeSimulation(result);
+                    profileRows.push([
+                        profile.name || 'Profil',
+                        profile.description || '–',
+                        summary?.endValue !== null && summary?.endValue !== undefined ? formatCurrency(summary.endValue) : '–',
+                        summary?.endValue !== null &&
+                        summary?.endValue !== undefined &&
+                        baseSummaryLocal?.endValue !== null &&
+                        baseSummaryLocal?.endValue !== undefined
+                            ? formatCurrency(summary.endValue - baseSummaryLocal.endValue)
+                            : '–',
+                        summary?.net !== null && summary?.net !== undefined ? formatCurrency(summary.net) : '–',
+                        summary?.net !== null &&
+                        summary?.net !== undefined &&
+                        baseSummaryLocal?.net !== null &&
+                        baseSummaryLocal?.net !== undefined
+                            ? formatCurrency(summary.net - baseSummaryLocal.net)
+                            : '–',
+                    ]);
+                } catch (err) {
+                    profileRows.push([profile.name || 'Profil', profile.description || '–', 'Fehler', '–', '–', err.message || 'Fehler']);
+                }
+            }
+        }
 
         const addSectionTitle = (text) => {
             if (cursorY > 270) {
@@ -1090,6 +1128,14 @@ const Simulation = () => {
             ])
         );
 
+        if (profileRows.length) {
+            addSectionTitle('Gespeicherte Stress-Profile');
+            addTable(
+                ['Profil', 'Beschreibung', 'Endwert Stress', 'Δ Vermögen', 'Netto Stress', 'Δ Netto'],
+                profileRows
+            );
+        }
+
         doc.save(`financial-simulation-${new Date().toISOString().slice(0, 10)}.pdf`);
     }, [
         accounts,
@@ -1104,6 +1150,10 @@ const Simulation = () => {
         incomeTaxRate,
         wealthTaxRate,
         handleSimulate,
+        stressProfiles,
+        buildStressPayload,
+        summarizeSimulation,
+        currentScenarioId,
     ]);
 
     const refreshScenarioList = useCallback(async () => {
@@ -1320,6 +1370,31 @@ const Simulation = () => {
             return updated;
         });
     }, [persistProfiles]);
+
+    const handleToggleProfile = useCallback(
+        async (profile) => {
+            const isOpen = openProfileId === profile.id;
+            setOpenProfileId(isOpen ? '' : profile.id);
+            if (isOpen) return;
+            if (!currentScenarioId) {
+                setError('Bitte zuerst ein Szenario auswählen.');
+                return;
+            }
+            setProfileLoadingId(profile.id);
+            try {
+                const scenarioKey = normalizeId(currentScenarioId);
+                const payload = buildStressPayload(profile.overrides);
+                const result = await simulateScenarioStress(scenarioKey, payload);
+                const summary = summarizeSimulation(result);
+                setProfileResults((prev) => ({ ...prev, [profile.id]: summary }));
+            } catch (err) {
+                setError(err.message);
+            } finally {
+                setProfileLoadingId('');
+            }
+        },
+        [buildStressPayload, currentScenarioId, openProfileId, summarizeSimulation]
+    );
 
     const renderTransactionItem = (tx) => {
         const assetName = accountNameMap[tx.asset_id] || 'Unbekannt';
@@ -2259,6 +2334,99 @@ const Simulation = () => {
                         </div>
                     </div>
                     <div className="panel-body">
+                        <div className="profile-list-block">
+                            <div className="profile-list">
+                                {(stressProfiles || []).map((p) => (
+                                    <div className="profile-item" key={p.id}>
+                                        <div className="profile-header" onClick={() => handleToggleProfile(p)}>
+                                            <div>
+                                                <strong>{p.name}</strong>
+                                                {p.description ? <div className="muted small">{p.description}</div> : null}
+                                            </div>
+                                            <div className="profile-actions">
+                                                <button
+                                                    className="secondary"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleApplyProfile(p.id);
+                                                    }}
+                                                >
+                                                    Bearbeiten
+                                                </button>
+                                                <button
+                                                    className="secondary danger"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleDeleteProfile(p.id);
+                                                    }}
+                                                >
+                                                    Löschen
+                                                </button>
+                                            </div>
+                                        </div>
+                                        {openProfileId === p.id && (
+                                            <div className="profile-body">
+                                                {profileLoadingId === p.id ? (
+                                                    <div className="muted small">Berechne...</div>
+                                                ) : (
+                                                    <div className="profile-summary">
+                                                        <div>
+                                                            <span className="label">Endwert Basis</span>
+                                                            <strong>
+                                                                {baseSummary?.endValue !== null && baseSummary?.endValue !== undefined
+                                                                    ? formatCurrency(baseSummary.endValue)
+                                                                    : '–'}
+                                                            </strong>
+                                                        </div>
+                                                        <div>
+                                                            <span className="label">Endwert Stress</span>
+                                                            <strong>
+                                                                {profileResults[p.id]?.endValue !== undefined && profileResults[p.id]?.endValue !== null
+                                                                    ? formatCurrency(profileResults[p.id].endValue)
+                                                                    : '–'}
+                                                            </strong>
+                                                        </div>
+                                                        <div>
+                                                            <span className="label">Delta Vermögen</span>
+                                                            <strong>
+                                                                {profileResults[p.id]?.endValue !== undefined &&
+                                                                profileResults[p.id]?.endValue !== null &&
+                                                                baseSummary?.endValue !== undefined &&
+                                                                baseSummary?.endValue !== null
+                                                                    ? formatCurrency(profileResults[p.id].endValue - baseSummary.endValue)
+                                                                    : '–'}
+                                                            </strong>
+                                                        </div>
+                                                        <div>
+                                                            <span className="label">Netto Cashflow (Stress)</span>
+                                                            <strong>
+                                                                {profileResults[p.id]?.net !== undefined && profileResults[p.id]?.net !== null
+                                                                    ? formatCurrency(profileResults[p.id].net)
+                                                                    : '–'}
+                                                            </strong>
+                                                        </div>
+                                                        <div>
+                                                            <span className="label">Delta vs Basis</span>
+                                                            <strong>
+                                                                {profileResults[p.id]?.net !== undefined &&
+                                                                profileResults[p.id]?.net !== null &&
+                                                                baseSummary?.net !== undefined &&
+                                                                baseSummary?.net !== null
+                                                                    ? formatCurrency(profileResults[p.id].net - baseSummary.net)
+                                                                    : '–'}
+                                                            </strong>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                                {(!stressProfiles || stressProfiles.length === 0) && (
+                                    <div className="muted small">Noch keine Profile gespeichert.</div>
+                                )}
+                            </div>
+                        </div>
                         <div className="risk-grid single">
                             {(stressOverrides.shocks || []).map((shock, idx) => (
                                 <div className="risk-row" key={shock.id}>
@@ -2386,45 +2554,24 @@ const Simulation = () => {
                                     {stressLoading ? 'Berechne...' : 'Stress simulieren'}
                                 </button>
                             </div>
-                            <div className="risk-profiles">
-                                <div className="profile-form">
-                                    <input
-                                        type="text"
-                                        placeholder="Profilname"
-                                        value={profileName}
-                                        onChange={(e) => setProfileName(e.target.value)}
-                                    />
-                                    <input
-                                        type="text"
-                                        placeholder="Beschreibung (optional)"
-                                        value={profileDescription}
-                                        onChange={(e) => setProfileDescription(e.target.value)}
-                                    />
-                                    <button className="secondary" onClick={handleSaveProfile} disabled={!profileName.trim()}>
-                                        Speichern
-                                    </button>
-                                </div>
-                                <div className="profile-list">
-                                    {(stressProfiles || []).map((p) => (
-                                        <div className="profile-item" key={p.id}>
-                                            <div>
-                                                <strong>{p.name}</strong>
-                                                {p.description ? <div className="muted small">{p.description}</div> : null}
-                                            </div>
-                                            <div className="profile-actions">
-                                                <button className="secondary" onClick={() => handleApplyProfile(p.id)}>
-                                                    Laden
-                                                </button>
-                                                <button className="secondary danger" onClick={() => handleDeleteProfile(p.id)}>
-                                                    Löschen
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {(!stressProfiles || stressProfiles.length === 0) && (
-                                        <div className="muted small">Noch keine Profile gespeichert.</div>
-                                    )}
-                                </div>
+                        </div>
+                        <div className="risk-profiles">
+                            <div className="profile-form">
+                                <input
+                                    type="text"
+                                    placeholder="Profilname"
+                                    value={profileName}
+                                    onChange={(e) => setProfileName(e.target.value)}
+                                />
+                                <input
+                                    type="text"
+                                    placeholder="Beschreibung (optional)"
+                                    value={profileDescription}
+                                    onChange={(e) => setProfileDescription(e.target.value)}
+                                />
+                                <button className="secondary" onClick={handleSaveProfile} disabled={!profileName.trim()}>
+                                    Speichern
+                                </button>
                             </div>
                         </div>
                         <div className="risk-summary">
