@@ -1353,6 +1353,120 @@ const Simulation = () => {
     const baseSummary = useMemo(() => summarizeSimulation(currentSimulation), [currentSimulation, summarizeSimulation]);
     const stressSummary = useMemo(() => summarizeSimulation(stressResult), [stressResult, summarizeSimulation]);
 
+    const taxableIncomeByYear = useMemo(() => {
+        // Gemeinde-Steuerfuss Unterengstringen mit kath. Kirche: 115%
+        const municipalTaxFactor = 1.15;
+        // Staatssteuer Kanton (98%)
+        const cantonalTaxFactor = 0.98;
+        const calcProgressive = (amount, brackets) => {
+            let remaining = Math.max(0, amount || 0);
+            let tax = 0;
+            for (const { cap, rate } of brackets) {
+                if (remaining <= 0) break;
+                const slice = cap === null ? remaining : Math.min(remaining, cap);
+                tax += slice * rate;
+                remaining -= slice;
+            }
+            return tax;
+        };
+
+        const addEntry = (map, year, incomeAdd, expenseAdd) => {
+            const entry = map.get(year) || { year, income: 0, expense: 0, net: 0 };
+            entry.income += incomeAdd;
+            entry.expense += expenseAdd;
+            entry.net = entry.income - entry.expense;
+            map.set(year, entry);
+        };
+
+        const results = new Map();
+        (allTransactions || []).forEach((tx) => {
+            if (!tx.taxable) return;
+            const category = categorizeTransaction(tx);
+            const isExpense = category === 'expense';
+            const rawAmount =
+                tx.taxable_amount !== undefined && tx.taxable_amount !== null
+                    ? Number(tx.taxable_amount)
+                    : Number(tx.amount);
+            const amount = Number.isFinite(rawAmount) ? Math.abs(rawAmount) : 0;
+            if (!amount) return;
+
+            if (tx.type === 'regular') {
+                const freq = Math.max(1, tx.frequency || 1);
+                let y = tx.start_year || 0;
+                let m = tx.start_month || 1;
+                const endY = tx.end_year || y;
+                const endM = tx.end_month || m;
+                const limit = 1000;
+                let counter = 0;
+                while (y < endY || (y === endY && m <= endM)) {
+                    addEntry(results, y, isExpense ? 0 : amount, isExpense ? amount : 0);
+                    m += freq;
+                    while (m > 12) {
+                        m -= 12;
+                        y += 1;
+                    }
+                    counter += 1;
+                    if (counter > limit) break;
+                }
+            } else {
+                const year = tx.start_year || 0;
+                addEntry(results, year, isExpense ? 0 : amount, isExpense ? amount : 0);
+            }
+        });
+
+        // Vermögen: Assets - Liabilities per Jahr aus currentSimulation totals
+        const wealthPerYear = new Map();
+        (currentSimulation?.total_wealth || []).forEach((point) => {
+            if (!point?.date || point.value === undefined || point.value === null) return;
+            const year = new Date(point.date).getFullYear();
+            wealthPerYear.set(year, point.value);
+        });
+
+        const incomeBrackets = [
+            { cap: 6900, rate: 0 },
+            { cap: 4900, rate: 0.02 },
+            { cap: 4800, rate: 0.03 },
+            { cap: 7900, rate: 0.04 },
+            { cap: 9600, rate: 0.05 },
+            { cap: 11000, rate: 0.06 },
+            { cap: 12900, rate: 0.07 },
+            { cap: 17400, rate: 0.08 },
+            { cap: 33600, rate: 0.09 },
+            { cap: 33200, rate: 0.10 },
+            { cap: 52700, rate: 0.11 },
+            { cap: 68400, rate: 0.12 },
+            { cap: null, rate: 0.13 },
+        ];
+
+        const wealthBrackets = [
+            { cap: 80000, rate: 0 },
+            { cap: 238000, rate: 0.0005 },
+            { cap: 399000, rate: 0.001 },
+            { cap: 636000, rate: 0.0015 },
+            { cap: 956000, rate: 0.002 },
+            { cap: 953000, rate: 0.0025 },
+            { cap: null, rate: 0.003 },
+        ];
+
+        return Array.from(results.values())
+            .sort((a, b) => a.year - b.year)
+            .map((row) => {
+                const wealth = wealthPerYear.get(row.year) ?? null;
+                const incomeTax = calcProgressive(row.net, incomeBrackets);
+                const wealthTax = wealth !== null ? calcProgressive(wealth, wealthBrackets) : null;
+                const rawTotalTax = incomeTax + (wealthTax || 0);
+                const totalTaxWithRate = rawTotalTax * municipalTaxFactor + rawTotalTax * cantonalTaxFactor;
+                return {
+                    ...row,
+                    wealth,
+                    incomeTax,
+                    wealthTax,
+                    taxTotal: totalTaxWithRate,
+                    taxRateLabel: `${(municipalTaxFactor * 100).toFixed(2)}% / ${(cantonalTaxFactor * 100).toFixed(2)}%`,
+                };
+            });
+    }, [allTransactions, categorizeTransaction, currentSimulation]);
+
     const handleSaveProfile = useCallback(async () => {
         if (!profileName.trim()) return;
         try {
@@ -2804,9 +2918,58 @@ const Simulation = () => {
                                 )}
                             </div>
                         </div>
-                            </>
+                        </>
                         )}
                     </div>
+                </div>
+            </div>
+
+            <div className="panel">
+                <div className="panel-header">
+                    <div>
+                        <p className="eyebrow">Steuer</p>
+                        <h3>Steuerbares Einkommen (jährlich)</h3>
+                    </div>
+                </div>
+                <div className="panel-body table-wrapper">
+                    <table className="table">
+                        <thead>
+                            <tr>
+                                <th>Jahr</th>
+                                <th>Steuerbare Einnahmen</th>
+                                <th>Steuerbare Ausgaben</th>
+                                <th>Steuerbares Einkommen</th>
+                                <th>Steuerbares Vermögen</th>
+                                <th>Einkommensteuer</th>
+                                <th>Vermögenssteuer</th>
+                                <th>Steuerfuss</th>
+                                <th>Steuern Total (inkl. Steuerfuss)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {taxableIncomeByYear.length === 0 ? (
+                                <tr>
+                                    <td colSpan={4} className="muted">
+                                        Keine steuerbaren Einträge vorhanden.
+                                    </td>
+                                </tr>
+                            ) : (
+                                taxableIncomeByYear.map((row) => (
+                                    <tr key={`taxable-${row.year}`}>
+                                        <td>{row.year || '–'}</td>
+                                        <td>{formatCurrency(row.income)}</td>
+                                        <td>{formatCurrency(row.expense)}</td>
+                                        <td>{formatCurrency(row.net)}</td>
+                                        <td>{row.wealth !== null && row.wealth !== undefined ? formatCurrency(row.wealth) : '–'}</td>
+                                        <td>{formatCurrency(row.incomeTax)}</td>
+                                        <td>{row.wealthTax !== null && row.wealthTax !== undefined ? formatCurrency(row.wealthTax) : '–'}</td>
+                                        <td>{row.taxRateLabel || '–'}</td>
+                                        <td>{formatCurrency(row.taxTotal)}</td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
