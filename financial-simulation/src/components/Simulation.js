@@ -129,6 +129,7 @@ const Simulation = () => {
     const [editingProfileName, setEditingProfileName] = useState('');
     const [editingProfileDescription, setEditingProfileDescription] = useState('');
     const [editingProfileOverrides, setEditingProfileOverrides] = useState({ shocks: [] });
+    const [selectedTaxYear, setSelectedTaxYear] = useState(null);
     const [stressResult, setStressResult] = useState(null);
     const [stressLoading, setStressLoading] = useState(false);
     const formatCurrency = (value) => {
@@ -1651,6 +1652,14 @@ const Simulation = () => {
             });
     }, [allTransactions, categorizeTransaction, currentSimulation, selectedUser, municipalTaxRate, cantonalTaxRate, churchTaxRate, personalTaxPerPerson, scenarioDetails]);
 
+    const taxableIncomeMap = useMemo(() => {
+        const map = new Map();
+        taxableIncomeByYear.forEach((row) => {
+            map.set(row.year, row);
+        });
+        return map;
+    }, [taxableIncomeByYear]);
+
     const handleSaveProfile = useCallback(async () => {
         if (!profileName.trim()) return;
         try {
@@ -2357,11 +2366,12 @@ const Simulation = () => {
                                                             datasets: [
                                                                 {
                                                                     label: 'Netto',
-                                                                    data: yearlyCashFlow.map(
-                                                                        (entry) =>
-                                                                            entry.net ||
-                                                                            entry.income + entry.expenses + (entry.taxes || 0)
-                                                                    ),
+                                                                    data: yearlyCashFlow.map((entry) => {
+                                                                        const taxRow = taxableIncomeMap.get(entry.year);
+                                                                        const taxTotal = taxRow?.totalAll ?? taxRow?.taxTotal ?? entry.taxes ?? 0;
+                                                                        const taxPayment = taxRow ? -Math.abs(taxTotal) : (entry.taxes || 0);
+                                                                        return entry.income + entry.expenses + taxPayment;
+                                                                    }),
                                                                     borderColor: '#22d3ee',
                                                                     backgroundColor: 'rgba(34, 211, 238, 0.2)',
                                                                     tension: 0.25,
@@ -2403,49 +2413,142 @@ const Simulation = () => {
                                             </div>
 
                                             <div className="panel-body table-wrapper">
-                                                <table className="table cashflow-table">
-                                                    <thead>
-                                                        <tr>
-                                                            <th>Jahr (Ende)</th>
-                                                            <th>Einnahmen</th>
-                                                            <th>Ausgaben</th>
-                                                            <th>Steuern</th>
-                                                            <th>Netto</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        {yearlyCashFlow.map((yearRow) => {
-                                                            const isExpanded = expandedYears.includes(yearRow.year);
-                                                            const yearNet =
-                                                                yearRow.net ||
-                                                                yearRow.income + yearRow.expenses + (yearRow.taxes || 0);
-                                                            return (
-                                                                <React.Fragment key={`year-${yearRow.year}`}>
-                                                                    <tr>
-                                                                        <td>
+                            <table className="table cashflow-table">
+                                <thead>
+                                    <tr>
+                                        <th>Jahr (Ende)</th>
+                                        <th>Einnahmen</th>
+                                        <th>Ausgaben</th>
+                                        <th>Steuern</th>
+                                        <th>Netto</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                        {yearlyCashFlow.map((yearRow) => {
+                                            const isExpanded = expandedYears.includes(yearRow.year);
+                                            const taxRow = taxableIncomeMap.get(yearRow.year);
+                                            const taxTotal = taxRow?.totalAll ?? taxRow?.taxTotal ?? 0;
+                                            const taxPayment = taxRow ? -Math.abs(taxTotal) : (yearRow.taxes || 0);
+                                            const yearNet = yearRow.income + yearRow.expenses + taxPayment;
+                                            return (
+                                                <React.Fragment key={`year-${yearRow.year}`}>
+                                                    <tr>
+                                                        <td>
+                                                            <button
+                                                                className="link-button"
+                                                                onClick={() =>
+                                                                    setExpandedYears((prev) =>
+                                                                        prev.includes(yearRow.year)
+                                                                            ? prev.filter((y) => y !== yearRow.year)
+                                                                            : [...prev, yearRow.year]
+                                                                    )
+                                                                }
+                                                            >
+                                                                {new Date(yearRow.year, 11, 31).toLocaleDateString('de-CH')}
+                                                            </button>
+                                                        </td>
+                                                        <td>{formatCurrency(yearRow.income)}</td>
+                                                        <td>{formatCurrency(yearRow.expenses)}</td>
+                                                        <td>
+                                                            <button
+                                                                className="link-button"
+                                                                onClick={() => {
+                                                                    setSelectedTaxYear((prev) =>
+                                                                        prev === yearRow.year ? null : yearRow.year
+                                                                    );
+                                                                    setExpandedYears((prev) =>
+                                                                        prev.includes(yearRow.year)
+                                                                            ? prev
+                                                                            : [...prev, yearRow.year]
+                                                                    );
+                                                                }}
+                                                            >
+                                                                {formatCurrency(taxPayment)}
+                                                            </button>
+                                                        </td>
+                                                        <td>{formatCurrency(yearNet)}</td>
+                                                    </tr>
+                                                    {selectedTaxYear === yearRow.year && taxRow && (
+                                                        <tr className="tax-detail-row">
+                                                            <td></td>
+                                                            <td colSpan={4}>
+                                                                <div className="tax-detail-card inline">
+                                                                    <div className="panel-header compact">
+                                                                        <div>
+                                                                            <p className="eyebrow">Steuer-Details</p>
+                                                                            <h4>Jahr {yearRow.year}</h4>
+                                                                        </div>
+                                                                        <div className="panel-actions">
                                                                             <button
-                                                                                className="link-button"
-                                                                                onClick={() =>
-                                                                                    setExpandedYears((prev) =>
-                                                                                        prev.includes(yearRow.year)
-                                                                                            ? prev.filter((y) => y !== yearRow.year)
-                                                                                            : [...prev, yearRow.year]
-                                                                                    )
-                                                                                }
+                                                                                className="secondary"
+                                                                                onClick={() => setSelectedTaxYear(null)}
                                                                             >
-                                                                                {new Date(yearRow.year, 11, 31).toLocaleDateString('de-CH')}
+                                                                                Schließen
                                                                             </button>
-                                                                        </td>
-                                                                        <td>{formatCurrency(yearRow.income)}</td>
-                                                                        <td>{formatCurrency(yearRow.expenses)}</td>
-                                                                        <td>{formatCurrency(yearRow.taxes || 0)}</td>
-                                                                        <td>{formatCurrency(yearNet)}</td>
-                                                                    </tr>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="tax-detail-grid">
+                                                                        <div className="tax-row">
+                                                                            <span>Steuerbares Einkommen</span>
+                                                                            <strong>{formatCurrency(taxRow.net)}</strong>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Steuerbares Vermögen</span>
+                                                                            <strong>
+                                                                                {taxRow.wealth !== null && taxRow.wealth !== undefined
+                                                                                    ? formatCurrency(taxRow.wealth)
+                                                                                    : '–'}
+                                                                            </strong>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Einkommensteuer</span>
+                                                                            <span>{formatCurrency(taxRow.incomeTax)}</span>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Vermögenssteuer</span>
+                                                                            <span>
+                                                                                {taxRow.wealthTax !== null && taxRow.wealthTax !== undefined
+                                                                                    ? formatCurrency(taxRow.wealthTax)
+                                                                                    : '–'}
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Einfache Staatssteuer</span>
+                                                                            <strong>{formatCurrency(taxRow.baseTax)}</strong>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Personalsteuer</span>
+                                                                            <span>{formatCurrency(taxRow.personalTax || 0)}</span>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Staats- und Gemeindesteuern</span>
+                                                                            <strong>{formatCurrency(taxRow.taxTotal)}</strong>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Direkte Bundessteuer</span>
+                                                                            <span>{formatCurrency(taxRow.federalTax || 0)}</span>
+                                                                        </div>
+                                                                        <div className="tax-row total">
+                                                                            <span>Total Steuern</span>
+                                                                            <strong>
+                                                                                {formatCurrency(
+                                                                                    taxRow.totalAll ||
+                                                                                        (taxRow.taxTotal || 0) + (taxRow.federalTax || 0)
+                                                                                )}
+                                                                            </strong>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    )}
                                                                     {isExpanded &&
                                                                         yearRow.months.map((row) => {
-                                                                            const monthNet =
-                                                                                row.net ||
-                                                                                row.income + row.expenses + (row.taxes || 0);
+                                                                            const isDecember = (row.dateObj.getMonth?.() ?? 0) === 11;
+                                                                            const monthTax = isDecember ? taxPayment : 0;
+                                                                            const canToggleTax =
+                                                                                monthTax !== 0 || (row.tax_details?.length ?? 0) > 0;
+                                                                            const monthNet = row.income + row.expenses + monthTax;
                                                                             return (
                                                                                 <React.Fragment key={row.date}>
                                                                                     <tr className="monthly-row">
@@ -2485,17 +2588,18 @@ const Simulation = () => {
                                                                                         <td>
                                                                                             <button
                                                                                                 className="link-button"
-                                                                                                onClick={() =>
+                                                                                                onClick={() => {
+                                                                                                    if (!canToggleTax) return;
                                                                                                     setCashFlows((prev) =>
                                                                                                         prev.map((cf) =>
                                                                                                             cf.date === row.date
                                                                                                                 ? { ...cf, showTax: !cf.showTax }
                                                                                                                 : cf
                                                                                                         )
-                                                                                                    )
-                                                                                                }
+                                                                                                    );
+                                                                                                }}
                                                                                             >
-                                                                                                {formatCurrency(row.taxes || 0)}
+                                                                                                {formatCurrency(monthTax)}
                                                                                             </button>
                                                                                         </td>
                                                                                         <td>{formatCurrency(monthNet)}</td>
@@ -2536,12 +2640,21 @@ const Simulation = () => {
                                                                                             </td>
                                                                                         </tr>
                                                                                     )}
-                                                                                    {row.showTax && row.tax_details?.length > 0 && (
+                                                                                    {row.showTax && (row.tax_details?.length > 0 || monthTax) && (
                                                                                         <tr className="cashflow-subrow">
                                                                                             <td></td>
                                                                                             <td colSpan={4}>
                                                                                                 <ul className="cashflow-items">
-                                                                                                    {row.tax_details.map((item, idx) => (
+                                                                                                    {monthTax !== 0 && (
+                                                                                                        <li>
+                                                                                                            <span>Steuern (berechnet)</span>
+                                                                                                            <span className="muted">Jahressteuer</span>
+                                                                                                            <span className="amount">
+                                                                                                                {formatCurrency(monthTax)}
+                                                                                                            </span>
+                                                                                                        </li>
+                                                                                                    )}
+                                                                                                    {(row.tax_details || []).map((item, idx) => (
                                                                                                         <li key={`tax-${row.date}-${idx}`}>
                                                                                                             <span>{item.name}</span>
                                                                                                             <span className="muted">{item.account}</span>
