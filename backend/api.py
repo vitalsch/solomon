@@ -117,6 +117,10 @@ class ScenarioCreate(BaseModel):
     inflation_rate: Optional[float] = Field(None, description="Annual inflation (fraction, e.g. 0.02)")
     income_tax_rate: Optional[float] = Field(None, description="Income tax rate (fraction)")
     wealth_tax_rate: Optional[float] = Field(None, description="Wealth tax rate (fraction)")
+    municipal_tax_factor: Optional[float] = Field(None, description="Gemeindesteuerfuss (z.B. 1.15 für 115%)")
+    cantonal_tax_factor: Optional[float] = Field(None, description="Staatssteuerfuss (z.B. 0.98 für 98%)")
+    church_tax_factor: Optional[float] = Field(None, description="Kirchensteuerfuss (z.B. 0.14 für 14%)")
+    personal_tax_per_person: Optional[float] = Field(None, description="Personalsteuer pro Person in CHF")
 
     @validator("end_year")
     def validate_years(cls, v, values):
@@ -135,6 +139,10 @@ class ScenarioUpdate(BaseModel):
     inflation_rate: Optional[float] = None
     income_tax_rate: Optional[float] = None
     wealth_tax_rate: Optional[float] = None
+    municipal_tax_factor: Optional[float] = None
+    cantonal_tax_factor: Optional[float] = None
+    church_tax_factor: Optional[float] = None
+    personal_tax_per_person: Optional[float] = None
 
 
 class PortfolioShock(BaseModel):
@@ -322,6 +330,10 @@ def create_scenario(payload: ScenarioCreate, current_user=Depends(get_current_us
         payload.inflation_rate,
         payload.income_tax_rate,
         payload.wealth_tax_rate,
+        payload.municipal_tax_factor,
+        payload.cantonal_tax_factor,
+        payload.church_tax_factor,
+        payload.personal_tax_per_person,
     )
 
 

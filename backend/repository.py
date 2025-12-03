@@ -151,6 +151,10 @@ class WealthRepository:
         inflation_rate: float | None = None,
         income_tax_rate: float | None = None,
         wealth_tax_rate: float | None = None,
+        municipal_tax_factor: float | None = None,
+        cantonal_tax_factor: float | None = None,
+        church_tax_factor: float | None = None,
+        personal_tax_per_person: float | None = None,
     ) -> Dict[str, Any]:
         doc = {
             "user_id": _ensure_object_id(user_id),
@@ -164,6 +168,10 @@ class WealthRepository:
             "inflation_rate": inflation_rate,
             "income_tax_rate": income_tax_rate,
             "wealth_tax_rate": wealth_tax_rate,
+            "municipal_tax_factor": municipal_tax_factor,
+            "cantonal_tax_factor": cantonal_tax_factor,
+            "church_tax_factor": church_tax_factor,
+            "personal_tax_per_person": personal_tax_per_person,
         }
         res = self.db.scenarios.insert_one(doc)
         doc["_id"] = res.inserted_id
