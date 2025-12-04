@@ -255,6 +255,8 @@ def simulate_account_balances_and_total_wealth(
     end_year: int,
     end_month: int,
     mortgage_interest_transactions: List[MortgageInterestTransaction] | None = None,
+    tax_schedule: Dict[int, float] | None = None,
+    tax_account: Account | None = None,
 ) -> Tuple[AccountBalanceHistory, List[Tuple[date, float]], List[Dict]]:
     """Run monthly simulation returning per-account histories and total wealth."""
 
@@ -366,6 +368,31 @@ def simulate_account_balances_and_total_wealth(
                             "account": interest_tx.pay_from_account.name,
                         }
                     )
+
+        # Apply annual tax charge in December (amount is expected negative)
+        if tax_schedule:
+            scheduled_tax = tax_schedule.get(current_date.year)
+            if scheduled_tax:
+                # choose account: provided tax_account if active, otherwise first active account
+                target_account = None
+                if tax_account and tax_account.is_active(current_date.month, current_date.year):
+                    target_account = tax_account
+                else:
+                    for acc in accounts:
+                        if acc.is_active(current_date.month, current_date.year):
+                            target_account = acc
+                            break
+                if target_account:
+                    target_account.update_balance(scheduled_tax)
+                monthly_expense += scheduled_tax
+                monthly_tax += scheduled_tax
+                tax_details.append(
+                    {
+                        "name": f"Steuern {current_date.year}",
+                        "amount": scheduled_tax,
+                        "account": target_account.name if target_account else "unbekannt",
+                    }
+                )
 
         for account in accounts:
             account_balance_histories[account].append((current_date, account.get_balance()))
