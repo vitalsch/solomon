@@ -2300,6 +2300,43 @@ const Simulation = () => {
                         <div className="panel">
                             <div className="panel-header">
                                 <div>
+                                    <p className="eyebrow">Steuern</p>
+                                    <h3>Steuerübersicht (jährlich)</h3>
+                                </div>
+                            </div>
+                            <div className="panel-body table-wrapper">
+                                <table className="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Jahr</th>
+                                            <th>Steuern</th>
+                                            <th>Netto (inkl. Steuern)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {yearlyCashFlow.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={3} className="muted">
+                                                    Keine Daten vorhanden.
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            yearlyCashFlow.map((row) => (
+                                                <tr key={`tax-year-${row.year}`}>
+                                                    <td>{row.year}</td>
+                                                    <td>{formatCurrency(row.taxes || 0)}</td>
+                                                    <td>{formatCurrency(row.net || row.income + row.expenses + (row.taxes || 0))}</td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div className="panel">
+                            <div className="panel-header">
+                                <div>
                                     <p className="eyebrow">Assets</p>
                                     <h3>Asset Balances & Totals</h3>
                                 </div>
