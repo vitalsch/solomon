@@ -90,6 +90,7 @@ const Simulation = () => {
     const [cantonalTaxRate, setCantonalTaxRate] = useState('');
     const [churchTaxRate, setChurchTaxRate] = useState('');
     const [personalTaxPerPerson, setPersonalTaxPerPerson] = useState('24');
+    const [taxAccountId, setTaxAccountId] = useState('');
     const [newScenarioDescription, setNewScenarioDescription] = useState('');
     const [scenarioDescription, setScenarioDescription] = useState('');
     const [selectedScenarios, setSelectedScenarios] = useState([]);
@@ -359,6 +360,7 @@ const Simulation = () => {
                     ? '24'
                     : scenarioDetails.personal_tax_per_person
             );
+            setTaxAccountId(scenarioDetails.tax_account_id ? normalizeId(scenarioDetails.tax_account_id) : '');
         }
     }, [scenarioDetails]);
 
@@ -778,6 +780,7 @@ const Simulation = () => {
                 end_year: endYear,
                 end_month: endMonth,
                 inflation_rate: inflationRate === '' ? undefined : parseFloat(inflationRate),
+                tax_account_id: taxAccountId || undefined,
             });
 
             if (cloneScenarioId) {
@@ -850,6 +853,7 @@ const Simulation = () => {
                 cantonal_tax_factor: cantonalTaxRate === '' ? null : parseFloat(cantonalTaxRate) / 100,
                 church_tax_factor: churchTaxRate === '' ? null : parseFloat(churchTaxRate) / 100,
                 personal_tax_per_person: personalTaxPerPerson === '' ? null : parseFloat(personalTaxPerPerson),
+                tax_account_id: taxAccountId || null,
             });
             setScenarioDetails(updated);
             setSimulationCache((prev) => {
@@ -2162,6 +2166,14 @@ const Simulation = () => {
                                                 <span className="label">Transaktionen</span>
                                                 <strong>{allTransactions.length}</strong>
                                             </div>
+                                            <div className="scenario-detail">
+                                                <span className="label">Steuer-Konto</span>
+                                                <strong>
+                                                    {taxAccountId
+                                                        ? accountNameMap[taxAccountId] || 'Konto auswählen'
+                                                        : 'Keins gewählt'}
+                                                </strong>
+                                            </div>
                                         </div>
                                         <div className="scenario-settings">
                                             <p className="eyebrow">Einstellungen</p>
@@ -2218,6 +2230,17 @@ const Simulation = () => {
                                                     onChange={(e) => setPersonalTaxPerPerson(e.target.value)}
                                                     step="0.01"
                                                 />
+                                            </label>
+                                            <label className="stacked">
+                                                <span>Steuern belasten auf Konto</span>
+                                                <select value={taxAccountId} onChange={(e) => setTaxAccountId(e.target.value)}>
+                                                    <option value="">Keins</option>
+                                                    {accounts.map((acc) => (
+                                                        <option key={`tax-acc-${acc.id}`} value={acc.id}>
+                                                            {acc.name}
+                                                        </option>
+                                                    ))}
+                                                </select>
                                             </label>
                                         </div>
                                         <button onClick={handleUpdateScenarioSettings} disabled={!currentScenarioId}>

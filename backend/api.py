@@ -121,6 +121,7 @@ class ScenarioCreate(BaseModel):
     cantonal_tax_factor: Optional[float] = Field(None, description="Staatssteuerfuss (z.B. 0.98 für 98%)")
     church_tax_factor: Optional[float] = Field(None, description="Kirchensteuerfuss (z.B. 0.14 für 14%)")
     personal_tax_per_person: Optional[float] = Field(None, description="Personalsteuer pro Person in CHF")
+    tax_account_id: Optional[str] = Field(None, description="Asset/Konto, von dem Steuern abgebucht werden sollen")
 
     @validator("end_year")
     def validate_years(cls, v, values):
@@ -143,6 +144,7 @@ class ScenarioUpdate(BaseModel):
     cantonal_tax_factor: Optional[float] = None
     church_tax_factor: Optional[float] = None
     personal_tax_per_person: Optional[float] = None
+    tax_account_id: Optional[str] = None
 
 
 class PortfolioShock(BaseModel):

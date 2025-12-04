@@ -155,6 +155,7 @@ class WealthRepository:
         cantonal_tax_factor: float | None = None,
         church_tax_factor: float | None = None,
         personal_tax_per_person: float | None = None,
+        tax_account_id: str | None = None,
     ) -> Dict[str, Any]:
         doc = {
             "user_id": _ensure_object_id(user_id),
@@ -172,6 +173,7 @@ class WealthRepository:
             "cantonal_tax_factor": cantonal_tax_factor,
             "church_tax_factor": church_tax_factor,
             "personal_tax_per_person": personal_tax_per_person,
+            "tax_account_id": _ensure_object_id(tax_account_id) if tax_account_id else None,
         }
         res = self.db.scenarios.insert_one(doc)
         doc["_id"] = res.inserted_id
@@ -188,7 +190,10 @@ class WealthRepository:
         ]
 
     def update_scenario(self, scenario_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        converted_updates = {k: _ensure_object_id(v) if k in {"user_id"} else v for k, v in updates.items()}
+        converted_updates = {
+            k: _ensure_object_id(v) if k in {"user_id", "tax_account_id"} and v else v
+            for k, v in updates.items()
+        }
         doc = self.db.scenarios.find_one_and_update(
             {"_id": _ensure_object_id(scenario_id)},
             {"$set": converted_updates},
