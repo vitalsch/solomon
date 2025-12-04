@@ -906,7 +906,7 @@ button.secondary:hover {
 .tax-table-wrapper {
   width: 100%;
   overflow-x: auto;
-  padding: 0;
+  max-width: 100%;
 }
 
 .tax-table-wrapper .table {
