@@ -911,7 +911,6 @@ button.secondary:hover {
 
 .tax-table-wrapper .table {
   width: 100%;
-  min-width: 920px;
   border-collapse: collapse;
 }
 

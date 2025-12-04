@@ -2421,11 +2421,6 @@ const Simulation = () => {
                                                                     setSelectedTaxYear((prev) =>
                                                                         prev === yearRow.year ? null : yearRow.year
                                                                     );
-                                                                    setExpandedYears((prev) =>
-                                                                        prev.includes(yearRow.year)
-                                                                            ? prev
-                                                                            : [...prev, yearRow.year]
-                                                                    );
                                                                 }}
                                                             >
                                                                 {formatCurrency(taxPayment)}
