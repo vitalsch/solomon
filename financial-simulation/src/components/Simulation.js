@@ -1785,15 +1785,7 @@ const Simulation = () => {
     const renderTransactionItem = (tx) => {
         const assetName = accountNameMap[tx.asset_id] || 'Unbekannt';
         const counterName = tx.counter_asset_id ? accountNameMap[tx.counter_asset_id] : null;
-        const taxRate = 0;
         const grossAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount) || 0;
-        const taxableAmount = tx.taxable
-            ? (Number.isFinite(tx.taxable_amount)
-                  ? tx.taxable_amount
-                  : Number(tx.taxable_amount) || grossAmount)
-            : 0;
-        const taxEffect = tx.taxable ? taxableAmount * taxRate : 0;
-        const netAmount = tx.type === 'mortgage_interest' ? 0 : grossAmount - taxEffect;
         const isExpense = tx.category === 'expense';
 
         return (
@@ -1830,15 +1822,8 @@ const Simulation = () => {
                             Auto · {(((tx.annual_interest_rate ?? tx.annual_growth_rate ?? 0) * 100) || 0).toFixed(2)}%
                         </span>
                     ) : (
-                        <div className="amount tax-breakdown">
-                            <div>Brutto {formatCurrency(grossAmount)}</div>
-                            {tx.taxable && (
-                                <div className="muted small">
-                                    Steuer ({(taxRate * 100).toFixed(2)}% auf {formatCurrency(taxableAmount)}): -
-                                    {formatCurrency(taxEffect)}
-                                </div>
-                            )}
-                            <div>Netto {formatCurrency(netAmount)}</div>
+                        <div className="amount">
+                            <div>{formatCurrency(grossAmount)}</div>
                         </div>
                     )}
                 </div>
