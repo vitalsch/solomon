@@ -384,7 +384,6 @@ def simulate_account_balances_and_total_wealth(
                             break
                 if target_account:
                     target_account.update_balance(scheduled_tax)
-                monthly_expense += scheduled_tax
                 monthly_tax += scheduled_tax
                 tax_details.append(
                     {
