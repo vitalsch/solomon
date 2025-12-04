@@ -130,7 +130,7 @@ const Simulation = () => {
     const [selectedTaxYear, setSelectedTaxYear] = useState(null);
     const [stressResult, setStressResult] = useState(null);
     const [stressLoading, setStressLoading] = useState(false);
-    const [showTaxTable, setShowTaxTable] = useState(true);
+    const [showTaxTable, setShowTaxTable] = useState(false);
     const formatCurrency = (value) => {
         const num = Number(value);
         const safe = Number.isFinite(num) ? num : 0;
@@ -3213,7 +3213,7 @@ const Simulation = () => {
                     </div>
                     <div className="panel-actions">
                         <button className="secondary" onClick={() => setShowTaxTable((v) => !v)}>
-                            {showTaxTable ? 'Einklappen' : 'Ausklappen'}
+                            {showTaxTable ? 'Einklappen' : 'Anzeigen'}
                         </button>
                     </div>
                 </div>
