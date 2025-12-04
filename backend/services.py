@@ -268,6 +268,9 @@ def _compute_taxable_income_by_year(
         results[year] = entry
 
     for tx in transactions:
+        # Skip internal/double-entry transactions to avoid double counting
+        if tx.get("double_entry") or tx.get("counter_asset_id"):
+            continue
         if not tx.get("taxable"):
             continue
         amount_raw = tx.get("taxable_amount")
