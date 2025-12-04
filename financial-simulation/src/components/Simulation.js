@@ -997,7 +997,20 @@ const Simulation = () => {
         const totals = currentSimulation?.total_wealth || [];
         const firstValue = totals[0]?.value ?? null;
         const lastValue = totals[totals.length - 1]?.value ?? null;
-        const cashflowTotals = yearlyCashFlow.reduce(
+        const cashflowRows = yearlyCashFlow.map((entry) => {
+            const taxRow = taxableIncomeMap.get(entry.year);
+            const taxTotal = taxRow ? -Math.abs(taxRow.totalAll ?? taxRow.taxTotal ?? 0) : entry.taxes || 0;
+            const net = entry.income + entry.expenses + taxTotal;
+            return {
+                year: entry.year,
+                income: entry.income || 0,
+                expenses: entry.expenses || 0,
+                taxes: taxTotal,
+                net,
+            };
+        });
+
+        const cashflowTotals = cashflowRows.reduce(
             (acc, entry) => {
                 acc.income += entry.income || 0;
                 acc.expenses += entry.expenses || 0;
@@ -1182,7 +1195,7 @@ const Simulation = () => {
         addSectionTitle('Cashflow nach Jahr');
         addTable(
             ['Jahr', 'Einnahmen', 'Ausgaben', 'Steuern', 'Netto'],
-            yearlyCashFlow.map((entry) => [
+            cashflowRows.map((entry) => [
                 entry.year,
                 formatCurrency(entry.income || 0),
                 formatCurrency(entry.expenses || 0),
@@ -1210,6 +1223,7 @@ const Simulation = () => {
         formatScenarioRange,
         yearlyCashFlow,
         inflationRate,
+        taxableIncomeMap,
         municipalTaxRate,
         cantonalTaxRate,
         churchTaxRate,
