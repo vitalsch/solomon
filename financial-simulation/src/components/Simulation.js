@@ -2840,54 +2840,65 @@ const Simulation = () => {
                                                 {profileLoadingId === p.id ? (
                                                     <div className="muted small">Berechne...</div>
                                                 ) : (
-                                                    <div className="profile-summary">
-                                                        <div>
-                                                            <span className="label">Endwert Basis</span>
-                                                            <strong>
-                                                                {baseSummary?.endValue !== null && baseSummary?.endValue !== undefined
-                                                                    ? formatCurrency(baseSummary.endValue)
-                                                                    : '–'}
-                                                            </strong>
-                                                        </div>
-                                                        <div>
-                                                            <span className="label">Endwert Stress</span>
-                                                            <strong>
-                                                                {profileResults[p.id]?.endValue !== undefined && profileResults[p.id]?.endValue !== null
-                                                                    ? formatCurrency(profileResults[p.id].endValue)
-                                                                    : '–'}
-                                                            </strong>
-                                                        </div>
-                                                        <div>
-                                                            <span className="label">Delta Vermögen</span>
-                                                            <strong>
-                                                                {profileResults[p.id]?.endValue !== undefined &&
-                                                                profileResults[p.id]?.endValue !== null &&
-                                                                baseSummary?.endValue !== undefined &&
-                                                                baseSummary?.endValue !== null
-                                                                    ? formatCurrency(profileResults[p.id].endValue - baseSummary.endValue)
-                                                                    : '–'}
-                                                            </strong>
-                                                        </div>
-                                                        <div>
-                                                            <span className="label">Netto Cashflow (Stress)</span>
-                                                            <strong>
-                                                                {profileResults[p.id]?.net !== undefined && profileResults[p.id]?.net !== null
-                                                                    ? formatCurrency(profileResults[p.id].net)
-                                                                    : '–'}
-                                                            </strong>
-                                                        </div>
-                                                        <div>
-                                                            <span className="label">Delta vs Basis</span>
-                                                            <strong>
-                                                                {profileResults[p.id]?.net !== undefined &&
-                                                                profileResults[p.id]?.net !== null &&
-                                                                baseSummary?.net !== undefined &&
-                                                                baseSummary?.net !== null
-                                                                    ? formatCurrency(profileResults[p.id].net - baseSummary.net)
-                                                                    : '–'}
-                                                            </strong>
-                                                        </div>
-                                                    </div>
+                                                    (() => {
+                                                        const result = profileResults[p.id] || {};
+                                                        const endBase = baseSummary?.endValue;
+                                                        const endStress = result.endValue;
+                                                        const netBase = baseSummary?.net;
+                                                        const netStress = result.net;
+                                                        const deltaWealth =
+                                                            endStress !== undefined &&
+                                                            endStress !== null &&
+                                                            endBase !== undefined &&
+                                                            endBase !== null
+                                                                ? endStress - endBase
+                                                                : null;
+                                                        const deltaNet =
+                                                            netStress !== undefined &&
+                                                            netStress !== null &&
+                                                            netBase !== undefined &&
+                                                            netBase !== null
+                                                                ? netStress - netBase
+                                                                : null;
+                                                        return (
+                                                            <div className="profile-summary profile-summary-rows">
+                                                                <div className="profile-row">
+                                                                    <span className="label">Beschreibung</span>
+                                                                    <span>{p.description || 'Keine Beschreibung'}</span>
+                                                                </div>
+                                                                <div className="profile-row">
+                                                                    <span className="label">Endwert Basis</span>
+                                                                    <strong>
+                                                                        {endBase !== null && endBase !== undefined ? formatCurrency(endBase) : '–'}
+                                                                    </strong>
+                                                                </div>
+                                                                <div className="profile-row">
+                                                                    <span className="label">Endwert Stress</span>
+                                                                    <strong>
+                                                                        {endStress !== undefined && endStress !== null ? formatCurrency(endStress) : '–'}
+                                                                    </strong>
+                                                                </div>
+                                                                <div className="profile-row highlight">
+                                                                    <span className="label">Delta Vermögen</span>
+                                                                    <strong className={deltaWealth !== null && deltaWealth < 0 ? 'negative' : 'positive'}>
+                                                                        {deltaWealth !== null ? formatCurrency(deltaWealth) : '–'}
+                                                                    </strong>
+                                                                </div>
+                                                                <div className="profile-row">
+                                                                    <span className="label">Netto Cashflow (Stress)</span>
+                                                                    <strong>
+                                                                        {netStress !== undefined && netStress !== null ? formatCurrency(netStress) : '–'}
+                                                                    </strong>
+                                                                </div>
+                                                                <div className="profile-row highlight">
+                                                                    <span className="label">Delta vs Basis</span>
+                                                                    <strong className={deltaNet !== null && deltaNet < 0 ? 'negative' : 'positive'}>
+                                                                        {deltaNet !== null ? formatCurrency(deltaNet) : '–'}
+                                                                    </strong>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })()
                                                 )}
                                                 {editingProfileId === p.id && (
                                                     <div className="profile-edit">

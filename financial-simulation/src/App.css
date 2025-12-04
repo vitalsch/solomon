@@ -214,14 +214,52 @@
 
 .profile-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0.5rem;
+}
+
+.profile-summary-rows {
+  grid-template-columns: 1fr 1fr;
 }
 
 .profile-summary .label {
   display: block;
   font-size: 0.85rem;
   color: var(--muted);
+}
+
+.profile-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-strong, #f8fafc);
+}
+
+.profile-row .label {
+  margin: 0;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.profile-row strong {
+  font-size: 1rem;
+}
+
+.profile-row.highlight {
+  background: #ecfeff;
+  border-color: #bae6fd;
+}
+
+.profile-row .positive {
+  color: #0f9d58;
+}
+
+.profile-row .negative {
+  color: #c0392b;
 }
 
 .profile-actions {
