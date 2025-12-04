@@ -2510,8 +2510,7 @@ const Simulation = () => {
                                                                         yearRow.months.map((row) => {
                                                                             const isDecember = (row.dateObj.getMonth?.() ?? 0) === 11;
                                                                             const monthTax = isDecember ? taxPayment : 0;
-                                                                            const canToggleTax =
-                                                                                monthTax !== 0 || (row.tax_details?.length ?? 0) > 0;
+                                                                            const canToggleTax = monthTax !== 0;
                                                                             const monthNet = row.income + row.expenses + monthTax;
                                                                             return (
                                                                                 <React.Fragment key={row.date}>
@@ -2604,29 +2603,18 @@ const Simulation = () => {
                                                                                             </td>
                                                                                         </tr>
                                                                                     )}
-                                                                                    {row.showTax && (row.tax_details?.length > 0 || monthTax) && (
+                                                                                    {row.showTax && monthTax !== 0 && (
                                                                                         <tr className="cashflow-subrow">
                                                                                             <td></td>
                                                                                             <td colSpan={4}>
                                                                                                 <ul className="cashflow-items">
-                                                                                                    {monthTax !== 0 && (
-                                                                                                        <li>
-                                                                                                            <span>Steuern (berechnet)</span>
-                                                                                                            <span className="muted">Jahressteuer</span>
-                                                                                                            <span className="amount">
-                                                                                                                {formatCurrency(monthTax)}
-                                                                                                            </span>
-                                                                                                        </li>
-                                                                                                    )}
-                                                                                                    {(row.tax_details || []).map((item, idx) => (
-                                                                                                        <li key={`tax-${row.date}-${idx}`}>
-                                                                                                            <span>{item.name}</span>
-                                                                                                            <span className="muted">{item.account}</span>
-                                                                                                            <span className="amount">
-                                                                                                                {formatCurrency(item.amount)}
-                                                                                                            </span>
-                                                                                                        </li>
-                                                                                                    ))}
+                                                                                                    <li>
+                                                                                                        <span>Steuern (berechnet)</span>
+                                                                                                        <span className="muted">Jahressteuer</span>
+                                                                                                        <span className="amount">
+                                                                                                            {formatCurrency(monthTax)}
+                                                                                                        </span>
+                                                                                                    </li>
                                                                                                 </ul>
                                                                                             </td>
                                                                                         </tr>
