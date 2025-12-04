@@ -960,6 +960,14 @@ const Simulation = () => {
         }
     }, [currentScenarioId, selectedScenarios, selectedUserId]);
 
+    // Auto-simulate when a scenario becomes active (incl. after login)
+    useEffect(() => {
+        if (!currentScenarioId) return;
+        const key = cacheKey(selectedUserId, currentScenarioId);
+        if (simulationCache[key]) return;
+        handleSimulate(currentScenarioId);
+    }, [currentScenarioId, selectedUserId, simulationCache, handleSimulate]);
+
     const handleStressSimulate = useCallback(async () => {
         const scenarioKey = normalizeId(currentScenarioId);
         if (!scenarioKey) {
