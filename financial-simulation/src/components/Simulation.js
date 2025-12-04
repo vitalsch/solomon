@@ -986,258 +986,6 @@ const Simulation = () => {
         }
     }, [buildStressPayload, currentScenarioId]);
 
-    const handleDownloadPdf = useCallback(async () => {
-        // Always refresh simulation before exporting to ensure current data
-        await handleSimulate();
-        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-        const marginX = 14;
-        let cursorY = 16;
-        const today = new Date().toLocaleString('de-CH');
-
-        const totals = currentSimulation?.total_wealth || [];
-        const firstValue = totals[0]?.value ?? null;
-        const lastValue = totals[totals.length - 1]?.value ?? null;
-        const cashflowRows = yearlyCashFlow.map((entry) => {
-            const taxRow = taxableIncomeMap.get(entry.year);
-            const taxTotal = taxRow ? -Math.abs(taxRow.totalAll ?? taxRow.taxTotal ?? 0) : entry.taxes || 0;
-            const net = entry.income + entry.expenses + taxTotal;
-            return {
-                year: entry.year,
-                income: entry.income || 0,
-                expenses: entry.expenses || 0,
-                taxes: taxTotal,
-                net,
-            };
-        });
-
-        const cashflowTotals = cashflowRows.reduce(
-            (acc, entry) => {
-                acc.income += entry.income || 0;
-                acc.expenses += entry.expenses || 0;
-                acc.taxes += entry.taxes || 0;
-                acc.net += entry.net || entry.income + entry.expenses + (entry.taxes || 0);
-                return acc;
-            },
-            { income: 0, expenses: 0, taxes: 0, net: 0 }
-        );
-        const baseSummaryLocal = summarizeSimulation(currentSimulation);
-
-        // Precompute saved profile results (stress) relative to current base
-        const profileRows = [];
-        if (stressProfiles && stressProfiles.length && currentScenarioId) {
-            for (const profile of stressProfiles) {
-                try {
-                    const payload = buildStressPayload(profile.overrides);
-                    const result = await simulateScenarioStress(currentScenarioId, payload);
-                    const summary = summarizeSimulation(result);
-                    profileRows.push([
-                        profile.name || 'Profil',
-                        profile.description || '–',
-                        baseSummaryLocal?.endValue !== null && baseSummaryLocal?.endValue !== undefined
-                            ? formatCurrency(baseSummaryLocal.endValue)
-                            : '–',
-                        summary?.endValue !== null && summary?.endValue !== undefined ? formatCurrency(summary.endValue) : '–',
-                        summary?.endValue !== null &&
-                        summary?.endValue !== undefined &&
-                        baseSummaryLocal?.endValue !== null &&
-                        baseSummaryLocal?.endValue !== undefined
-                            ? formatCurrency(summary.endValue - baseSummaryLocal.endValue)
-                            : '–',
-                        summary?.net !== null && summary?.net !== undefined ? formatCurrency(summary.net) : '–',
-                        summary?.net !== null &&
-                        summary?.net !== undefined &&
-                        baseSummaryLocal?.net !== null &&
-                        baseSummaryLocal?.net !== undefined
-                            ? formatCurrency(summary.net - baseSummaryLocal.net)
-                            : '–',
-                    ]);
-                } catch (err) {
-                    profileRows.push([profile.name || 'Profil', profile.description || '–', 'Fehler', '–', '–', err.message || 'Fehler']);
-                }
-            }
-        }
-
-        const addSectionTitle = (text) => {
-            if (cursorY > 270) {
-                doc.addPage();
-                cursorY = marginX;
-            }
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(12);
-            doc.text(text, marginX, cursorY);
-            cursorY += 4;
-        };
-
-        const addTable = (head, body) => {
-            const tableBody = body.length ? body : [new Array(head.length).fill('–')];
-            autoTable(doc, {
-                startY: cursorY,
-                head: [head],
-                body: tableBody,
-                styles: { fontSize: 9, cellPadding: 2, textColor: 25 },
-                headStyles: { fillColor: [240, 240, 240], textColor: 20, fontStyle: 'bold' },
-                bodyStyles: { textColor: 25 },
-                alternateRowStyles: { fillColor: [248, 248, 248] },
-                theme: 'grid',
-                margin: { left: marginX, right: marginX },
-            });
-            cursorY = doc.lastAutoTable.finalY + 8;
-        };
-
-        const formatPercent = (value) => {
-            const num = Number(value);
-            if (!Number.isFinite(num)) return '–';
-            return `${(num * 100).toFixed(2)} %`;
-        };
-        const formatPercentValue = (value) => {
-            const num = Number(value);
-            if (!Number.isFinite(num)) return '–';
-            return `${num.toFixed(2)} %`;
-        };
-
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(16);
-        doc.text('Finanzsimulation – Bericht', marginX, cursorY);
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(10);
-        doc.text(`Erstellt: ${today}`, marginX, (cursorY += 8));
-        cursorY += 6;
-
-        addSectionTitle('Überblick');
-        addTable(
-            ['Benutzer', 'E-Mail', 'Szenario', 'Zeitraum', 'Assets', 'Transaktionen'],
-            [
-                [
-                    selectedUser?.name || '–',
-                    selectedUser?.email || '–',
-                    currentScenario?.name || '–',
-                    formatScenarioRange(currentScenario) || '–',
-                    accounts.length,
-                    allTransactions.length,
-                ],
-            ]
-        );
-
-        addSectionTitle('Szenario-Details');
-        addTable(
-            [
-                'Beschreibung',
-                'Inflation p.a.',
-                'Gemeindesteuerfuss',
-                'Staatssteuerfuss',
-                'Kirchensteuerfuss',
-                'Personalsteuer (CHF/Person)',
-            ],
-            [
-                [
-                    currentScenario?.description || '–',
-                    formatPercent(inflationRate),
-                    formatPercentValue(
-                        municipalTaxRate !== '' ? municipalTaxRate : (scenarioDetails?.municipal_tax_factor || 0) * 100
-                    ),
-                    formatPercentValue(
-                        cantonalTaxRate !== '' ? cantonalTaxRate : (scenarioDetails?.cantonal_tax_factor || 0) * 100
-                    ),
-                    formatPercentValue(
-                        churchTaxRate !== '' ? churchTaxRate : (scenarioDetails?.church_tax_factor || 0) * 100
-                    ),
-                    Number.isFinite(Number(personalTaxPerPerson)) ? formatCurrency(personalTaxPerPerson) : '–',
-                ],
-            ]
-        );
-
-        addSectionTitle('Assets');
-        addTable(
-            ['Name', 'Typ', 'Start', 'Ende', 'Wachstum p.a.', 'Startsaldo'],
-            accounts.map((acc) => [
-                acc.name,
-                acc.asset_type || '–',
-                acc.start_month && acc.start_year ? `${acc.start_month}/${acc.start_year}` : '–',
-                acc.end_month && acc.end_year ? `${acc.end_month}/${acc.end_year}` : '–',
-                `${((acc.annual_growth_rate || 0) * 100).toFixed(2)} %`,
-                formatCurrency(acc.initial_balance || 0),
-            ])
-        );
-
-        addSectionTitle('Transaktionen (alle)');
-        addTable(
-            ['Name', 'Kategorie', 'Typ', 'Asset', 'Gegenkonto', 'Betrag', 'Start', 'Ende', 'Frequenz', 'Steuerbar'],
-            allTransactions.map((tx) => [
-                tx.name,
-                tx.category === 'expense' ? 'Ausgabe' : 'Einnahme',
-                tx.type === 'mortgage_interest' ? 'Hypothekenzins' : tx.type === 'regular' ? 'Regelmäßig' : 'Einmalig',
-                accountNameMap[tx.asset_id] || tx.asset_id || '–',
-                tx.counter_asset_id ? accountNameMap[tx.counter_asset_id] || tx.counter_asset_id : '–',
-                formatCurrency(tx.amount || 0),
-                tx.start_month && tx.start_year ? `${tx.start_month}/${tx.start_year}` : '–',
-                tx.end_month && tx.end_year ? `${tx.end_month}/${tx.end_year}` : '–',
-                tx.frequency || tx.frequency === 0 ? tx.frequency : '–',
-                tx.taxable ? formatCurrency(tx.taxable_amount || tx.amount || 0) : '–',
-            ])
-        );
-
-        addSectionTitle('Simulation Kennzahlen');
-        addTable(
-            ['Startwert', 'Endwert', 'Veränderung', 'Summe Einnahmen', 'Summe Ausgaben', 'Summe Steuern', 'Netto'],
-            [
-                [
-                    firstValue !== null ? formatCurrency(firstValue) : '–',
-                    lastValue !== null ? formatCurrency(lastValue) : '–',
-                    firstValue !== null && lastValue !== null ? formatCurrency(lastValue - firstValue) : '–',
-                    formatCurrency(cashflowTotals.income),
-                    formatCurrency(cashflowTotals.expenses),
-                    formatCurrency(cashflowTotals.taxes),
-                    formatCurrency(cashflowTotals.net),
-                ],
-            ]
-        );
-
-        addSectionTitle('Cashflow nach Jahr');
-        addTable(
-            ['Jahr', 'Einnahmen', 'Ausgaben', 'Steuern', 'Netto'],
-            cashflowRows.map((entry) => [
-                entry.year,
-                formatCurrency(entry.income || 0),
-                formatCurrency(entry.expenses || 0),
-                formatCurrency(entry.taxes || 0),
-                formatCurrency(entry.net || entry.income + entry.expenses + (entry.taxes || 0)),
-            ])
-        );
-
-        if (profileRows.length) {
-            addSectionTitle('Gespeicherte Stress-Profile');
-            addTable(
-                ['Profil', 'Beschreibung', 'Endwert Basis', 'Endwert Stress', 'Δ Vermögen', 'Netto Stress', 'Δ Netto'],
-                profileRows
-            );
-        }
-
-        doc.save(`financial-simulation-${new Date().toISOString().slice(0, 10)}.pdf`);
-    }, [
-        accounts,
-        accountNameMap,
-        allTransactions,
-        currentScenario,
-        currentSimulation,
-        selectedUser,
-        formatScenarioRange,
-        yearlyCashFlow,
-        inflationRate,
-        taxableIncomeMap,
-        municipalTaxRate,
-        cantonalTaxRate,
-        churchTaxRate,
-        personalTaxPerPerson,
-        scenarioDetails?.municipal_tax_factor,
-        scenarioDetails?.cantonal_tax_factor,
-        scenarioDetails?.church_tax_factor,
-        handleSimulate,
-        stressProfiles,
-        buildStressPayload,
-        summarizeSimulation,
-        currentScenarioId,
-    ]);
-
     const refreshScenarioList = useCallback(async () => {
         try {
             const userScenarios = await listScenarios();
@@ -1690,6 +1438,258 @@ const Simulation = () => {
         });
         return map;
     }, [taxableIncomeByYear]);
+
+    const handleDownloadPdf = useCallback(async () => {
+        // Always refresh simulation before exporting to ensure current data
+        await handleSimulate();
+        const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+        const marginX = 14;
+        let cursorY = 16;
+        const today = new Date().toLocaleString('de-CH');
+
+        const totals = currentSimulation?.total_wealth || [];
+        const firstValue = totals[0]?.value ?? null;
+        const lastValue = totals[totals.length - 1]?.value ?? null;
+        const cashflowRows = yearlyCashFlow.map((entry) => {
+            const taxRow = taxableIncomeMap.get(entry.year);
+            const taxTotal = taxRow ? -Math.abs(taxRow.totalAll ?? taxRow.taxTotal ?? 0) : entry.taxes || 0;
+            const net = entry.income + entry.expenses + taxTotal;
+            return {
+                year: entry.year,
+                income: entry.income || 0,
+                expenses: entry.expenses || 0,
+                taxes: taxTotal,
+                net,
+            };
+        });
+
+        const cashflowTotals = cashflowRows.reduce(
+            (acc, entry) => {
+                acc.income += entry.income || 0;
+                acc.expenses += entry.expenses || 0;
+                acc.taxes += entry.taxes || 0;
+                acc.net += entry.net || entry.income + entry.expenses + (entry.taxes || 0);
+                return acc;
+            },
+            { income: 0, expenses: 0, taxes: 0, net: 0 }
+        );
+        const baseSummaryLocal = summarizeSimulation(currentSimulation);
+
+        // Precompute saved profile results (stress) relative to current base
+        const profileRows = [];
+        if (stressProfiles && stressProfiles.length && currentScenarioId) {
+            for (const profile of stressProfiles) {
+                try {
+                    const payload = buildStressPayload(profile.overrides);
+                    const result = await simulateScenarioStress(currentScenarioId, payload);
+                    const summary = summarizeSimulation(result);
+                    profileRows.push([
+                        profile.name || 'Profil',
+                        profile.description || '–',
+                        baseSummaryLocal?.endValue !== null && baseSummaryLocal?.endValue !== undefined
+                            ? formatCurrency(baseSummaryLocal.endValue)
+                            : '–',
+                        summary?.endValue !== null && summary?.endValue !== undefined ? formatCurrency(summary.endValue) : '–',
+                        summary?.endValue !== null &&
+                        summary?.endValue !== undefined &&
+                        baseSummaryLocal?.endValue !== null &&
+                        baseSummaryLocal?.endValue !== undefined
+                            ? formatCurrency(summary.endValue - baseSummaryLocal.endValue)
+                            : '–',
+                        summary?.net !== null && summary?.net !== undefined ? formatCurrency(summary.net) : '–',
+                        summary?.net !== null &&
+                        summary?.net !== undefined &&
+                        baseSummaryLocal?.net !== null &&
+                        baseSummaryLocal?.net !== undefined
+                            ? formatCurrency(summary.net - baseSummaryLocal.net)
+                            : '–',
+                    ]);
+                } catch (err) {
+                    profileRows.push([profile.name || 'Profil', profile.description || '–', 'Fehler', '–', '–', err.message || 'Fehler']);
+                }
+            }
+        }
+
+        const addSectionTitle = (text) => {
+            if (cursorY > 270) {
+                doc.addPage();
+                cursorY = marginX;
+            }
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(12);
+            doc.text(text, marginX, cursorY);
+            cursorY += 4;
+        };
+
+        const addTable = (head, body) => {
+            const tableBody = body.length ? body : [new Array(head.length).fill('–')];
+            autoTable(doc, {
+                startY: cursorY,
+                head: [head],
+                body: tableBody,
+                styles: { fontSize: 9, cellPadding: 2, textColor: 25 },
+                headStyles: { fillColor: [240, 240, 240], textColor: 20, fontStyle: 'bold' },
+                bodyStyles: { textColor: 25 },
+                alternateRowStyles: { fillColor: [248, 248, 248] },
+                theme: 'grid',
+                margin: { left: marginX, right: marginX },
+            });
+            cursorY = doc.lastAutoTable.finalY + 8;
+        };
+
+        const formatPercent = (value) => {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return '–';
+            return `${(num * 100).toFixed(2)} %`;
+        };
+        const formatPercentValue = (value) => {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return '–';
+            return `${num.toFixed(2)} %`;
+        };
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(16);
+        doc.text('Finanzsimulation – Bericht', marginX, cursorY);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        doc.text(`Erstellt: ${today}`, marginX, (cursorY += 8));
+        cursorY += 6;
+
+        addSectionTitle('Überblick');
+        addTable(
+            ['Benutzer', 'E-Mail', 'Szenario', 'Zeitraum', 'Assets', 'Transaktionen'],
+            [
+                [
+                    selectedUser?.name || '–',
+                    selectedUser?.email || '–',
+                    currentScenario?.name || '–',
+                    formatScenarioRange(currentScenario) || '–',
+                    accounts.length,
+                    allTransactions.length,
+                ],
+            ]
+        );
+
+        addSectionTitle('Szenario-Details');
+        addTable(
+            [
+                'Beschreibung',
+                'Inflation p.a.',
+                'Gemeindesteuerfuss',
+                'Staatssteuerfuss',
+                'Kirchensteuerfuss',
+                'Personalsteuer (CHF/Person)',
+            ],
+            [
+                [
+                    currentScenario?.description || '–',
+                    formatPercent(inflationRate),
+                    formatPercentValue(
+                        municipalTaxRate !== '' ? municipalTaxRate : (scenarioDetails?.municipal_tax_factor || 0) * 100
+                    ),
+                    formatPercentValue(
+                        cantonalTaxRate !== '' ? cantonalTaxRate : (scenarioDetails?.cantonal_tax_factor || 0) * 100
+                    ),
+                    formatPercentValue(
+                        churchTaxRate !== '' ? churchTaxRate : (scenarioDetails?.church_tax_factor || 0) * 100
+                    ),
+                    Number.isFinite(Number(personalTaxPerPerson)) ? formatCurrency(personalTaxPerPerson) : '–',
+                ],
+            ]
+        );
+
+        addSectionTitle('Assets');
+        addTable(
+            ['Name', 'Typ', 'Start', 'Ende', 'Wachstum p.a.', 'Startsaldo'],
+            accounts.map((acc) => [
+                acc.name,
+                acc.asset_type || '–',
+                acc.start_month && acc.start_year ? `${acc.start_month}/${acc.start_year}` : '–',
+                acc.end_month && acc.end_year ? `${acc.end_month}/${acc.end_year}` : '–',
+                `${((acc.annual_growth_rate || 0) * 100).toFixed(2)} %`,
+                formatCurrency(acc.initial_balance || 0),
+            ])
+        );
+
+        addSectionTitle('Transaktionen (alle)');
+        addTable(
+            ['Name', 'Kategorie', 'Typ', 'Asset', 'Gegenkonto', 'Betrag', 'Start', 'Ende', 'Frequenz', 'Steuerbar'],
+            allTransactions.map((tx) => [
+                tx.name,
+                tx.category === 'expense' ? 'Ausgabe' : 'Einnahme',
+                tx.type === 'mortgage_interest' ? 'Hypothekenzins' : tx.type === 'regular' ? 'Regelmäßig' : 'Einmalig',
+                accountNameMap[tx.asset_id] || tx.asset_id || '–',
+                tx.counter_asset_id ? accountNameMap[tx.counter_asset_id] || tx.counter_asset_id : '–',
+                formatCurrency(tx.amount || 0),
+                tx.start_month && tx.start_year ? `${tx.start_month}/${tx.start_year}` : '–',
+                tx.end_month && tx.end_year ? `${tx.end_month}/${tx.end_year}` : '–',
+                tx.frequency || tx.frequency === 0 ? tx.frequency : '–',
+                tx.taxable ? formatCurrency(tx.taxable_amount || tx.amount || 0) : '–',
+            ])
+        );
+
+        addSectionTitle('Simulation Kennzahlen');
+        addTable(
+            ['Startwert', 'Endwert', 'Veränderung', 'Summe Einnahmen', 'Summe Ausgaben', 'Summe Steuern', 'Netto'],
+            [
+                [
+                    firstValue !== null ? formatCurrency(firstValue) : '–',
+                    lastValue !== null ? formatCurrency(lastValue) : '–',
+                    firstValue !== null && lastValue !== null ? formatCurrency(lastValue - firstValue) : '–',
+                    formatCurrency(cashflowTotals.income),
+                    formatCurrency(cashflowTotals.expenses),
+                    formatCurrency(cashflowTotals.taxes),
+                    formatCurrency(cashflowTotals.net),
+                ],
+            ]
+        );
+
+        addSectionTitle('Cashflow nach Jahr');
+        addTable(
+            ['Jahr', 'Einnahmen', 'Ausgaben', 'Steuern', 'Netto'],
+            cashflowRows.map((entry) => [
+                entry.year,
+                formatCurrency(entry.income || 0),
+                formatCurrency(entry.expenses || 0),
+                formatCurrency(entry.taxes || 0),
+                formatCurrency(entry.net || entry.income + entry.expenses + (entry.taxes || 0)),
+            ])
+        );
+
+        if (profileRows.length) {
+            addSectionTitle('Gespeicherte Stress-Profile');
+            addTable(
+                ['Profil', 'Beschreibung', 'Endwert Basis', 'Endwert Stress', 'Δ Vermögen', 'Netto Stress', 'Δ Netto'],
+                profileRows
+            );
+        }
+
+        doc.save(`financial-simulation-${new Date().toISOString().slice(0, 10)}.pdf`);
+    }, [
+        accounts,
+        accountNameMap,
+        allTransactions,
+        currentScenario,
+        currentSimulation,
+        selectedUser,
+        formatScenarioRange,
+        yearlyCashFlow,
+        inflationRate,
+        taxableIncomeMap,
+        municipalTaxRate,
+        cantonalTaxRate,
+        churchTaxRate,
+        personalTaxPerPerson,
+        scenarioDetails?.municipal_tax_factor,
+        scenarioDetails?.cantonal_tax_factor,
+        scenarioDetails?.church_tax_factor,
+        handleSimulate,
+        stressProfiles,
+        buildStressPayload,
+        summarizeSimulation,
+        currentScenarioId,
+    ]);
 
     const handleSaveProfile = useCallback(async () => {
         if (!profileName.trim()) return;
