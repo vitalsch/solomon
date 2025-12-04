@@ -130,7 +130,6 @@ const Simulation = () => {
     const [selectedTaxYear, setSelectedTaxYear] = useState(null);
     const [stressResult, setStressResult] = useState(null);
     const [stressLoading, setStressLoading] = useState(false);
-    const [showTaxTable, setShowTaxTable] = useState(false);
     const formatCurrency = (value) => {
         const num = Number(value);
         const safe = Number.isFinite(num) ? num : 0;
@@ -3218,70 +3217,6 @@ const Simulation = () => {
                         )}
                     </div>
                 </div>
-            </div>
-
-            <div className="panel">
-                <div className="panel-header">
-                    <div>
-                        <p className="eyebrow">Steuer</p>
-                        <h3>Steuerbares Einkommen (jährlich)</h3>
-                    </div>
-                    <div className="panel-actions">
-                        <button className="secondary" onClick={() => setShowTaxTable((v) => !v)}>
-                            {showTaxTable ? 'Einklappen' : 'Anzeigen'}
-                        </button>
-                    </div>
-                </div>
-                {showTaxTable && (
-                    <div className="panel-body table-wrapper tax-table-wrapper">
-                        <table className="table">
-                            <thead>
-                                <tr>
-                                    <th>Jahr</th>
-                                    <th>Steuerbare Einnahmen</th>
-                                    <th>Steuerbare Ausgaben</th>
-                                    <th>Steuerbares Einkommen</th>
-                                    <th>Steuerbares Vermögen</th>
-                                    <th>Einkommensteuer</th>
-                                    <th>Vermögenssteuer</th>
-                                    <th>Einfache Staatssteuer</th>
-                                    <th>Steuerfuss</th>
-                                    <th>Personalsteuer</th>
-                                    <th>Staats- und Gemeindesteuern</th>
-                                    <th>Direkte Bundessteuer</th>
-                                    <th>Total Steuern</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {taxableIncomeByYear.length === 0 ? (
-                                    <tr>
-                                        <td colSpan={4} className="muted">
-                                            Keine steuerbaren Einträge vorhanden.
-                                        </td>
-                                    </tr>
-                                ) : (
-                                    taxableIncomeByYear.map((row) => (
-                                        <tr key={`taxable-${row.year}`}>
-                                            <td>{row.year || '–'}</td>
-                                            <td>{formatCurrency(row.income)}</td>
-                                            <td>{formatCurrency(row.expense)}</td>
-                                            <td>{formatCurrency(row.net)}</td>
-                                            <td>{row.wealth !== null && row.wealth !== undefined ? formatCurrency(row.wealth) : '–'}</td>
-                                            <td>{formatCurrency(row.incomeTax)}</td>
-                                            <td>{row.wealthTax !== null && row.wealthTax !== undefined ? formatCurrency(row.wealthTax) : '–'}</td>
-                                            <td>{formatCurrency(row.baseTax)}</td>
-                                            <td>{row.taxRateLabel || '–'}</td>
-                                            <td>{formatCurrency(row.personalTax || 0)}</td>
-                                            <td>{formatCurrency(row.taxTotal)}</td>
-                                            <td>{formatCurrency(row.federalTax || 0)}</td>
-                                            <td>{formatCurrency(row.totalAll || (row.taxTotal || 0) + (row.federalTax || 0))}</td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
             </div>
 
             {isTransactionModalOpen && (
