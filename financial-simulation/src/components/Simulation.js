@@ -3223,7 +3223,7 @@ const Simulation = () => {
                     </div>
                 </div>
                 {showTaxTable && (
-                    <div className="panel-body table-wrapper" style={{ overflowX: 'auto' }}>
+                    <div className="panel-body table-wrapper tax-table-wrapper">
                         <table className="table">
                             <thead>
                                 <tr>

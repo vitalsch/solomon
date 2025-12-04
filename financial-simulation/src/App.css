@@ -903,6 +903,18 @@ button.secondary:hover {
   font-weight: 700;
 }
 
+.tax-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  padding: 0;
+}
+
+.tax-table-wrapper .table {
+  width: 100%;
+  min-width: 920px;
+  border-collapse: collapse;
+}
+
 .ai-fab {
   position: fixed;
   right: 16px;
