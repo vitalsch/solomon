@@ -86,8 +86,6 @@ const Simulation = () => {
     const [newScenarioStart, setNewScenarioStart] = useState('2024-05');
     const [newScenarioEnd, setNewScenarioEnd] = useState('2044-09');
     const [inflationRate, setInflationRate] = useState('');
-    const [incomeTaxRate, setIncomeTaxRate] = useState('');
-    const [wealthTaxRate, setWealthTaxRate] = useState('');
     const [municipalTaxRate, setMunicipalTaxRate] = useState('');
     const [cantonalTaxRate, setCantonalTaxRate] = useState('');
     const [churchTaxRate, setChurchTaxRate] = useState('');
@@ -339,16 +337,6 @@ const Simulation = () => {
                 scenarioDetails.inflation_rate === null || scenarioDetails.inflation_rate === undefined
                     ? ''
                     : scenarioDetails.inflation_rate
-            );
-            setIncomeTaxRate(
-                scenarioDetails.income_tax_rate === null || scenarioDetails.income_tax_rate === undefined
-                    ? ''
-                    : scenarioDetails.income_tax_rate
-            );
-            setWealthTaxRate(
-                scenarioDetails.wealth_tax_rate === null || scenarioDetails.wealth_tax_rate === undefined
-                    ? ''
-                    : scenarioDetails.wealth_tax_rate
             );
             setScenarioDescription(scenarioDetails.description || '');
             setMunicipalTaxRate(
@@ -790,8 +778,6 @@ const Simulation = () => {
                 end_year: endYear,
                 end_month: endMonth,
                 inflation_rate: inflationRate === '' ? undefined : parseFloat(inflationRate),
-                income_tax_rate: incomeTaxRate === '' ? undefined : parseFloat(incomeTaxRate),
-                wealth_tax_rate: wealthTaxRate === '' ? undefined : parseFloat(wealthTaxRate),
             });
 
             if (cloneScenarioId) {
@@ -860,8 +846,6 @@ const Simulation = () => {
             const updated = await updateScenario(currentScenarioId, {
                 description: scenarioDescription || null,
                 inflation_rate: inflationRate === '' ? null : parseFloat(inflationRate),
-                income_tax_rate: incomeTaxRate === '' ? null : parseFloat(incomeTaxRate),
-                wealth_tax_rate: wealthTaxRate === '' ? null : parseFloat(wealthTaxRate),
                 municipal_tax_factor: municipalTaxRate === '' ? null : parseFloat(municipalTaxRate) / 100,
                 cantonal_tax_factor: cantonalTaxRate === '' ? null : parseFloat(cantonalTaxRate) / 100,
                 church_tax_factor: churchTaxRate === '' ? null : parseFloat(churchTaxRate) / 100,
@@ -1084,6 +1068,11 @@ const Simulation = () => {
             if (!Number.isFinite(num)) return '–';
             return `${(num * 100).toFixed(2)} %`;
         };
+        const formatPercentValue = (value) => {
+            const num = Number(value);
+            if (!Number.isFinite(num)) return '–';
+            return `${num.toFixed(2)} %`;
+        };
 
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(16);
@@ -1110,13 +1099,28 @@ const Simulation = () => {
 
         addSectionTitle('Szenario-Details');
         addTable(
-            ['Beschreibung', 'Inflation p.a.', 'Einkommensteuer', 'Vermögenssteuer'],
+            [
+                'Beschreibung',
+                'Inflation p.a.',
+                'Gemeindesteuerfuss',
+                'Staatssteuerfuss',
+                'Kirchensteuerfuss',
+                'Personalsteuer (CHF/Person)',
+            ],
             [
                 [
                     currentScenario?.description || '–',
                     formatPercent(inflationRate),
-                    formatPercent(incomeTaxRate),
-                    formatPercent(wealthTaxRate),
+                    formatPercentValue(
+                        municipalTaxRate !== '' ? municipalTaxRate : (scenarioDetails?.municipal_tax_factor || 0) * 100
+                    ),
+                    formatPercentValue(
+                        cantonalTaxRate !== '' ? cantonalTaxRate : (scenarioDetails?.cantonal_tax_factor || 0) * 100
+                    ),
+                    formatPercentValue(
+                        churchTaxRate !== '' ? churchTaxRate : (scenarioDetails?.church_tax_factor || 0) * 100
+                    ),
+                    Number.isFinite(Number(personalTaxPerPerson)) ? formatCurrency(personalTaxPerPerson) : '–',
                 ],
             ]
         );
@@ -1198,8 +1202,6 @@ const Simulation = () => {
         formatScenarioRange,
         yearlyCashFlow,
         inflationRate,
-        incomeTaxRate,
-        wealthTaxRate,
         handleSimulate,
         stressProfiles,
         buildStressPayload,
@@ -1754,7 +1756,7 @@ const Simulation = () => {
     const renderTransactionItem = (tx) => {
         const assetName = accountNameMap[tx.asset_id] || 'Unbekannt';
         const counterName = tx.counter_asset_id ? accountNameMap[tx.counter_asset_id] : null;
-        const taxRate = scenarioDetails?.income_tax_rate || 0;
+        const taxRate = 0;
         const grossAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount) || 0;
         const taxableAmount = tx.taxable
             ? (Number.isFinite(tx.taxable_amount)
@@ -2058,26 +2060,6 @@ const Simulation = () => {
                                                 onChange={(e) => setNewScenarioDescription(e.target.value)}
                                             />
                                         </label>
-                                        <label className="stacked">
-                                            <span>Einkommensteuersatz</span>
-                                            <input
-                                                type="number"
-                                                placeholder="z.B. 0.25"
-                                                    value={incomeTaxRate}
-                                                    onChange={(e) => setIncomeTaxRate(e.target.value)}
-                                                    step="0.0001"
-                                                />
-                                            </label>
-                                            <label className="stacked">
-                                                <span>Vermögenssteuersatz</span>
-                                                <input
-                                                    type="number"
-                                                    placeholder="z.B. 0.005"
-                                                    value={wealthTaxRate}
-                                                    onChange={(e) => setWealthTaxRate(e.target.value)}
-                                                    step="0.0001"
-                                                />
-                                            </label>
                                             <label className="stacked">
                                                 <span>Start</span>
                                                 <input
@@ -2187,24 +2169,6 @@ const Simulation = () => {
                                                         onChange={(e) => setScenarioDescription(e.target.value)}
                                                     />
                                                 </label>
-                                            <label className="stacked">
-                                                <span>Einkommensteuer</span>
-                                                <input
-                                                    type="number"
-                                                    value={incomeTaxRate}
-                                                    onChange={(e) => setIncomeTaxRate(e.target.value)}
-                                                    step="0.0001"
-                                                />
-                                            </label>
-                                            <label className="stacked">
-                                                <span>Vermögenssteuer</span>
-                                                <input
-                                                    type="number"
-                                                    value={wealthTaxRate}
-                                                    onChange={(e) => setWealthTaxRate(e.target.value)}
-                                                    step="0.0001"
-                                                />
-                                            </label>
                                             <label className="stacked">
                                                 <span>Gemeindesteuerfuss (%)</span>
                                                 <input
