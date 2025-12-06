@@ -191,8 +191,7 @@ class WealthRepository:
 
     def update_scenario(self, scenario_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         converted_updates = {
-            k: _ensure_object_id(v) if k in {"user_id", "tax_account_id"} and v else v
-            for k, v in updates.items()
+            k: _ensure_object_id(v) if k in {"user_id", "tax_account_id"} else v for k, v in updates.items()
         }
         doc = self.db.scenarios.find_one_and_update(
             {"_id": _ensure_object_id(scenario_id)},
@@ -468,4 +467,73 @@ class WealthRepository:
 
     def delete_stress_profile(self, profile_id: str, user_id: str) -> bool:
         res = self.db.stress_profiles.delete_one({"_id": _ensure_object_id(profile_id), "user_id": _ensure_object_id(user_id)})
+        return res.deleted_count > 0
+
+    # Tax Profiles --------------------------------------------------------
+    def list_tax_profiles(self, user_id: str) -> List[Dict[str, Any]]:
+        return [
+            _serialize(doc)
+            for doc in self.db.tax_profiles.find({"user_id": _ensure_object_id(user_id)})
+        ]
+
+    def get_tax_profile(self, profile_id: str) -> Optional[Dict[str, Any]]:
+        doc = self.db.tax_profiles.find_one({"_id": _ensure_object_id(profile_id)})
+        return _serialize(doc) if doc else None
+
+    def create_tax_profile(
+        self,
+        user_id: str,
+        name: str,
+        description: str | None,
+        income_brackets: List[Dict[str, Any]],
+        wealth_brackets: List[Dict[str, Any]],
+        federal_table: List[Dict[str, Any]],
+        municipal_tax_factor: float | None = None,
+        cantonal_tax_factor: float | None = None,
+        church_tax_factor: float | None = None,
+        personal_tax_per_person: float | None = None,
+    ) -> Dict[str, Any]:
+        doc = {
+            "user_id": _ensure_object_id(user_id),
+            "name": name,
+            "description": description,
+            "income_brackets": income_brackets or [],
+            "wealth_brackets": wealth_brackets or [],
+            "federal_table": federal_table or [],
+            "municipal_tax_factor": municipal_tax_factor,
+            "cantonal_tax_factor": cantonal_tax_factor,
+            "church_tax_factor": church_tax_factor,
+            "personal_tax_per_person": personal_tax_per_person,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        }
+        res = self.db.tax_profiles.insert_one(doc)
+        doc["_id"] = res.inserted_id
+        return _serialize(doc)
+
+    def update_tax_profile(self, profile_id: str, user_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        allowed_keys = {
+            "name",
+            "description",
+            "income_brackets",
+            "wealth_brackets",
+            "federal_table",
+            "municipal_tax_factor",
+            "cantonal_tax_factor",
+            "church_tax_factor",
+            "personal_tax_per_person",
+        }
+        filtered = {k: v for k, v in updates.items() if v is not None and k in allowed_keys}
+        if not filtered:
+            return None
+        filtered["updated_at"] = datetime.utcnow()
+        doc = self.db.tax_profiles.find_one_and_update(
+            {"_id": _ensure_object_id(profile_id), "user_id": _ensure_object_id(user_id)},
+            {"$set": filtered},
+            return_document=ReturnDocument.AFTER,
+        )
+        return _serialize(doc) if doc else None
+
+    def delete_tax_profile(self, profile_id: str, user_id: str) -> bool:
+        res = self.db.tax_profiles.delete_one({"_id": _ensure_object_id(profile_id), "user_id": _ensure_object_id(user_id)})
         return res.deleted_count > 0

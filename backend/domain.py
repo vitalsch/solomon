@@ -255,10 +255,17 @@ def simulate_account_balances_and_total_wealth(
     end_year: int,
     end_month: int,
     mortgage_interest_transactions: List[MortgageInterestTransaction] | None = None,
-    tax_schedule: Dict[int, float] | None = None,
     tax_account: Account | None = None,
 ) -> Tuple[AccountBalanceHistory, List[Tuple[date, float]], List[Dict]]:
     """Run monthly simulation returning per-account histories and total wealth."""
+
+    def pick_tax_account(active_accounts: list[Account]) -> Account | None:
+        # Prefer configured tax_account if active; otherwise fallback to first active account.
+        if tax_account and tax_account in active_accounts:
+            return tax_account
+        if active_accounts:
+            return active_accounts[0]
+        return None
 
     for account in accounts:
         account.reset_balance()
@@ -282,11 +289,13 @@ def simulate_account_balances_and_total_wealth(
         expense_details: List[Dict] = []
         tax_details: List[Dict] = []
 
-        # Apply growth and track it separately
+        # Apply growth and track it separately; collect active accounts for this month
+        active_accounts: list[Account] = []
         for account in accounts:
             if not account.is_active(current_date.month, current_date.year):
                 account.balance = 0.0
                 continue
+            active_accounts.append(account)
             if not account_initialized[account]:
                 account.balance = account.initial_balance
                 account_initialized[account] = True
@@ -297,22 +306,26 @@ def simulate_account_balances_and_total_wealth(
                 monthly_growth += growth_amount
                 growth_details.append({"name": account.name, "amount": growth_amount})
 
+        effective_tax_account = pick_tax_account(active_accounts)
+
         # First process all standard transactions per account (excluding mortgage interest which depends on balances)
         for account in accounts:
-            if not account.is_active(current_date.month, current_date.year):
+            if account not in active_accounts:
                 continue
             for transaction in account_transactions.get(account, []):
                 if transaction.is_applicable(current_date.month, current_date.year):
                     applied_amount = transaction.adjusted_amount(current_date.month, current_date.year)
                     account.update_balance(applied_amount)
                     if getattr(transaction, "tax_effect", 0):
-                        account.update_balance(getattr(transaction, "tax_effect"))
-                        monthly_tax += getattr(transaction, "tax_effect")
+                        tax_effect_amount = getattr(transaction, "tax_effect")
+                        target_account = effective_tax_account or account
+                        target_account.update_balance(tax_effect_amount)
+                        monthly_tax += tax_effect_amount
                         tax_details.append(
                             {
                                 "name": transaction.name,
-                                "amount": getattr(transaction, "tax_effect"),
-                                "account": account.name,
+                                "amount": tax_effect_amount,
+                                "account": target_account.name if target_account else account.name,
                             }
                         )
                     if getattr(transaction, "internal", False):
@@ -359,39 +372,16 @@ def simulate_account_balances_and_total_wealth(
                     # Interest is a cost (negative); tax credit should be positive (reduces expense)
                     tax_rate = abs(getattr(interest_tx, "tax_rate", 0.0) or 0.0)
                     tax_effect = abs(interest_tx.amount) * tax_rate  # positive credit
-                    interest_tx.pay_from_account.update_balance(tax_effect)
+                    target_account = effective_tax_account or interest_tx.pay_from_account
+                    target_account.update_balance(tax_effect)
                     monthly_tax += tax_effect
                     tax_details.append(
                         {
                             "name": f"{interest_tx.name} Steuer",
                             "amount": tax_effect,
-                            "account": interest_tx.pay_from_account.name,
+                            "account": target_account.name if target_account else interest_tx.pay_from_account.name,
                         }
                     )
-
-        # Apply annual tax charge in December (amount is expected negative)
-        if tax_schedule:
-            scheduled_tax = tax_schedule.get(current_date.year)
-            if scheduled_tax:
-                # choose account: provided tax_account if active, otherwise first active account
-                target_account = None
-                if tax_account and tax_account.is_active(current_date.month, current_date.year):
-                    target_account = tax_account
-                else:
-                    for acc in accounts:
-                        if acc.is_active(current_date.month, current_date.year):
-                            target_account = acc
-                            break
-                if target_account:
-                    target_account.update_balance(scheduled_tax)
-                monthly_tax += scheduled_tax
-                tax_details.append(
-                    {
-                        "name": f"Steuern {current_date.year}",
-                        "amount": scheduled_tax,
-                        "account": target_account.name if target_account else "unbekannt",
-                    }
-                )
 
         for account in accounts:
             account_balance_histories[account].append((current_date, account.get_balance()))

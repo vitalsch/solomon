@@ -139,6 +139,15 @@ export const simulateScenarioStress = (scenarioId, overrides = {}) =>
         body: JSON.stringify(overrides),
     });
 
+// Tax Profiles -----------------------------------------------------------
+export const listTaxProfiles = () => request('/tax-profiles');
+export const createTaxProfile = (payload) =>
+    request('/tax-profiles', { method: 'POST', body: JSON.stringify(payload) });
+export const updateTaxProfile = (profileId, payload) =>
+    request(`/tax-profiles/${profileId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+export const deleteTaxProfile = (profileId) =>
+    request(`/tax-profiles/${profileId}`, { method: 'DELETE' });
+
 // Stress Profiles ---------------------------------------------------------
 export const listStressProfiles = () => request('/stress-profiles');
 export const createStressProfile = (payload) =>

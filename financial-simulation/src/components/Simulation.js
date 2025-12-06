@@ -35,6 +35,8 @@ import {
     deleteScenario,
     simulateScenario,
     simulateScenarioStress,
+    listTaxProfiles,
+    createTaxProfile,
     listStressProfiles,
     createStressProfile,
     updateStressProfile,
@@ -57,6 +59,152 @@ ChartJS.register(
 
 const normalizeId = (value) => (value === null || value === undefined ? '' : String(value));
 const cacheKey = (userId, scenarioId) => `${normalizeId(userId)}::${normalizeId(scenarioId)}`;
+
+// Standard-Steuerprofil als Fallback und zum initialen Befüllen der Datenbank
+const DEFAULT_TAX_PROFILE = {
+    name: 'Standard CH',
+    description: 'Initialprofil aus den Frontend-Defaults',
+    municipal_tax_factor: 1.15,
+    cantonal_tax_factor: 0.98,
+    church_tax_factor: 0.14,
+    personal_tax_per_person: 24,
+    income_brackets: [
+        { cap: 6900, rate: 0 },
+        { cap: 4900, rate: 0.02 },
+        { cap: 4800, rate: 0.03 },
+        { cap: 7900, rate: 0.04 },
+        { cap: 9600, rate: 0.05 },
+        { cap: 11000, rate: 0.06 },
+        { cap: 12900, rate: 0.07 },
+        { cap: 17400, rate: 0.08 },
+        { cap: 33600, rate: 0.09 },
+        { cap: 33200, rate: 0.1 },
+        { cap: 52700, rate: 0.11 },
+        { cap: 68400, rate: 0.12 },
+        { cap: null, rate: 0.13 },
+    ],
+    wealth_brackets: [
+        { cap: 80000, rate: 0 },
+        { cap: 238000, rate: 0.0005 },
+        { cap: 399000, rate: 0.001 },
+        { cap: 636000, rate: 0.0015 },
+        { cap: 956000, rate: 0.002 },
+        { cap: 953000, rate: 0.0025 },
+        { cap: null, rate: 0.003 },
+    ],
+    federal_table: [
+        { income: 18500, base: 25.41, per100: 0.77 },
+        { income: 19000, base: 29.26, per100: 0.77 },
+        { income: 20000, base: 36.96, per100: 0.77 },
+        { income: 21000, base: 44.66, per100: 0.77 },
+        { income: 22000, base: 52.36, per100: 0.77 },
+        { income: 23000, base: 60.06, per100: 0.77 },
+        { income: 24000, base: 67.76, per100: 0.77 },
+        { income: 25000, base: 75.46, per100: 0.77 },
+        { income: 26000, base: 83.16, per100: 0.77 },
+        { income: 27000, base: 90.86, per100: 0.77 },
+        { income: 28000, base: 98.56, per100: 0.77 },
+        { income: 29000, base: 106.26, per100: 0.77 },
+        { income: 30000, base: 113.96, per100: 7.0 },
+        { income: 33000, base: 137.06, per100: 33.0 },
+        { income: 33200, base: 138.6, per100: 35.0 },
+        { income: 33300, base: 139.48, per100: 0.88 },
+        { income: 34000, base: 145.64, per100: 43.0 },
+        { income: 35000, base: 154.44, per100: 53.0 },
+        { income: 36000, base: 163.24, per100: 63.0 },
+        { income: 37000, base: 172.04, per100: 73.0 },
+        { income: 38000, base: 180.84, per100: 83.0 },
+        { income: 39000, base: 189.64, per100: 93.0 },
+        { income: 40000, base: 198.44, per100: 103.0 },
+        { income: 41000, base: 207.24, per100: 113.0 },
+        { income: 42000, base: 216.04, per100: 123.0 },
+        { income: 43500, base: 229.2, per100: 138.0 },
+        { income: 43600, base: 231.84, per100: 2.64 },
+        { income: 44000, base: 242.4, per100: 143.0 },
+        { income: 45000, base: 268.8, per100: 153.0 },
+        { income: 46000, base: 295.2, per100: 163.0 },
+        { income: 47000, base: 321.6, per100: 173.0 },
+        { income: 48000, base: 348.0, per100: 183.0 },
+        { income: 49000, base: 374.4, per100: 193.0 },
+        { income: 50000, base: 400.8, per100: 203.0 },
+        { income: 51000, base: 427.2, per100: 213.0 },
+        { income: 53400, base: 490.56, per100: 237.0 },
+        { income: 53500, base: 493.2, per100: 239.0 },
+        { income: 54000, base: 506.4, per100: 249.0 },
+        { income: 55000, base: 532.8, per100: 269.0 },
+        { income: 56000, base: 559.2, per100: 289.0 },
+        { income: 57000, base: 585.6, per100: 309.0 },
+        { income: 58000, base: 612.0, per100: 329.0 },
+        { income: 58100, base: 614.97, per100: 2.97 },
+        { income: 59000, base: 641.7, per100: 349.0 },
+        { income: 60000, base: 671.4, per100: 369.0 },
+        { income: 61300, base: 710.01, per100: 395.0 },
+        { income: 61400, base: 712.98, per100: 398.0 },
+        { income: 65000, base: 819.9, per100: 506.0 },
+        { income: 70000, base: 968.4, per100: 656.0 },
+        { income: 75000, base: 1116.9, per100: 806.0 },
+        { income: 76100, base: 1149.55, per100: 839.0 },
+        { income: 76200, base: 1155.49, per100: 5.94 },
+        { income: 77500, base: 1232.71, per100: 881.0 },
+        { income: 79100, base: 1327.75, per100: 929.0 },
+        { income: 79200, base: 1333.69, per100: 933.0 },
+        { income: 82000, base: 1500.0, per100: 1045.0 },
+        { income: 82100, base: 1506.6, per100: 6.6 },
+        { income: 85000, base: 1698.0, per100: 1165.0 },
+        { income: 90000, base: 2028.0, per100: 1365.0 },
+        { income: 94900, base: 2351.4, per100: 1561.0 },
+        { income: 95000, base: 2358.0, per100: 1566.0 },
+        { income: 100000, base: 2688.0, per100: 1816.0 },
+        { income: 105000, base: 3018.0, per100: 2066.0 },
+        { income: 108600, base: 3255.6, per100: 2246.0 },
+        { income: 108700, base: 3262.2, per100: 2252.0 },
+        { income: 108800, base: 3268.8, per100: 2258.0 },
+        { income: 108900, base: 3277.6, per100: 8.8 },
+        { income: 110000, base: 3374.4, per100: 2330.0 },
+        { income: 115000, base: 3814.4, per100: 2630.0 },
+        { income: 120500, base: 4298.4, per100: 2960.0 },
+        { income: 120600, base: 4307.2, per100: 2967.0 },
+        { income: 125000, base: 4694.4, per100: 3275.0 },
+        { income: 130000, base: 5134.4, per100: 3625.0 },
+        { income: 130500, base: 5178.4, per100: 3660.0 },
+        { income: 130600, base: 5187.2, per100: 3668.0 },
+        { income: 135000, base: 5574.4, per100: 4020.0 },
+        { income: 138300, base: 5864.8, per100: 4284.0 },
+        { income: 138400, base: 5873.6, per100: 4293.0 },
+        { income: 141500, base: 6146.4, per100: 4572.0 },
+        { income: 141600, base: 6157.4, per100: 11.0 },
+        { income: 144200, base: 6443.4, per100: 4815.0 },
+        { income: 144300, base: 6454.4, per100: 4825.0 },
+        { income: 148200, base: 6883.4, per100: 5215.0 },
+        { income: 148300, base: 6894.4, per100: 5226.0 },
+        { income: 150300, base: 7114.4, per100: 5446.0 },
+        { income: 150400, base: 7125.4, per100: 5458.0 },
+        { income: 151000, base: 7191.4, per100: 5530.0 },
+        { income: 152300, base: 7334.4, per100: 5686.0 },
+        { income: 152400, base: 7345.4, per100: 5699.0 },
+        { income: 155000, base: 7631.4, per100: 6037.0 },
+        { income: 160000, base: 8181.4, per100: 6687.0 },
+        { income: 170000, base: 9281.4, per100: 7987.0 },
+        { income: 184900, base: 10920.4, per100: 9924.0 },
+        { income: 185000, base: 10933.6, per100: 13.2 },
+        { income: 186000, base: 11065.6, per100: 10067.0 },
+        { income: 190000, base: 11593.6, per100: 10587.0 },
+        { income: 200000, base: 12913.6, per100: 11887.0 },
+        { income: 250000, base: 19513.6, per100: 18387.0 },
+        { income: 300000, base: 26113.6, per100: 24887.0 },
+        { income: 350000, base: 32713.6, per100: 31387.0 },
+        { income: 400000, base: 39313.6, per100: 37887.0 },
+        { income: 500000, base: 52513.6, per100: 50887.0 },
+        { income: 650000, base: 72313.6, per100: 70387.0 },
+        { income: 700000, base: 78913.6, per100: 76887.0 },
+        { income: 793300, base: 91229.2, per100: 89016.0 },
+        { income: 793400, base: 91241.0, per100: 11.5 },
+        { income: 800000, base: 92000.0, per100: 89887.0 },
+        { income: 940800, base: 108192.0, per100: 108191.0 },
+        { income: 940900, base: 108203.5, per100: 108203.5 },
+        { income: 950000, base: 109250.0, per100: 108203.5 },
+    ],
+};
 
 const Simulation = () => {
     const [users, setUsers] = useState([]);
@@ -91,6 +239,9 @@ const Simulation = () => {
     const [churchTaxRate, setChurchTaxRate] = useState('');
     const [personalTaxPerPerson, setPersonalTaxPerPerson] = useState('24');
     const [taxAccountId, setTaxAccountId] = useState('');
+    const [taxProfiles, setTaxProfiles] = useState([]);
+    const [selectedTaxProfileId, setSelectedTaxProfileId] = useState('');
+    const [taxProfilesLoading, setTaxProfilesLoading] = useState(false);
     const [newScenarioDescription, setNewScenarioDescription] = useState('');
     const [scenarioDescription, setScenarioDescription] = useState('');
     const [selectedScenarios, setSelectedScenarios] = useState([]);
@@ -117,6 +268,7 @@ const Simulation = () => {
             { id: 'shock-1', assetType: 'portfolio', delta: '-20', start: '', end: '' },
         ],
     });
+    const [showTaxTable, setShowTaxTable] = useState(true);
     const [showNewProfileEditor, setShowNewProfileEditor] = useState(false);
     const [stressProfiles, setStressProfiles] = useState([]);
     const [profileName, setProfileName] = useState('');
@@ -128,8 +280,10 @@ const Simulation = () => {
     const [editingProfileName, setEditingProfileName] = useState('');
     const [editingProfileDescription, setEditingProfileDescription] = useState('');
     const [editingProfileOverrides, setEditingProfileOverrides] = useState({ shocks: [] });
+    const [selectedTaxYear, setSelectedTaxYear] = useState(null);
     const [stressResult, setStressResult] = useState(null);
     const [stressLoading, setStressLoading] = useState(false);
+    const taxTableRef = useRef(null);
     const formatCurrency = (value) => {
         const num = Number(value);
         const safe = Number.isFinite(num) ? num : 0;
@@ -154,6 +308,13 @@ const Simulation = () => {
         () => users.find((user) => normalizeId(user.id) === normalizeId(selectedUserId)),
         [users, selectedUserId]
     );
+    const activeTaxProfile = useMemo(() => {
+        const normalized = normalizeId(selectedTaxProfileId);
+        if (normalized) {
+            return taxProfiles.find((profile) => normalizeId(profile.id) === normalized) || null;
+        }
+        return taxProfiles[0] || null;
+    }, [selectedTaxProfileId, taxProfiles]);
     const formatScenarioRange = useCallback((scenario) => {
         if (!scenario) return null;
         const { start_year, start_month, end_year, end_month } = scenario;
@@ -333,35 +494,47 @@ const Simulation = () => {
 
     useEffect(() => {
         if (scenarioDetails) {
+            const fallbackTaxProfile = activeTaxProfile || DEFAULT_TAX_PROFILE;
             setInflationRate(
                 scenarioDetails.inflation_rate === null || scenarioDetails.inflation_rate === undefined
                     ? ''
                     : scenarioDetails.inflation_rate
             );
             setScenarioDescription(scenarioDetails.description || '');
+            const fallbackMunicipal = fallbackTaxProfile?.municipal_tax_factor;
+            const fallbackCantonal = fallbackTaxProfile?.cantonal_tax_factor;
+            const fallbackChurch = fallbackTaxProfile?.church_tax_factor;
+            const fallbackPersonal =
+                fallbackTaxProfile?.personal_tax_per_person ?? DEFAULT_TAX_PROFILE.personal_tax_per_person ?? 24;
             setMunicipalTaxRate(
                 scenarioDetails.municipal_tax_factor === null || scenarioDetails.municipal_tax_factor === undefined
-                    ? ''
+                    ? fallbackMunicipal !== null && fallbackMunicipal !== undefined
+                        ? fallbackMunicipal * 100
+                        : ''
                     : scenarioDetails.municipal_tax_factor * 100
             );
             setCantonalTaxRate(
                 scenarioDetails.cantonal_tax_factor === null || scenarioDetails.cantonal_tax_factor === undefined
-                    ? ''
+                    ? fallbackCantonal !== null && fallbackCantonal !== undefined
+                        ? fallbackCantonal * 100
+                        : ''
                     : scenarioDetails.cantonal_tax_factor * 100
             );
             setChurchTaxRate(
                 scenarioDetails.church_tax_factor === null || scenarioDetails.church_tax_factor === undefined
-                    ? ''
+                    ? fallbackChurch !== null && fallbackChurch !== undefined
+                        ? fallbackChurch * 100
+                        : ''
                     : scenarioDetails.church_tax_factor * 100
             );
             setPersonalTaxPerPerson(
                 scenarioDetails.personal_tax_per_person === null || scenarioDetails.personal_tax_per_person === undefined
-                    ? '24'
+                    ? fallbackPersonal
                     : scenarioDetails.personal_tax_per_person
             );
-            setTaxAccountId(scenarioDetails.tax_account_id ? normalizeId(scenarioDetails.tax_account_id) : '');
+            setTaxAccountId(scenarioDetails.tax_account_id || '');
         }
-    }, [scenarioDetails]);
+    }, [scenarioDetails, activeTaxProfile]);
 
     useEffect(() => {
         const validIds = new Set(scenarios.map((s) => normalizeId(s.id)));
@@ -462,6 +635,40 @@ const Simulation = () => {
     useEffect(() => {
         loadCurrentUser();
     }, [loadCurrentUser]);
+
+    const fetchTaxProfilesRemote = useCallback(async () => {
+        if (!selectedUserId) {
+            setTaxProfiles([]);
+            setSelectedTaxProfileId('');
+            return;
+        }
+        setTaxProfilesLoading(true);
+        try {
+            let profiles = await listTaxProfiles();
+            if (!profiles || !profiles.length) {
+                const created = await createTaxProfile({
+                    ...DEFAULT_TAX_PROFILE,
+                    description: DEFAULT_TAX_PROFILE.description,
+                });
+                profiles = created ? [created] : [];
+            }
+            setTaxProfiles(profiles);
+            setSelectedTaxProfileId((prev) => {
+                if (prev && profiles.some((profile) => normalizeId(profile.id) === normalizeId(prev))) {
+                    return prev;
+                }
+                return normalizeId(profiles[0]?.id || '');
+            });
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setTaxProfilesLoading(false);
+        }
+    }, [selectedUserId]);
+
+    useEffect(() => {
+        fetchTaxProfilesRemote();
+    }, [fetchTaxProfilesRemote]);
 
     const fetchStressProfilesRemote = useCallback(async () => {
         try {
@@ -779,7 +986,6 @@ const Simulation = () => {
                 end_year: endYear,
                 end_month: endMonth,
                 inflation_rate: inflationRate === '' ? undefined : parseFloat(inflationRate),
-                tax_account_id: taxAccountId || undefined,
             });
 
             if (cloneScenarioId) {
@@ -867,6 +1073,22 @@ const Simulation = () => {
             setLoading(false);
         }
     };
+
+    const applyTaxProfileToFields = useCallback(() => {
+        const profile = activeTaxProfile || DEFAULT_TAX_PROFILE;
+        if (profile.municipal_tax_factor !== undefined && profile.municipal_tax_factor !== null) {
+            setMunicipalTaxRate(profile.municipal_tax_factor * 100);
+        }
+        if (profile.cantonal_tax_factor !== undefined && profile.cantonal_tax_factor !== null) {
+            setCantonalTaxRate(profile.cantonal_tax_factor * 100);
+        }
+        if (profile.church_tax_factor !== undefined && profile.church_tax_factor !== null) {
+            setChurchTaxRate(profile.church_tax_factor * 100);
+        }
+        if (profile.personal_tax_per_person !== undefined && profile.personal_tax_per_person !== null) {
+            setPersonalTaxPerPerson(profile.personal_tax_per_person);
+        }
+    }, [activeTaxProfile]);
 
     const parsePercentInput = useCallback((value) => {
         const num = Number(value);
@@ -1164,6 +1386,215 @@ const Simulation = () => {
     const baseSummary = useMemo(() => summarizeSimulation(currentSimulation), [currentSimulation, summarizeSimulation]);
     const stressSummary = useMemo(() => summarizeSimulation(stressResult), [stressResult, summarizeSimulation]);
 
+    const usesBackendTaxes = Boolean(currentSimulation?.taxes && currentSimulation.taxes.length);
+
+    const taxableIncomeByYear = useMemo(() => {
+        const backendTaxes = currentSimulation?.taxes;
+        if (Array.isArray(backendTaxes) && backendTaxes.length) {
+            return backendTaxes
+                .map((row) => ({
+                    ...row,
+                    year: row.year,
+                    net: row.net ?? 0,
+                    wealth: row.wealth ?? null,
+                    incomeTax: row.incomeTax ?? 0,
+                    wealthTax: row.wealthTax ?? 0,
+                    baseTax: row.baseTax ?? 0,
+                    personalTax: row.personalTax ?? 0,
+                    taxTotal: row.taxTotal ?? 0,
+                    federalTax: row.federalTax ?? 0,
+                    totalAll: row.totalAll ?? (row.taxTotal || 0) + (row.federalTax || 0),
+                }))
+                .sort((a, b) => a.year - b.year);
+        }
+        const percentToFactor = (value, fallback) => {
+            const num = Number(value);
+            if (Number.isFinite(num)) return num / 100;
+            if (Number.isFinite(fallback)) return fallback;
+            return 0;
+        };
+
+        const taxProfile = activeTaxProfile || DEFAULT_TAX_PROFILE;
+        const municipalTaxFactor = percentToFactor(
+            municipalTaxRate,
+            scenarioDetails?.municipal_tax_factor ??
+                taxProfile?.municipal_tax_factor ??
+                DEFAULT_TAX_PROFILE.municipal_tax_factor ??
+                0
+        );
+        const cantonalTaxFactor = percentToFactor(
+            cantonalTaxRate,
+            scenarioDetails?.cantonal_tax_factor ??
+                taxProfile?.cantonal_tax_factor ??
+                DEFAULT_TAX_PROFILE.cantonal_tax_factor ??
+                0
+        );
+        const churchTaxFactor = percentToFactor(
+            churchTaxRate,
+            scenarioDetails?.church_tax_factor ??
+                taxProfile?.church_tax_factor ??
+                DEFAULT_TAX_PROFILE.church_tax_factor ??
+                0
+        );
+        // Personalsteuer pauschal pro Person (CHF)
+        const personalTaxVal = Number.isFinite(Number(personalTaxPerPerson))
+            ? Number(personalTaxPerPerson)
+            : Number.isFinite(scenarioDetails?.personal_tax_per_person)
+            ? scenarioDetails.personal_tax_per_person
+            : taxProfile?.personal_tax_per_person ?? DEFAULT_TAX_PROFILE.personal_tax_per_person ?? 24;
+        const householdSize = selectedUser ? 1 : 1; // adjust if user has household size
+
+        const calcProgressive = (amount, brackets) => {
+            let remaining = Math.max(0, amount || 0);
+            let tax = 0;
+            for (const { cap, rate } of brackets) {
+                if (remaining <= 0) break;
+                const slice = cap === null ? remaining : Math.min(remaining, cap);
+                tax += slice * rate;
+                remaining -= slice;
+            }
+            return tax;
+        };
+
+        const addEntry = (map, year, incomeAdd, expenseAdd) => {
+            const entry = map.get(year) || { year, income: 0, expense: 0, net: 0 };
+            entry.income += incomeAdd;
+            entry.expense += expenseAdd;
+            entry.net = entry.income - entry.expense;
+            map.set(year, entry);
+        };
+
+        const results = new Map();
+        (allTransactions || []).forEach((tx) => {
+            if (!tx.taxable) return;
+            const category = categorizeTransaction(tx);
+            const isExpense = category === 'expense';
+            const rawAmount =
+                tx.taxable_amount !== undefined && tx.taxable_amount !== null
+                    ? Number(tx.taxable_amount)
+                    : Number(tx.amount);
+            const amount = Number.isFinite(rawAmount) ? Math.abs(rawAmount) : 0;
+            if (!amount) return;
+
+            if (tx.type === 'regular') {
+                const freq = Math.max(1, tx.frequency || 1);
+                let y = tx.start_year || 0;
+                let m = tx.start_month || 1;
+                const endY = tx.end_year || y;
+                const endM = tx.end_month || m;
+                const limit = 1000;
+                let counter = 0;
+                while (y < endY || (y === endY && m <= endM)) {
+                    addEntry(results, y, isExpense ? 0 : amount, isExpense ? amount : 0);
+                    m += freq;
+                    while (m > 12) {
+                        m -= 12;
+                        y += 1;
+                    }
+                    counter += 1;
+                    if (counter > limit) break;
+                }
+            } else {
+                const year = tx.start_year || 0;
+                addEntry(results, year, isExpense ? 0 : amount, isExpense ? amount : 0);
+            }
+        });
+
+        // Vermögen: Assets - Liabilities per Jahr aus currentSimulation totals
+        const wealthPerYear = new Map();
+        (currentSimulation?.total_wealth || []).forEach((point) => {
+            if (!point?.date || point.value === undefined || point.value === null) return;
+            const year = new Date(point.date).getFullYear();
+            wealthPerYear.set(year, point.value);
+        });
+
+        const sanitizeBrackets = (brackets, fallback) => {
+            const base = Array.isArray(brackets) && brackets.length ? brackets : fallback;
+            return (base || []).map(({ cap, rate }) => ({
+                cap: cap === null || cap === undefined ? null : Number(cap),
+                rate: Number(rate) || 0,
+            }));
+        };
+        const sanitizeFederal = (rows, fallback) => {
+            const base = Array.isArray(rows) && rows.length ? rows : fallback;
+            return (base || []).map(({ income, base: rowBase, per100 }) => ({
+                income: Number(income) || 0,
+                base: Number(rowBase) || 0,
+                per100: Number(per100) || 0,
+            }));
+        };
+
+        const incomeBrackets = sanitizeBrackets(taxProfile?.income_brackets, DEFAULT_TAX_PROFILE.income_brackets);
+        const wealthBrackets = sanitizeBrackets(taxProfile?.wealth_brackets, DEFAULT_TAX_PROFILE.wealth_brackets);
+        const federalTable = sanitizeFederal(taxProfile?.federal_table, DEFAULT_TAX_PROFILE.federal_table);
+
+        const calcFederalTax = (income) => {
+            const taxable = Math.max(0, income || 0);
+            const sorted = [...federalTable].sort((a, b) => a.income - b.income);
+            if (taxable <= sorted[0].income) {
+                const entry = sorted[0];
+                return entry.base + ((taxable - entry.income) / 100) * entry.per100;
+            }
+            for (let i = 0; i < sorted.length - 1; i++) {
+                const curr = sorted[i];
+                const next = sorted[i + 1];
+                if (taxable >= curr.income && taxable < next.income) {
+                    return curr.base + ((taxable - curr.income) / 100) * curr.per100;
+                }
+            }
+            // above last bracket: 11.5% marginal
+            const last = sorted[sorted.length - 1];
+            return last.base + (taxable - last.income) * 0.115;
+        };
+
+        return Array.from(results.values())
+            .sort((a, b) => a.year - b.year)
+            .map((row) => {
+                const wealth = wealthPerYear.get(row.year) ?? null;
+                const incomeTax = calcProgressive(row.net, incomeBrackets);
+                const wealthTax = wealth !== null ? calcProgressive(wealth, wealthBrackets) : null;
+                const baseTax = incomeTax + (wealthTax || 0); // einfache Staatssteuer
+                const personalTax = personalTaxVal * householdSize;
+                const totalTaxWithRate =
+                    baseTax * municipalTaxFactor +
+                    baseTax * cantonalTaxFactor +
+                    baseTax * churchTaxFactor +
+                    personalTax;
+                const federalTax = calcFederalTax(row.net);
+                return {
+                    ...row,
+                    wealth,
+                    incomeTax,
+                    wealthTax,
+                    baseTax,
+                    personalTax,
+                    taxTotal: totalTaxWithRate,
+                    federalTax,
+                    totalAll: totalTaxWithRate + federalTax,
+                    taxRateLabel: `${(municipalTaxFactor * 100).toFixed(2)}% / ${(cantonalTaxFactor * 100).toFixed(2)}% / ${(churchTaxFactor * 100).toFixed(2)}%`,
+                };
+            });
+    }, [
+        activeTaxProfile,
+        allTransactions,
+        categorizeTransaction,
+        currentSimulation,
+        selectedUser,
+        municipalTaxRate,
+        cantonalTaxRate,
+        churchTaxRate,
+        personalTaxPerPerson,
+        scenarioDetails,
+    ]);
+
+    const taxableIncomeMap = useMemo(() => {
+        const map = new Map();
+        taxableIncomeByYear.forEach((row) => {
+            map.set(row.year, row);
+        });
+        return map;
+    }, [taxableIncomeByYear]);
+
     const handleDownloadPdf = useCallback(async () => {
         // Always refresh simulation before exporting to ensure current data
         await handleSimulate();
@@ -1176,8 +1607,9 @@ const Simulation = () => {
         const firstValue = totals[0]?.value ?? null;
         const lastValue = totals[totals.length - 1]?.value ?? null;
         const cashflowRows = yearlyCashFlow.map((entry) => {
-            const taxTotal = entry.taxes || 0;
-            const net = entry.net || (entry.income + entry.expenses + taxTotal);
+            const taxRow = taxableIncomeMap.get(entry.year);
+            const taxTotal = taxRow ? -Math.abs(taxRow.totalAll ?? taxRow.taxTotal ?? 0) : entry.taxes || 0;
+            const net = entry.income + entry.expenses + taxTotal;
             return {
                 year: entry.year,
                 income: entry.income || 0,
@@ -1400,6 +1832,7 @@ const Simulation = () => {
         formatScenarioRange,
         yearlyCashFlow,
         inflationRate,
+        taxableIncomeMap,
         municipalTaxRate,
         cantonalTaxRate,
         churchTaxRate,
@@ -1508,7 +1941,15 @@ const Simulation = () => {
     const renderTransactionItem = (tx) => {
         const assetName = accountNameMap[tx.asset_id] || 'Unbekannt';
         const counterName = tx.counter_asset_id ? accountNameMap[tx.counter_asset_id] : null;
+        const taxRate = 0;
         const grossAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount) || 0;
+        const taxableAmount = tx.taxable
+            ? (Number.isFinite(tx.taxable_amount)
+                  ? tx.taxable_amount
+                  : Number(tx.taxable_amount) || grossAmount)
+            : 0;
+        const taxEffect = tx.taxable ? taxableAmount * taxRate : 0;
+        const netAmount = tx.type === 'mortgage_interest' ? 0 : grossAmount - taxEffect;
         const isExpense = tx.category === 'expense';
 
         return (
@@ -1545,8 +1986,15 @@ const Simulation = () => {
                             Auto · {(((tx.annual_interest_rate ?? tx.annual_growth_rate ?? 0) * 100) || 0).toFixed(2)}%
                         </span>
                     ) : (
-                        <div className="amount">
-                            <div>{formatCurrency(grossAmount)}</div>
+                        <div className="amount tax-breakdown">
+                            <div>Brutto {formatCurrency(grossAmount)}</div>
+                            {tx.taxable && (
+                                <div className="muted small">
+                                    Steuer ({(taxRate * 100).toFixed(2)}% auf {formatCurrency(taxableAmount)}): -
+                                    {formatCurrency(taxEffect)}
+                                </div>
+                            )}
+                            <div>Netto {formatCurrency(netAmount)}</div>
                         </div>
                     )}
                 </div>
@@ -1885,14 +2333,6 @@ const Simulation = () => {
                                                 <span className="label">Transaktionen</span>
                                                 <strong>{allTransactions.length}</strong>
                                             </div>
-                                            <div className="scenario-detail">
-                                                <span className="label">Steuer-Konto</span>
-                                                <strong>
-                                                    {taxAccountId
-                                                        ? accountNameMap[taxAccountId] || 'Konto auswählen'
-                                                        : 'Keins gewählt'}
-                                                </strong>
-                                            </div>
                                         </div>
                                         <div className="scenario-settings">
                                             <p className="eyebrow">Einstellungen</p>
@@ -1913,6 +2353,38 @@ const Simulation = () => {
                                                         value={scenarioDescription}
                                                         onChange={(e) => setScenarioDescription(e.target.value)}
                                                     />
+                                                </label>
+                                                <label className="stacked">
+                                                    <span>Steuerprofil</span>
+                                                    <select
+                                                        onChange={(e) => setSelectedTaxProfileId(e.target.value)}
+                                                        value={selectedTaxProfileId}
+                                                    >
+                                                        {taxProfiles.map((profile) => (
+                                                            <option key={profile.id} value={profile.id}>
+                                                                {profile.name}
+                                                            </option>
+                                                        ))}
+                                                        {!taxProfiles.length && <option value="">Standard</option>}
+                                                    </select>
+                                                    {taxProfilesLoading && <span className="muted">Lade Profile …</span>}
+                                                </label>
+                                                <label className="stacked">
+                                                    <span>Steuerkonto (Belastung)</span>
+                                                    <select
+                                                        value={taxAccountId}
+                                                        onChange={(e) => setTaxAccountId(e.target.value)}
+                                                    >
+                                                        <option value="">Bitte wählen</option>
+                                                        {accounts.map((asset) => (
+                                                            <option key={asset.id} value={asset.id}>
+                                                                {asset.name || asset.id}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <small className="muted">
+                                                        Wähle das Konto/Asset, von dem die berechneten Steuern abgebucht werden sollen.
+                                                    </small>
                                                 </label>
                                             <label className="stacked">
                                                 <span>Gemeindesteuerfuss (%)</span>
@@ -1950,17 +2422,15 @@ const Simulation = () => {
                                                     step="0.01"
                                                 />
                                             </label>
-                                            <label className="stacked">
-                                                <span>Steuern belasten auf Konto</span>
-                                                <select value={taxAccountId} onChange={(e) => setTaxAccountId(e.target.value)}>
-                                                    <option value="">Keins</option>
-                                                    {accounts.map((acc) => (
-                                                        <option key={`tax-acc-${acc.id}`} value={acc.id}>
-                                                            {acc.name}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </label>
+                                        </div>
+                                        <div className="scenario-actions">
+                                            <button
+                                                className="secondary"
+                                                onClick={applyTaxProfileToFields}
+                                                disabled={!activeTaxProfile && !taxProfiles.length}
+                                            >
+                                                Profilwerte übernehmen
+                                            </button>
                                         </div>
                                         <button onClick={handleUpdateScenarioSettings} disabled={!currentScenarioId}>
                                             Einstellungen speichern
@@ -2086,11 +2556,12 @@ const Simulation = () => {
                                                             datasets: [
                                                                 {
                                                                     label: 'Netto',
-                                                                    data: yearlyCashFlow.map(
-                                                                        (entry) =>
-                                                                            entry.net ||
-                                                                            entry.income + entry.expenses + (entry.taxes || 0)
-                                                                    ),
+                                                                    data: yearlyCashFlow.map((entry) => {
+                                                                        const taxRow = taxableIncomeMap.get(entry.year);
+                                                                        const taxTotal = taxRow?.totalAll ?? taxRow?.taxTotal ?? entry.taxes ?? 0;
+                                                                        const taxPayment = taxRow ? -Math.abs(taxTotal) : (entry.taxes || 0);
+                                                                        return entry.income + entry.expenses + taxPayment;
+                                                                    }),
                                                                     borderColor: '#22d3ee',
                                                                     backgroundColor: 'rgba(34, 211, 238, 0.2)',
                                                                     tension: 0.25,
@@ -2145,8 +2616,12 @@ const Simulation = () => {
                                 <tbody>
                                         {yearlyCashFlow.map((yearRow) => {
                                             const isExpanded = expandedYears.includes(yearRow.year);
-                                            const taxPayment = yearRow.taxes || 0;
-                                            const yearNet = yearRow.net || (yearRow.income + yearRow.expenses + taxPayment);
+                                            const taxRow = taxableIncomeMap.get(yearRow.year);
+                                            const taxTotal = taxRow?.totalAll ?? taxRow?.taxTotal ?? 0;
+                                            const taxPayment = taxRow ? -Math.abs(taxTotal) : (yearRow.taxes || 0);
+                                            const yearNet = usesBackendTaxes
+                                                ? yearRow.income + yearRow.expenses
+                                                : yearRow.income + yearRow.expenses + taxPayment;
                                             return (
                                                 <React.Fragment key={`year-${yearRow.year}`}>
                                                     <tr>
@@ -2166,15 +2641,103 @@ const Simulation = () => {
                                                         </td>
                                                         <td>{formatCurrency(yearRow.income)}</td>
                                                         <td>{formatCurrency(yearRow.expenses)}</td>
-                                                        <td>{formatCurrency(taxPayment)}</td>
+                                                        <td>
+                                                            <button
+                                                                className="link-button"
+                                                                onClick={() => {
+                                                                    setSelectedTaxYear((prev) =>
+                                                                        prev === yearRow.year ? null : yearRow.year
+                                                                    );
+                                                                }}
+                                                            >
+                                                                {formatCurrency(taxPayment)}
+                                                            </button>
+                                                        </td>
                                                         <td>{formatCurrency(yearNet)}</td>
                                                     </tr>
+                                                    {selectedTaxYear === yearRow.year && taxRow && (
+                                                        <tr className="tax-detail-row">
+                                                            <td></td>
+                                                            <td colSpan={4}>
+                                                                <div className="tax-detail-card inline">
+                                                                    <div className="panel-header compact">
+                                                                        <div>
+                                                                            <p className="eyebrow">Steuer-Details</p>
+                                                                            <h4>Jahr {yearRow.year}</h4>
+                                                                        </div>
+                                                                        <div className="panel-actions">
+                                                                            <button
+                                                                                className="secondary"
+                                                                                onClick={() => setSelectedTaxYear(null)}
+                                                                            >
+                                                                                Schließen
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="tax-detail-grid">
+                                                                        <div className="tax-row">
+                                                                            <span>Steuerbares Einkommen</span>
+                                                                            <strong>{formatCurrency(taxRow.net)}</strong>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Steuerbares Vermögen</span>
+                                                                            <strong>
+                                                                                {taxRow.wealth !== null && taxRow.wealth !== undefined
+                                                                                    ? formatCurrency(taxRow.wealth)
+                                                                                    : '–'}
+                                                                            </strong>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Einkommensteuer</span>
+                                                                            <span>{formatCurrency(taxRow.incomeTax)}</span>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Vermögenssteuer</span>
+                                                                            <span>
+                                                                                {taxRow.wealthTax !== null && taxRow.wealthTax !== undefined
+                                                                                    ? formatCurrency(taxRow.wealthTax)
+                                                                                    : '–'}
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Einfache Staatssteuer</span>
+                                                                            <strong>{formatCurrency(taxRow.baseTax)}</strong>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Personalsteuer</span>
+                                                                            <span>{formatCurrency(taxRow.personalTax || 0)}</span>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Staats- und Gemeindesteuern</span>
+                                                                            <strong>{formatCurrency(taxRow.taxTotal)}</strong>
+                                                                        </div>
+                                                                        <div className="tax-row">
+                                                                            <span>Direkte Bundessteuer</span>
+                                                                            <span>{formatCurrency(taxRow.federalTax || 0)}</span>
+                                                                        </div>
+                                                                        <div className="tax-row total">
+                                                                            <span>Total Steuern</span>
+                                                                            <strong>
+                                                                                {formatCurrency(
+                                                                                    taxRow.totalAll ||
+                                                                                        (taxRow.taxTotal || 0) + (taxRow.federalTax || 0)
+                                                                                )}
+                                                                            </strong>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    )}
                                                                     {isExpanded &&
                                                                         yearRow.months.map((row) => {
                                                                             const isDecember = (row.dateObj.getMonth?.() ?? 0) === 11;
-                                                                            const monthTax = isDecember ? taxPayment : 0;
+                                                                            const monthTax = usesBackendTaxes ? 0 : isDecember ? taxPayment : 0;
                                                                             const canToggleTax = monthTax !== 0;
-                                                                            const monthNet = row.income + row.expenses + monthTax;
+                                                                            const monthNet =
+                                                                                usesBackendTaxes || monthTax === 0
+                                                                                    ? row.income + row.expenses
+                                                                                    : row.income + row.expenses + monthTax;
                                                                             return (
                                                                                 <React.Fragment key={row.date}>
                                                                                     <tr className="monthly-row">
@@ -2301,37 +2864,68 @@ const Simulation = () => {
                             <div className="panel-header">
                                 <div>
                                     <p className="eyebrow">Steuern</p>
-                                    <h3>Steuerübersicht (jährlich)</h3>
+                                    <h3>Steuertabelle</h3>
+                                </div>
+                                <div className="panel-actions">
+                                    <button
+                                        className="secondary"
+                                        onClick={() => setShowTaxTable((v) => !v)}
+                                    >
+                                        {showTaxTable ? 'Einklappen' : 'Ausklappen'}
+                                    </button>
+                                    <button
+                                        className="secondary"
+                                        onClick={() => {
+                                            taxTableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                            setShowTaxTable(true);
+                                        }}
+                                    >
+                                        Zur Tabelle
+                                    </button>
                                 </div>
                             </div>
-                            <div className="panel-body table-wrapper">
-                                <table className="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Jahr</th>
-                                            <th>Steuern</th>
-                                            <th>Netto (inkl. Steuern)</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {yearlyCashFlow.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={3} className="muted">
-                                                    Keine Daten vorhanden.
-                                                </td>
-                                            </tr>
-                                        ) : (
-                                            yearlyCashFlow.map((row) => (
-                                                <tr key={`tax-year-${row.year}`}>
-                                                    <td>{row.year}</td>
-                                                    <td>{formatCurrency(row.taxes || 0)}</td>
-                                                    <td>{formatCurrency(row.net || row.income + row.expenses + (row.taxes || 0))}</td>
+                            {showTaxTable && (
+                                <div className="panel-body table-wrapper" ref={taxTableRef}>
+                                    {taxableIncomeByYear.length === 0 ? (
+                                        <p className="placeholder">Keine Steuerdaten vorhanden. Bitte Simulation ausführen.</p>
+                                    ) : (
+                                        <table className="table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Jahr</th>
+                                                    <th>Einfache Steuer</th>
+                                                    <th>Einkommensteuer</th>
+                                                    <th>Vermögenssteuer</th>
+                                                    <th>Personalsteuer</th>
+                                                    <th>Direkte Bundessteuer</th>
+                                                    <th>Total</th>
                                                 </tr>
-                                            ))
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
+                                            </thead>
+                                            <tbody>
+                                                {taxableIncomeByYear.map((row) => (
+                                                    <tr key={`tax-table-${row.year}`}>
+                                                        <td>{row.year}</td>
+                                                        <td>{formatCurrency(row.baseTax || 0)}</td>
+                                                        <td>{formatCurrency(row.incomeTax || 0)}</td>
+                                                        <td>
+                                                            {row.wealthTax !== null && row.wealthTax !== undefined
+                                                                ? formatCurrency(row.wealthTax)
+                                                                : '–'}
+                                                        </td>
+                                                        <td>{formatCurrency(row.personalTax || 0)}</td>
+                                                        <td>{formatCurrency(row.federalTax || 0)}</td>
+                                                        <td>
+                                                            {formatCurrency(
+                                                                (row.totalAll || (row.taxTotal || 0) + (row.federalTax || 0)) || 0
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         <div className="panel">
@@ -2516,65 +3110,54 @@ const Simulation = () => {
                                                 {profileLoadingId === p.id ? (
                                                     <div className="muted small">Berechne...</div>
                                                 ) : (
-                                                    (() => {
-                                                        const result = profileResults[p.id] || {};
-                                                        const endBase = baseSummary?.endValue;
-                                                        const endStress = result.endValue;
-                                                        const netBase = baseSummary?.net;
-                                                        const netStress = result.net;
-                                                        const deltaWealth =
-                                                            endStress !== undefined &&
-                                                            endStress !== null &&
-                                                            endBase !== undefined &&
-                                                            endBase !== null
-                                                                ? endStress - endBase
-                                                                : null;
-                                                        const deltaNet =
-                                                            netStress !== undefined &&
-                                                            netStress !== null &&
-                                                            netBase !== undefined &&
-                                                            netBase !== null
-                                                                ? netStress - netBase
-                                                                : null;
-                                                        return (
-                                                            <div className="profile-summary profile-summary-rows">
-                                                                <div className="profile-row">
-                                                                    <span className="label">Beschreibung</span>
-                                                                    <span>{p.description || 'Keine Beschreibung'}</span>
-                                                                </div>
-                                                                <div className="profile-row">
-                                                                    <span className="label">Endwert Basis</span>
-                                                                    <strong>
-                                                                        {endBase !== null && endBase !== undefined ? formatCurrency(endBase) : '–'}
-                                                                    </strong>
-                                                                </div>
-                                                                <div className="profile-row">
-                                                                    <span className="label">Endwert Stress</span>
-                                                                    <strong>
-                                                                        {endStress !== undefined && endStress !== null ? formatCurrency(endStress) : '–'}
-                                                                    </strong>
-                                                                </div>
-                                                                <div className="profile-row highlight">
-                                                                    <span className="label">Delta Vermögen</span>
-                                                                    <strong className={deltaWealth !== null && deltaWealth < 0 ? 'negative' : 'positive'}>
-                                                                        {deltaWealth !== null ? formatCurrency(deltaWealth) : '–'}
-                                                                    </strong>
-                                                                </div>
-                                                                <div className="profile-row">
-                                                                    <span className="label">Netto Cashflow (Stress)</span>
-                                                                    <strong>
-                                                                        {netStress !== undefined && netStress !== null ? formatCurrency(netStress) : '–'}
-                                                                    </strong>
-                                                                </div>
-                                                                <div className="profile-row highlight">
-                                                                    <span className="label">Delta vs Basis</span>
-                                                                    <strong className={deltaNet !== null && deltaNet < 0 ? 'negative' : 'positive'}>
-                                                                        {deltaNet !== null ? formatCurrency(deltaNet) : '–'}
-                                                                    </strong>
-                                                                </div>
-                                                            </div>
-                                                        );
-                                                    })()
+                                                    <div className="profile-summary">
+                                                        <div>
+                                                            <span className="label">Endwert Basis</span>
+                                                            <strong>
+                                                                {baseSummary?.endValue !== null && baseSummary?.endValue !== undefined
+                                                                    ? formatCurrency(baseSummary.endValue)
+                                                                    : '–'}
+                                                            </strong>
+                                                        </div>
+                                                        <div>
+                                                            <span className="label">Endwert Stress</span>
+                                                            <strong>
+                                                                {profileResults[p.id]?.endValue !== undefined && profileResults[p.id]?.endValue !== null
+                                                                    ? formatCurrency(profileResults[p.id].endValue)
+                                                                    : '–'}
+                                                            </strong>
+                                                        </div>
+                                                        <div>
+                                                            <span className="label">Delta Vermögen</span>
+                                                            <strong>
+                                                                {profileResults[p.id]?.endValue !== undefined &&
+                                                                profileResults[p.id]?.endValue !== null &&
+                                                                baseSummary?.endValue !== undefined &&
+                                                                baseSummary?.endValue !== null
+                                                                    ? formatCurrency(profileResults[p.id].endValue - baseSummary.endValue)
+                                                                    : '–'}
+                                                            </strong>
+                                                        </div>
+                                                        <div>
+                                                            <span className="label">Netto Cashflow (Stress)</span>
+                                                            <strong>
+                                                                {profileResults[p.id]?.net !== undefined && profileResults[p.id]?.net !== null
+                                                                    ? formatCurrency(profileResults[p.id].net)
+                                                                    : '–'}
+                                                            </strong>
+                                                        </div>
+                                                        <div>
+                                                            <span className="label">Delta vs Basis</span>
+                                                            <strong>
+                                                                {profileResults[p.id]?.net !== undefined &&
+                                                                profileResults[p.id]?.net !== null &&
+                                                                baseSummary?.net !== undefined &&
+                                                                baseSummary?.net !== null
+                                                                    ? formatCurrency(profileResults[p.id].net - baseSummary.net)
+                                                                    : '–'}
+                                                            </strong>
+                                                        </div>
+                                                    </div>
                                                 )}
                                                 {editingProfileId === p.id && (
                                                     <div className="profile-edit">

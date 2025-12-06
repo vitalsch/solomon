@@ -257,6 +257,41 @@ class TransactionUpdate(BaseModel):
     taxable_amount: Optional[float] = None
 
 
+class TaxBracket(BaseModel):
+    cap: Optional[float] = Field(None, description="Grenze dieses Abschnitts (CHF). Null = unbegrenzt")
+    rate: float = Field(..., description="Steuersatz als Dezimal (z.B. 0.13 für 13%)")
+
+
+class FederalTaxRow(BaseModel):
+    income: float = Field(..., description="Einkommensgrenze für diesen Abschnitt (CHF)")
+    base: float = Field(..., description="Sockelbetrag in CHF")
+    per100: float = Field(..., description="Zusatz pro 100 CHF über income")
+
+
+class TaxProfileCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    income_brackets: List[TaxBracket] = Field(default_factory=list)
+    wealth_brackets: List[TaxBracket] = Field(default_factory=list)
+    federal_table: List[FederalTaxRow] = Field(default_factory=list)
+    municipal_tax_factor: Optional[float] = Field(None, description="Gemeindesteuerfuss (z.B. 1.15 für 115%)")
+    cantonal_tax_factor: Optional[float] = Field(None, description="Staatssteuerfuss (z.B. 0.98 für 98%)")
+    church_tax_factor: Optional[float] = Field(None, description="Kirchensteuerfuss (z.B. 0.14 für 14%)")
+    personal_tax_per_person: Optional[float] = Field(None, description="Personalsteuer pro Person in CHF")
+
+
+class TaxProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    income_brackets: Optional[List[TaxBracket]] = None
+    wealth_brackets: Optional[List[TaxBracket]] = None
+    federal_table: Optional[List[FederalTaxRow]] = None
+    municipal_tax_factor: Optional[float] = None
+    cantonal_tax_factor: Optional[float] = None
+    church_tax_factor: Optional[float] = None
+    personal_tax_per_person: Optional[float] = None
+
+
 class AssistantMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
@@ -336,6 +371,7 @@ def create_scenario(payload: ScenarioCreate, current_user=Depends(get_current_us
         payload.cantonal_tax_factor,
         payload.church_tax_factor,
         payload.personal_tax_per_person,
+        payload.tax_account_id,
     )
 
 
@@ -656,6 +692,60 @@ def delete_stress_profile(profile_id: str, current_user=Depends(get_current_user
     ok = repo.delete_stress_profile(profile_id, current_user["id"])
     if not ok:
         raise HTTPException(status_code=404, detail="Stress profile not found")
+    return {"status": "deleted"}
+
+
+# Tax Profiles ------------------------------------------------------------
+@app.get("/tax-profiles")
+def list_tax_profiles(current_user=Depends(get_current_user)):
+    return repo.list_tax_profiles(current_user["id"])
+
+
+@app.post("/tax-profiles")
+def create_tax_profile(payload: TaxProfileCreate, current_user=Depends(get_current_user)):
+    return repo.create_tax_profile(
+        current_user["id"],
+        payload.name,
+        payload.description,
+        payload.income_brackets,
+        payload.wealth_brackets,
+        payload.federal_table,
+        payload.municipal_tax_factor,
+        payload.cantonal_tax_factor,
+        payload.church_tax_factor,
+        payload.personal_tax_per_person,
+    )
+
+
+@app.get("/tax-profiles/{profile_id}")
+def get_tax_profile(profile_id: str, current_user=Depends(get_current_user)):
+    profile = repo.get_tax_profile(profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Tax profile not found")
+    if profile.get("user_id") != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to access this tax profile")
+    return profile
+
+
+@app.patch("/tax-profiles/{profile_id}")
+def update_tax_profile(profile_id: str, payload: TaxProfileUpdate, current_user=Depends(get_current_user)):
+    existing = repo.get_tax_profile(profile_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Tax profile not found")
+    if existing.get("user_id") != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to modify this tax profile")
+    updates = {k: v for k, v in payload.dict().items() if v is not None}
+    updated = repo.update_tax_profile(profile_id, current_user["id"], updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Tax profile not found")
+    return updated
+
+
+@app.delete("/tax-profiles/{profile_id}")
+def delete_tax_profile(profile_id: str, current_user=Depends(get_current_user)):
+    ok = repo.delete_tax_profile(profile_id, current_user["id"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="Tax profile not found")
     return {"status": "deleted"}
 
 
