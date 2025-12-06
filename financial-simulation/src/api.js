@@ -147,6 +147,11 @@ export const updateTaxProfile = (profileId, payload) =>
     request(`/tax-profiles/${profileId}`, { method: 'PATCH', body: JSON.stringify(payload) });
 export const deleteTaxProfile = (profileId) =>
     request(`/tax-profiles/${profileId}`, { method: 'DELETE' });
+export const importTaxProfiles = (profiles) =>
+    request('/tax-profiles/import', {
+        method: 'POST',
+        body: JSON.stringify({ profiles }),
+    });
 
 // Stress Profiles ---------------------------------------------------------
 export const listStressProfiles = () => request('/stress-profiles');

@@ -485,6 +485,9 @@ class WealthRepository:
         user_id: str,
         name: str,
         description: str | None,
+        location: str | None,
+        church: str | None,
+        marital_status: str | None,
         income_brackets: List[Dict[str, Any]],
         wealth_brackets: List[Dict[str, Any]],
         federal_table: List[Dict[str, Any]],
@@ -497,6 +500,9 @@ class WealthRepository:
             "user_id": _ensure_object_id(user_id),
             "name": name,
             "description": description,
+            "location": location,
+            "church": church,
+            "marital_status": marital_status,
             "income_brackets": income_brackets or [],
             "wealth_brackets": wealth_brackets or [],
             "federal_table": federal_table or [],
@@ -522,6 +528,9 @@ class WealthRepository:
             "cantonal_tax_factor",
             "church_tax_factor",
             "personal_tax_per_person",
+            "location",
+            "church",
+            "marital_status",
         }
         filtered = {k: v for k, v in updates.items() if v is not None and k in allowed_keys}
         if not filtered:

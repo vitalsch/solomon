@@ -271,6 +271,9 @@ class FederalTaxRow(BaseModel):
 class TaxProfileCreate(BaseModel):
     name: str
     description: Optional[str] = None
+    location: Optional[str] = Field(None, description="Ort/Gemeinde des Tarifs")
+    church: Optional[str] = Field(None, description="Kirchsteuer Zugehörigkeit (z.B. kath, ref, keine)")
+    marital_status: Optional[str] = Field(None, description="Zivilstand (ledig, verheiratet, verwitwet, etc.)")
     income_brackets: List[TaxBracket] = Field(default_factory=list)
     wealth_brackets: List[TaxBracket] = Field(default_factory=list)
     federal_table: List[FederalTaxRow] = Field(default_factory=list)
@@ -283,6 +286,9 @@ class TaxProfileCreate(BaseModel):
 class TaxProfileUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    location: Optional[str] = None
+    church: Optional[str] = None
+    marital_status: Optional[str] = None
     income_brackets: Optional[List[TaxBracket]] = None
     wealth_brackets: Optional[List[TaxBracket]] = None
     federal_table: Optional[List[FederalTaxRow]] = None
@@ -290,6 +296,10 @@ class TaxProfileUpdate(BaseModel):
     cantonal_tax_factor: Optional[float] = None
     church_tax_factor: Optional[float] = None
     personal_tax_per_person: Optional[float] = None
+
+
+class TaxProfileImportRequest(BaseModel):
+    profiles: List[TaxProfileCreate] = Field(default_factory=list)
 
 
 class AssistantMessage(BaseModel):
@@ -707,6 +717,9 @@ def create_tax_profile(payload: TaxProfileCreate, current_user=Depends(get_curre
         current_user["id"],
         payload.name,
         payload.description,
+        payload.location,
+        payload.church,
+        payload.marital_status,
         payload.income_brackets,
         payload.wealth_brackets,
         payload.federal_table,
@@ -747,6 +760,32 @@ def delete_tax_profile(profile_id: str, current_user=Depends(get_current_user)):
     if not ok:
         raise HTTPException(status_code=404, detail="Tax profile not found")
     return {"status": "deleted"}
+
+
+@app.post("/tax-profiles/import")
+def import_tax_profiles(payload: TaxProfileImportRequest, current_user=Depends(get_current_user)):
+    if not payload.profiles:
+        raise HTTPException(status_code=400, detail="No profiles provided")
+    created = []
+    for profile in payload.profiles:
+        created.append(
+            repo.create_tax_profile(
+                current_user["id"],
+                profile.name,
+                profile.description,
+                profile.location,
+                profile.church,
+                profile.marital_status,
+                profile.income_brackets,
+                profile.wealth_brackets,
+                profile.federal_table,
+                profile.municipal_tax_factor,
+                profile.cantonal_tax_factor,
+                profile.church_tax_factor,
+                profile.personal_tax_per_person,
+            )
+        )
+    return created
 
 
 def _ensure_scenario_access(scenario_id: str, current_user):

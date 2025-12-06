@@ -43,6 +43,7 @@ import {
     deleteStressProfileApi,
     setAuthToken,
     getAuthToken,
+    importTaxProfiles,
 } from '../api';
 import '../TransactionsList.css';
 
@@ -206,6 +207,15 @@ const DEFAULT_TAX_PROFILE = {
     ],
 };
 
+const formatTaxProfileLabel = (profile) => {
+    if (!profile) return '';
+    const parts = [];
+    if (profile.location) parts.push(profile.location);
+    if (profile.church) parts.push(profile.church);
+    if (profile.marital_status) parts.push(profile.marital_status);
+    return `${profile.name}${parts.length ? ` — ${parts.join(' / ')}` : ''}`;
+};
+
 const Simulation = () => {
     const [users, setUsers] = useState([]);
     const [selectedUserId, setSelectedUserId] = useState('');
@@ -242,6 +252,7 @@ const Simulation = () => {
     const [taxProfiles, setTaxProfiles] = useState([]);
     const [selectedTaxProfileId, setSelectedTaxProfileId] = useState('');
     const [taxProfilesLoading, setTaxProfilesLoading] = useState(false);
+    const [taxImportError, setTaxImportError] = useState('');
     const [newScenarioDescription, setNewScenarioDescription] = useState('');
     const [scenarioDescription, setScenarioDescription] = useState('');
     const [selectedScenarios, setSelectedScenarios] = useState([]);
@@ -643,6 +654,7 @@ const Simulation = () => {
             return;
         }
         setTaxProfilesLoading(true);
+        setTaxImportError('');
         try {
             let profiles = await listTaxProfiles();
             if (!profiles || !profiles.length) {
@@ -1089,6 +1101,27 @@ const Simulation = () => {
             setPersonalTaxPerPerson(profile.personal_tax_per_person);
         }
     }, [activeTaxProfile]);
+
+    const handleImportTaxProfiles = useCallback(
+        async (file) => {
+            if (!file) return;
+            setTaxImportError('');
+            try {
+                const text = await file.text();
+                const parsed = JSON.parse(text);
+                const profiles = Array.isArray(parsed) ? parsed : parsed.profiles || [];
+                if (!Array.isArray(profiles) || !profiles.length) {
+                    setTaxImportError('Keine Profile in der Datei gefunden.');
+                    return;
+                }
+                await importTaxProfiles(profiles);
+                await fetchTaxProfilesRemote();
+            } catch (err) {
+                setTaxImportError(err.message || 'Import fehlgeschlagen. Bitte gültiges JSON hochladen.');
+            }
+        },
+        [fetchTaxProfilesRemote]
+    );
 
     const parsePercentInput = useCallback((value) => {
         const num = Number(value);
@@ -2362,12 +2395,28 @@ const Simulation = () => {
                                                     >
                                                         {taxProfiles.map((profile) => (
                                                             <option key={profile.id} value={profile.id}>
-                                                                {profile.name}
+                                                                {formatTaxProfileLabel(profile)}
                                                             </option>
                                                         ))}
                                                         {!taxProfiles.length && <option value="">Standard</option>}
                                                     </select>
                                                     {taxProfilesLoading && <span className="muted">Lade Profile …</span>}
+                                                    <div className="import-tax-profile">
+                                                        <input
+                                                            type="file"
+                                                            accept="application/json"
+                                                            onChange={(e) => handleImportTaxProfiles(e.target.files?.[0])}
+                                                        />
+                                                        <small className="muted">JSON mit Profilen hochladen (Array oder {`{ profiles: [...] }`}).</small>
+                                                        {taxImportError && <div className="error">{taxImportError}</div>}
+                                                    </div>
+                                                    {activeTaxProfile && (
+                                                        <div className="muted small">
+                                                            {activeTaxProfile.location && <div>Ort: {activeTaxProfile.location}</div>}
+                                                            {activeTaxProfile.church && <div>Kirche: {activeTaxProfile.church}</div>}
+                                                            {activeTaxProfile.marital_status && <div>Zivilstand: {activeTaxProfile.marital_status}</div>}
+                                                        </div>
+                                                    )}
                                                 </label>
                                                 <label className="stacked">
                                                     <span>Steuerkonto (Belastung)</span>
