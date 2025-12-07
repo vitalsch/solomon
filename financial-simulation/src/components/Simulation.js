@@ -1764,8 +1764,9 @@ const Simulation = () => {
     }, [stressResult]);
 
     const getTaxPaymentForYear = useCallback(
-        (year, mapOverride = taxableIncomeMap) => {
-            const row = mapOverride.get(year);
+        (year, mapOverride) => {
+            const mapToUse = mapOverride || taxableIncomeMap;
+            const row = mapToUse.get(year);
             if (!row) return 0;
             const total = row.totalAll ?? row.taxTotal ?? 0;
             return -Math.abs(total || 0);
