@@ -199,6 +199,8 @@ def _create_transaction_instance(tx_doc, amount_override=None, scenario_defaults
             start_month,
             start_year,
         )
+    setattr(tx_instance, "id", tx_doc.get("id"))
+    setattr(tx_instance, "tx_type", tx_type)
     setattr(tx_instance, "internal", is_internal)
     setattr(tx_instance, "inflation_schedule", inflation_schedule)
     return tx_instance
@@ -238,6 +240,8 @@ def _build_transactions(transaction_docs, account_map, income_tax_rate: float = 
                 end_month,
                 end_year,
             )
+            setattr(interest_tx, "id", tx.get("id"))
+            setattr(interest_tx, "tx_type", "mortgage_interest")
             setattr(interest_tx, "rate_schedule", rate_schedule)
             # carry tax info so simulation can include tax effects (simple rate if provided)
             setattr(interest_tx, "taxable", bool(tx.get("taxable")))
@@ -321,6 +325,15 @@ def _collect_yearly_tax(transactions: List[Dict], cash_flows: List[Dict], total_
         store[year] = entry
 
     taxable_map: Dict[int, Dict] = {}
+    taxable_mortgage_ids = set()
+    taxable_mortgage_names = set()
+    for tx in transactions:
+        if tx.get("type") == "mortgage_interest" and tx.get("taxable"):
+            if tx.get("id"):
+                taxable_mortgage_ids.add(tx.get("id"))
+            if tx.get("name"):
+                taxable_mortgage_names.add(tx.get("name"))
+
     defaults = {
         "municipal_tax_factor": scenario.get("municipal_tax_factor", 1.15),
         "cantonal_tax_factor": scenario.get("cantonal_tax_factor", 0.98),
@@ -334,6 +347,9 @@ def _collect_yearly_tax(transactions: List[Dict], cash_flows: List[Dict], total_
         amount = tx.get("taxable_amount", tx.get("amount", 0.0)) or 0.0
         amount = abs(float(amount))
         tx_type = tx.get("type")
+        if tx_type == "mortgage_interest":
+            # tatsächliche Zinskosten kommen aus der Simulation (cash_flows)
+            continue
         start_year = tx.get("start_year") or 0
         start_month = tx.get("start_month") or 1
         end_year = tx.get("end_year") or start_year
@@ -355,6 +371,27 @@ def _collect_yearly_tax(transactions: List[Dict], cash_flows: List[Dict], total_
                     break
         else:
             add_entry(taxable_map, start_year, 0 if category == "expense" else amount, amount if category == "expense" else 0)
+
+    # Hypothekarzinsen: hole effektive Zahlungen aus der Simulation und ziehe sie als Ausgaben ab
+    if taxable_mortgage_ids or taxable_mortgage_names:
+        for entry in cash_flows:
+            year = entry.get("date").year if entry.get("date") else None
+            if not year:
+                continue
+            for detail in entry.get("expense_details") or []:
+                if (detail.get("tx_type") or "").lower() != "mortgage_interest":
+                    continue
+                tx_id = detail.get("transaction_id")
+                name = detail.get("name")
+                if tx_id and tx_id in taxable_mortgage_ids:
+                    pass
+                elif name and name in taxable_mortgage_names:
+                    pass
+                else:
+                    continue
+                amount = abs(float(detail.get("amount") or 0.0))
+                if amount:
+                    add_entry(taxable_map, year, 0, amount)
 
     # Vermögen pro Jahr: letztes Total des Jahres
     wealth_per_year: Dict[int, float] = {}

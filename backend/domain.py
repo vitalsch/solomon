@@ -333,22 +333,28 @@ def simulate_account_balances_and_total_wealth(
                     amount = applied_amount
                     if amount >= 0:
                         monthly_income += amount
-                        income_details.append(
-                            {
-                                "name": transaction.name,
-                                "amount": amount,
-                                "account": account.name,
-                            }
-                        )
+                        detail = {
+                            "name": transaction.name,
+                            "amount": amount,
+                            "account": account.name,
+                        }
+                        if getattr(transaction, "tx_type", None):
+                            detail["tx_type"] = getattr(transaction, "tx_type")
+                        if getattr(transaction, "id", None):
+                            detail["transaction_id"] = getattr(transaction, "id")
+                        income_details.append(detail)
                     else:
                         monthly_expense += amount
-                        expense_details.append(
-                            {
-                                "name": transaction.name,
-                                "amount": amount,
-                                "account": account.name,
-                            }
-                        )
+                        detail = {
+                            "name": transaction.name,
+                            "amount": amount,
+                            "account": account.name,
+                        }
+                        if getattr(transaction, "tx_type", None):
+                            detail["tx_type"] = getattr(transaction, "tx_type")
+                        if getattr(transaction, "id", None):
+                            detail["transaction_id"] = getattr(transaction, "id")
+                        expense_details.append(detail)
 
         # Then apply mortgage interest so it reflects the current mortgage balance for the month
         for interest_tx in mortgage_interest_transactions or []:
@@ -360,13 +366,15 @@ def simulate_account_balances_and_total_wealth(
                     continue
                 interest_tx.pay_from_account.update_balance(interest_tx.amount)
                 monthly_expense += interest_tx.amount
-                expense_details.append(
-                    {
-                        "name": interest_tx.name,
-                        "amount": interest_tx.amount,
-                        "account": interest_tx.pay_from_account.name,
-                    }
-                )
+                expense_detail = {
+                    "name": interest_tx.name,
+                    "amount": interest_tx.amount,
+                    "account": interest_tx.pay_from_account.name,
+                    "tx_type": getattr(interest_tx, "tx_type", None) or "mortgage_interest",
+                }
+                if getattr(interest_tx, "id", None):
+                    expense_detail["transaction_id"] = getattr(interest_tx, "id")
+                expense_details.append(expense_detail)
                 # Apply tax on mortgage interest if marked taxable
                 if getattr(interest_tx, "taxable", False):
                     # Interest is a cost (negative); tax credit should be positive (reduces expense)
