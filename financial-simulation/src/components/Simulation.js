@@ -2129,7 +2129,6 @@ const Simulation = () => {
         formatScenarioRange,
         yearlyCashFlow,
         inflationRate,
-        taxableIncomeMap,
         municipalTaxRate,
         cantonalTaxRate,
         churchTaxRate,
