@@ -863,6 +863,12 @@ button.secondary:hover {
   min-width: 560px;
 }
 
+/* Generic chart wrapper for responsive height */
+.chart-wrapper {
+  width: 100%;
+  height: 320px;
+}
+
 @media (max-width: 768px) {
   .simulation {
     padding: 1rem;
@@ -909,6 +915,10 @@ button.secondary:hover {
     min-width: unset;
     display: block;
     overflow-x: auto;
+  }
+
+  .chart-wrapper {
+    height: 260px;
   }
 
   .risk-row {

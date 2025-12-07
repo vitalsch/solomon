@@ -279,14 +279,29 @@ def _calc_federal(income: float, table: List[Dict]) -> float:
     sorted_rows = sorted(table, key=lambda x: x.get("income", 0))
     if not sorted_rows:
         return 0.0
+
+    def _safe_per100(val):
+        try:
+            rate = float(val or 0)
+        except (TypeError, ValueError):
+            rate = 0.0
+        # Manche importierte Tabellen enthalten fehlerhafte Werte (z.B. 108203.5 statt 11.5).
+        # Begrenze auf max. 11.5 CHF pro 100 CHF und min. 0.
+        rate = max(0.0, rate)
+        if rate > 20:
+            return 11.5
+        return rate
+
     if taxable <= sorted_rows[0]["income"]:
         entry = sorted_rows[0]
-        return entry["base"] + ((taxable - entry["income"]) / 100) * entry["per100"]
+        per100 = _safe_per100(entry.get("per100"))
+        return entry["base"] + ((taxable - entry["income"]) / 100) * per100
     for i in range(len(sorted_rows) - 1):
         curr = sorted_rows[i]
         nxt = sorted_rows[i + 1]
         if taxable >= curr["income"] and taxable < nxt["income"]:
-            return curr["base"] + ((taxable - curr["income"]) / 100) * curr["per100"]
+            per100 = _safe_per100(curr.get("per100"))
+            return curr["base"] + ((taxable - curr["income"]) / 100) * per100
     last = sorted_rows[-1]
     # marginal 11.5% above last bracket (like frontend)
     return last["base"] + (taxable - last["income"]) * 0.115

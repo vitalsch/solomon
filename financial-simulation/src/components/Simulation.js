@@ -285,7 +285,9 @@ const Simulation = () => {
     const [profileName, setProfileName] = useState('');
     const [profileDescription, setProfileDescription] = useState('');
     const [profileResults, setProfileResults] = useState({});
-    const [openProfileId, setOpenProfileId] = useState('');
+    const [profileSimulations, setProfileSimulations] = useState({});
+    const [openProfileIds, setOpenProfileIds] = useState([]);
+    const [selectedProfileIds, setSelectedProfileIds] = useState([]);
     const [profileLoadingId, setProfileLoadingId] = useState('');
     const [editingProfileId, setEditingProfileId] = useState('');
     const [editingProfileName, setEditingProfileName] = useState('');
@@ -698,6 +700,30 @@ const Simulation = () => {
             setStressProfiles([]);
         }
     }, [selectedUserId, fetchStressProfilesRemote]);
+
+    useEffect(() => {
+        const existingIds = new Set((stressProfiles || []).map((p) => normalizeId(p.id)));
+        setOpenProfileIds((prev) => prev.filter((id) => existingIds.has(normalizeId(id))));
+        setSelectedProfileIds((prev) => prev.filter((id) => existingIds.has(normalizeId(id))));
+        setProfileResults((prev) => {
+            const next = { ...prev };
+            Object.keys(next).forEach((key) => {
+                if (!existingIds.has(normalizeId(key))) {
+                    delete next[key];
+                }
+            });
+            return next;
+        });
+        setProfileSimulations((prev) => {
+            const next = { ...prev };
+            Object.keys(next).forEach((key) => {
+                if (!existingIds.has(normalizeId(key))) {
+                    delete next[key];
+                }
+            });
+            return next;
+        });
+    }, [stressProfiles]);
 
     const handleRegister = async () => {
         if (!newUsername || !newUserPassword) {
@@ -1419,6 +1445,101 @@ const Simulation = () => {
     const baseSummary = useMemo(() => summarizeSimulation(currentSimulation), [currentSimulation, summarizeSimulation]);
     const stressSummary = useMemo(() => summarizeSimulation(stressResult), [stressResult, summarizeSimulation]);
 
+    const stressCashFlowData = useMemo(() => {
+        const flows = stressResult?.cash_flows || [];
+        return flows.map((entry) => {
+            const d = new Date(entry.date);
+            const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+            return {
+                ...entry,
+                taxes: entry.taxes || 0,
+                tax_details: entry.tax_details || [],
+                dateObj: end,
+                dateLabel: end.toLocaleDateString('de-CH'),
+                year: d.getFullYear(),
+            };
+        });
+    }, [stressResult]);
+
+    const stressYearlyCashFlow = useMemo(() => {
+        const map = new Map();
+        stressCashFlowData.forEach((entry) => {
+            const year = entry.year;
+            if (!map.has(year)) {
+                map.set(year, { year, income: 0, expenses: 0, taxes: 0, growth: 0, net: 0, months: [] });
+            }
+            const agg = map.get(year);
+            agg.income += entry.income;
+            agg.expenses += entry.expenses;
+            agg.taxes += entry.taxes || 0;
+            agg.growth += entry.growth || 0;
+            agg.net += entry.net || entry.income + entry.expenses + (entry.taxes || 0);
+            agg.months.push(entry);
+        });
+        const yearlyArray = Array.from(map.values()).sort((a, b) => a.year - b.year);
+        yearlyArray.forEach((yearEntry) => {
+            yearEntry.months.sort((a, b) => a.dateObj - b.dateObj);
+        });
+        return yearlyArray;
+    }, [stressCashFlowData]);
+
+    const comparisonTotalChart = useMemo(() => {
+        const base = currentSimulation?.total_wealth || [];
+        const stress = stressResult?.total_wealth || [];
+        const selectedProfileRuns = selectedProfileIds
+            .map((id) => {
+                const normalized = normalizeId(id);
+                const profile = stressProfiles.find((p) => normalizeId(p.id) === normalized);
+                const simulation = profileSimulations[id] || profileSimulations[normalized];
+                if (!simulation?.total_wealth?.length) return null;
+                return { profile, simulation };
+            })
+            .filter(Boolean);
+        const profileSeries = selectedProfileRuns.flatMap((run) => run.simulation.total_wealth || []);
+        const allDates = [...new Set([...base, ...stress, ...profileSeries].map((p) => new Date(p.date).toISOString()))].sort();
+        if (!allDates.length) return null;
+        const labels = allDates.map((iso) => new Date(iso).toLocaleDateString('de-CH'));
+        const align = (series) => {
+            const map = new Map(series.map((p) => [new Date(p.date).toISOString(), p.value || 0]));
+            return allDates.map((iso) => map.get(iso) ?? null);
+        };
+        const datasets = [
+            {
+                label: 'Basis',
+                data: align(base),
+                borderColor: '#0ea5e9',
+                backgroundColor: 'rgba(14, 165, 233, 0.15)',
+                tension: 0.25,
+                spanGaps: true,
+                fill: true,
+            },
+        ];
+        if (stress.length) {
+            datasets.push({
+                label: 'Stress',
+                data: align(stress),
+                borderColor: '#ef4444',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                tension: 0.25,
+                spanGaps: true,
+                fill: false,
+            });
+        }
+        selectedProfileRuns.forEach((run, idx) => {
+            const color = colorFromIndex(idx + 2);
+            datasets.push({
+                label: `${run.profile?.name || 'Profil'} (Stress)`,
+                data: align(run.simulation.total_wealth || []),
+                borderColor: color,
+                backgroundColor: `${color}1a`,
+                tension: 0.25,
+                spanGaps: true,
+                fill: false,
+            });
+        });
+        return { labels, datasets };
+    }, [currentSimulation, stressResult, selectedProfileIds, profileSimulations, stressProfiles]);
+
     const usesBackendTaxes = Boolean(currentSimulation?.taxes && currentSimulation.taxes.length);
 
     const taxableIncomeByYear = useMemo(() => {
@@ -1628,6 +1749,146 @@ const Simulation = () => {
         return map;
     }, [taxableIncomeByYear]);
 
+    const stressTaxableIncomeMap = useMemo(() => {
+        const map = new Map();
+        const rows = stressResult?.taxes;
+        if (Array.isArray(rows)) {
+            rows.forEach((row) => {
+                map.set(row.year, {
+                    ...row,
+                    totalAll: row.totalAll ?? (row.taxTotal || 0) + (row.federalTax || 0),
+                });
+            });
+        }
+        return map;
+    }, [stressResult]);
+
+    const getTaxPaymentForYear = useCallback(
+        (year, mapOverride = taxableIncomeMap) => {
+            const row = mapOverride.get(year);
+            if (!row) return 0;
+            const total = row.totalAll ?? row.taxTotal ?? 0;
+            return -Math.abs(total || 0);
+        },
+        [taxableIncomeMap]
+    );
+
+    const comparisonCashflowChart = useMemo(() => {
+        const buildYearlyFromSimulation = (simulation) => {
+            const flows = simulation?.cash_flows || [];
+            const map = new Map();
+            flows.forEach((entry) => {
+                const year = new Date(entry.date).getFullYear();
+                if (!map.has(year)) {
+                    map.set(year, { year, income: 0, expenses: 0, taxes: 0, net: 0 });
+                }
+                const agg = map.get(year);
+                const taxes = entry.taxes || 0;
+                const income = entry.income || 0;
+                const expenses = entry.expenses || 0;
+                const net = entry.net ?? income + expenses + taxes;
+                agg.income += income;
+                agg.expenses += expenses;
+                agg.taxes += taxes;
+                agg.net += net;
+            });
+            return Array.from(map.values()).sort((a, b) => a.year - b.year);
+        };
+
+        const buildTaxMap = (simulation) => {
+            const map = new Map();
+            (simulation?.taxes || []).forEach((row) => {
+                map.set(row.year, { ...row, totalAll: row.totalAll ?? (row.taxTotal || 0) + (row.federalTax || 0) });
+            });
+            return map;
+        };
+
+        const selectedProfileRuns = selectedProfileIds
+            .map((id) => {
+                const normalized = normalizeId(id);
+                const profile = stressProfiles.find((p) => normalizeId(p.id) === normalized);
+                const simulation = profileSimulations[id] || profileSimulations[normalized];
+                if (!simulation) return null;
+                return {
+                    profile,
+                    simulation,
+                    yearly: buildYearlyFromSimulation(simulation),
+                    taxMap: buildTaxMap(simulation),
+                };
+            })
+            .filter(Boolean);
+
+        const years = [
+            ...new Set(
+                [
+                    ...yearlyCashFlow,
+                    ...stressYearlyCashFlow,
+                    ...selectedProfileRuns.flatMap((run) => run.yearly),
+                ].map((e) => e.year)
+            ),
+        ].sort();
+        if (!years.length) return null;
+        const align = (arr, taxMap, hasBackendTaxes) => {
+            const map = new Map(
+                arr.map((e) => {
+                    const taxPayment = getTaxPaymentForYear(e.year, taxMap);
+                    const baseNet = e.income + e.expenses + (e.taxes || 0);
+                    const net = hasBackendTaxes ? baseNet : baseNet + taxPayment;
+                    return [e.year, net];
+                })
+            );
+            return years.map((y) => map.get(y) ?? null);
+        };
+        const stressUsesBackendTaxes = Boolean(stressResult?.taxes && stressResult.taxes.length);
+        const datasets = [
+            {
+                label: 'Netto Basis',
+                data: align(yearlyCashFlow, taxableIncomeMap, usesBackendTaxes),
+                borderColor: '#0ea5e9',
+                backgroundColor: 'rgba(14,165,233,0.15)',
+                tension: 0.25,
+                spanGaps: true,
+                fill: true,
+            },
+        ];
+        if (stressYearlyCashFlow.length) {
+            datasets.push({
+                label: 'Netto Stress',
+                data: align(stressYearlyCashFlow, stressTaxableIncomeMap, stressUsesBackendTaxes),
+                borderColor: '#ef4444',
+                backgroundColor: 'rgba(239,68,68,0.12)',
+                tension: 0.25,
+                spanGaps: true,
+                fill: false,
+            });
+        }
+        selectedProfileRuns.forEach((run, idx) => {
+            const usesBackend = Boolean(run.simulation?.taxes && run.simulation.taxes.length);
+            const color = colorFromIndex(idx + 2);
+            datasets.push({
+                label: `${run.profile?.name || 'Profil'} (Netto)`,
+                data: align(run.yearly, run.taxMap, usesBackend),
+                borderColor: color,
+                backgroundColor: `${color}1a`,
+                tension: 0.25,
+                spanGaps: true,
+                fill: false,
+            });
+        });
+        return { labels: years, datasets };
+    }, [
+        yearlyCashFlow,
+        stressYearlyCashFlow,
+        getTaxPaymentForYear,
+        taxableIncomeMap,
+        usesBackendTaxes,
+        stressTaxableIncomeMap,
+        stressResult?.taxes,
+        selectedProfileIds,
+        profileSimulations,
+        stressProfiles,
+    ]);
+
     const handleDownloadPdf = useCallback(async () => {
         // Always refresh simulation before exporting to ensure current data
         await handleSimulate();
@@ -1640,14 +1901,16 @@ const Simulation = () => {
         const firstValue = totals[0]?.value ?? null;
         const lastValue = totals[totals.length - 1]?.value ?? null;
         const cashflowRows = yearlyCashFlow.map((entry) => {
-            const taxRow = taxableIncomeMap.get(entry.year);
-            const taxTotal = taxRow ? -Math.abs(taxRow.totalAll ?? taxRow.taxTotal ?? 0) : entry.taxes || 0;
-            const net = entry.income + entry.expenses + taxTotal;
+            const taxPayment = getTaxPaymentForYear(entry.year);
+            const taxes = (entry.taxes || 0) + taxPayment;
+            const expensesExTax = usesBackendTaxes ? (entry.expenses || 0) - taxPayment : entry.expenses || 0;
+            const baseNet = entry.income + entry.expenses + (entry.taxes || 0);
+            const net = usesBackendTaxes ? baseNet : baseNet + taxPayment;
             return {
                 year: entry.year,
                 income: entry.income || 0,
-                expenses: entry.expenses || 0,
-                taxes: taxTotal,
+                expenses: expensesExTax,
+                taxes,
                 net,
             };
         });
@@ -1870,6 +2133,8 @@ const Simulation = () => {
         cantonalTaxRate,
         churchTaxRate,
         personalTaxPerPerson,
+        usesBackendTaxes,
+        getTaxPaymentForYear,
         scenarioDetails?.municipal_tax_factor,
         scenarioDetails?.cantonal_tax_factor,
         scenarioDetails?.church_tax_factor,
@@ -1899,7 +2164,28 @@ const Simulation = () => {
     const handleDeleteProfile = useCallback(async (profileId) => {
         try {
             await deleteStressProfileApi(profileId);
-            setStressProfiles((prev) => prev.filter((p) => p.id !== profileId));
+            const normalized = normalizeId(profileId);
+            setStressProfiles((prev) => prev.filter((p) => normalizeId(p.id) !== normalized));
+            setOpenProfileIds((prev) => prev.filter((id) => normalizeId(id) !== normalized));
+            setSelectedProfileIds((prev) => prev.filter((id) => normalizeId(id) !== normalized));
+            setProfileResults((prev) => {
+                const next = { ...prev };
+                Object.keys(next).forEach((key) => {
+                    if (normalizeId(key) === normalized) {
+                        delete next[key];
+                    }
+                });
+                return next;
+            });
+            setProfileSimulations((prev) => {
+                const next = { ...prev };
+                Object.keys(next).forEach((key) => {
+                    if (normalizeId(key) === normalized) {
+                        delete next[key];
+                    }
+                });
+                return next;
+            });
         } catch (err) {
             setError(err.message);
         }
@@ -1915,6 +2201,7 @@ const Simulation = () => {
                 const result = await simulateScenarioStress(scenarioKey, payload);
                 const summary = summarizeSimulation(result);
                 setProfileResults((prev) => ({ ...prev, [profile.id]: summary }));
+                setProfileSimulations((prev) => ({ ...prev, [profile.id]: result }));
             } catch (err) {
                 setError(err.message);
             } finally {
@@ -1925,21 +2212,37 @@ const Simulation = () => {
     );
 
     const handleEditProfile = useCallback((profile) => {
+        const profileKey = normalizeId(profile.id);
         setEditingProfileId(profile.id);
         setEditingProfileName(profile.name || '');
         setEditingProfileDescription(profile.description || '');
         setEditingProfileOverrides(profile.overrides || { shocks: [] });
-        setOpenProfileId(profile.id);
+        setOpenProfileIds((prev) => (prev.some((id) => normalizeId(id) === profileKey) ? prev : [...prev, profileKey]));
+        setSelectedProfileIds((prev) =>
+            prev.some((id) => normalizeId(id) === profileKey) ? prev : [...prev, profileKey]
+        );
     }, []);
 
     const handleToggleProfile = useCallback(
         async (profile) => {
-            const isOpen = openProfileId === profile.id;
-            setOpenProfileId(isOpen ? '' : profile.id);
+            const profileKey = normalizeId(profile.id);
+            const isOpen = openProfileIds.some((id) => normalizeId(id) === profileKey);
+            setOpenProfileIds((prev) =>
+                isOpen ? prev.filter((id) => normalizeId(id) !== profileKey) : [...prev, profileKey]
+            );
+            setSelectedProfileIds((prev) => {
+                if (isOpen) {
+                    return prev.filter((id) => normalizeId(id) !== profileKey);
+                }
+                if (prev.some((id) => normalizeId(id) === profileKey)) {
+                    return prev;
+                }
+                return [...prev, profileKey];
+            });
             if (isOpen) return;
             await recomputeProfileResult(profile);
         },
-        [openProfileId, recomputeProfileResult]
+        [openProfileIds, recomputeProfileResult]
     );
 
     const handleSaveProfileEdits = useCallback(async () => {
@@ -2602,14 +2905,14 @@ const Simulation = () => {
                                                     <Line
                                                         data={{
                                                             labels: yearlyCashFlow.map((entry) => entry.year),
-                                                            datasets: [
-                                                                {
-                                                                    label: 'Netto',
-                                                                    data: yearlyCashFlow.map((entry) => {
-                                                                        const taxRow = taxableIncomeMap.get(entry.year);
-                                                                        const taxTotal = taxRow?.totalAll ?? taxRow?.taxTotal ?? entry.taxes ?? 0;
-                                                                        const taxPayment = taxRow ? -Math.abs(taxTotal) : (entry.taxes || 0);
-                                                                        return entry.income + entry.expenses + taxPayment;
+                                                                datasets: [
+                                                                    {
+                                                                        label: 'Netto',
+                                                                        data: yearlyCashFlow.map((entry) => {
+                                                                        const taxPayment = getTaxPaymentForYear(entry.year);
+                                                                        const baseNet = entry.income + entry.expenses + (entry.taxes || 0);
+                                                                        const netWithTaxes = usesBackendTaxes ? baseNet : baseNet + taxPayment;
+                                                                        return netWithTaxes;
                                                                     }),
                                                                     borderColor: '#22d3ee',
                                                                     backgroundColor: 'rgba(34, 211, 238, 0.2)',
@@ -2663,19 +2966,19 @@ const Simulation = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                        {yearlyCashFlow.map((yearRow) => {
-                                            const isExpanded = expandedYears.includes(yearRow.year);
-                                            const taxRow = taxableIncomeMap.get(yearRow.year);
-                                            const taxTotal = taxRow?.totalAll ?? taxRow?.taxTotal ?? 0;
-                                            const taxPayment = taxRow ? -Math.abs(taxTotal) : (yearRow.taxes || 0);
-                                            const yearNet = usesBackendTaxes
-                                                ? yearRow.income + yearRow.expenses
-                                                : yearRow.income + yearRow.expenses + taxPayment;
-                                            return (
-                                                <React.Fragment key={`year-${yearRow.year}`}>
-                                                    <tr>
-                                                        <td>
-                                                            <button
+                                            {yearlyCashFlow.map((yearRow) => {
+                                                const isExpanded = expandedYears.includes(yearRow.year);
+                                                const taxRow = taxableIncomeMap.get(yearRow.year);
+                                                const taxPayment = getTaxPaymentForYear(yearRow.year);
+                                                const taxTotal = (yearRow.taxes || 0) + taxPayment;
+                                                const expensesExTax = usesBackendTaxes ? yearRow.expenses - taxPayment : yearRow.expenses;
+                                                const baseNet = yearRow.income + yearRow.expenses + (yearRow.taxes || 0);
+                                                const yearNet = usesBackendTaxes ? baseNet : baseNet + taxPayment;
+                                                return (
+                                                    <React.Fragment key={`year-${yearRow.year}`}>
+                                                        <tr>
+                                                            <td>
+                                                                <button
                                                                 className="link-button"
                                                                 onClick={() =>
                                                                     setExpandedYears((prev) =>
@@ -2689,17 +2992,17 @@ const Simulation = () => {
                                                             </button>
                                                         </td>
                                                         <td>{formatCurrency(yearRow.income)}</td>
-                                                        <td>{formatCurrency(yearRow.expenses)}</td>
+                                                        <td>{formatCurrency(expensesExTax)}</td>
                                                         <td>
                                                             <button
                                                                 className="link-button"
                                                                 onClick={() => {
                                                                     setSelectedTaxYear((prev) =>
                                                                         prev === yearRow.year ? null : yearRow.year
-                                                                    );
+                                                                   );
                                                                 }}
                                                             >
-                                                                {formatCurrency(taxPayment)}
+                                                                {formatCurrency(taxTotal)}
                                                             </button>
                                                         </td>
                                                         <td>{formatCurrency(yearNet)}</td>
@@ -2772,21 +3075,77 @@ const Simulation = () => {
                                                                                         (taxRow.taxTotal || 0) + (taxRow.federalTax || 0)
                                                                                 )}
                                                                             </strong>
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="panel">
+                            <div className="panel-header">
+                                <div>
+                                    <p className="eyebrow">Stresstest</p>
+                                    <h3>Totals & Cashflows (Basis vs. Stress)</h3>
+                                </div>
+                            </div>
+                            <div className="panel-body">
+                                {comparisonTotalChart ? (
+                                    <div className="chart-wrapper">
+                                        <Line
+                                            data={comparisonTotalChart}
+                                            options={{
+                                                responsive: true,
+                                                maintainAspectRatio: false,
+                                                plugins: { legend: { position: 'top' } },
+                                                scales: { y: { ticks: { callback: (v) => formatCurrency(v) } } },
+                                            }}
+                                        />
+                                    </div>
+                                ) : (
+                                    <p className="placeholder">Keine Vergleichsdaten vorhanden.</p>
+                                )}
+                            </div>
+                            <div className="panel-body">
+                                {comparisonCashflowChart ? (
+                                    <div className="chart-wrapper">
+                                        <Line
+                                            data={comparisonCashflowChart}
+                                            options={{
+                                                responsive: true,
+                                                maintainAspectRatio: false,
+                                                plugins: { legend: { position: 'top' } },
+                                                scales: { y: { ticks: { callback: (v) => formatCurrency(v) } } },
+                                            }}
+                                        />
+                                    </div>
+                                ) : (
+                                    <p className="placeholder">Keine Cashflow-Vergleichsdaten vorhanden.</p>
+                                )}
+                            </div>
+                        </div>
                                                             </td>
                                                         </tr>
                                                     )}
                                                                     {isExpanded &&
                                                                         yearRow.months.map((row) => {
                                                                             const isDecember = (row.dateObj.getMonth?.() ?? 0) === 11;
-                                                                            const monthTax = usesBackendTaxes ? 0 : isDecember ? taxPayment : 0;
-                                                                            const canToggleTax = monthTax !== 0;
-                                                                            const monthNet =
-                                                                                usesBackendTaxes || monthTax === 0
-                                                                                    ? row.income + row.expenses
-                                                                                    : row.income + row.expenses + monthTax;
+                                                                            const annualTaxForMonth = isDecember ? taxPayment : 0;
+                                                                            const monthTax = (row.taxes || 0) + annualTaxForMonth;
+                                                                            const expensesExTaxMonth =
+                                                                                usesBackendTaxes && annualTaxForMonth !== 0
+                                                                                    ? row.expenses - annualTaxForMonth
+                                                                                    : row.expenses;
+                                                                            const baseMonthNet = row.income + row.expenses + (row.taxes || 0);
+                                                                            const monthNet = usesBackendTaxes ? baseMonthNet : baseMonthNet + annualTaxForMonth;
+                                                                            const isTaxExpense = (item) =>
+                                                                                typeof item?.name === 'string' && item.name.toLowerCase().includes('steuer');
+                                                                            const expenseDetails =
+                                                                                usesBackendTaxes && annualTaxForMonth !== 0
+                                                                                    ? (row.expense_details || []).filter((item) => !isTaxExpense(item))
+                                                                                    : row.expense_details || [];
+                                                                            const taxDetailItems =
+                                                                                usesBackendTaxes && annualTaxForMonth !== 0
+                                                                                    ? (row.expense_details || []).filter((item) => isTaxExpense(item))
+                                                                                    : row.tax_details || [];
+                                                                            const canToggleTax = monthTax !== 0 || (taxDetailItems && taxDetailItems.length > 0);
                                                                             return (
                                                                                 <React.Fragment key={row.date}>
                                                                                     <tr className="monthly-row">
@@ -2820,7 +3179,7 @@ const Simulation = () => {
                                                                                                     )
                                                                                                 }
                                                                                             >
-                                                                                                {formatCurrency(row.expenses)}
+                                                                                                {formatCurrency(expensesExTaxMonth)}
                                                                                             </button>
                                                                                         </td>
                                                                                         <td>
@@ -2860,12 +3219,12 @@ const Simulation = () => {
                                                                                             </td>
                                                                                         </tr>
                                                                                     )}
-                                                                                    {row.showExpense && row.expense_details?.length > 0 && (
+                                                                                    {row.showExpense && expenseDetails.length > 0 && (
                                                                                         <tr className="cashflow-subrow">
                                                                                             <td></td>
                                                                                             <td colSpan={4}>
                                                                                                 <ul className="cashflow-items">
-                                                                                                    {row.expense_details.map((item, idx) => (
+                                                                                                    {expenseDetails.map((item, idx) => (
                                                                                                         <li key={`exp-${row.date}-${idx}`}>
                                                                                                             <span>{item.name}</span>
                                                                                                             <span className="muted">{item.account}</span>
@@ -2878,18 +3237,30 @@ const Simulation = () => {
                                                                                             </td>
                                                                                         </tr>
                                                                                     )}
-                                                                                    {row.showTax && monthTax !== 0 && (
+                                                                                    {row.showTax && (monthTax !== 0 || taxDetailItems.length > 0) && (
                                                                                         <tr className="cashflow-subrow">
                                                                                             <td></td>
                                                                                             <td colSpan={4}>
                                                                                                 <ul className="cashflow-items">
-                                                                                                    <li>
-                                                                                                        <span>Steuern (berechnet)</span>
-                                                                                                        <span className="muted">Jahressteuer</span>
-                                                                                                        <span className="amount">
-                                                                                                            {formatCurrency(monthTax)}
-                                                                                                        </span>
-                                                                                                    </li>
+                                                                                                    {taxDetailItems.length > 0 ? (
+                                                                                                        taxDetailItems.map((item, idx) => (
+                                                                                                            <li key={`tax-${row.date}-${idx}`}>
+                                                                                                                <span>{item.name}</span>
+                                                                                                                <span className="muted">{item.account}</span>
+                                                                                                                <span className="amount">
+                                                                                                                    {formatCurrency(item.amount)}
+                                                                                                                </span>
+                                                                                                            </li>
+                                                                                                        ))
+                                                                                                    ) : (
+                                                                                                        <li>
+                                                                                                            <span>Steuern (berechnet)</span>
+                                                                                                            <span className="muted">Jahressteuer</span>
+                                                                                                            <span className="amount">
+                                                                                                                {formatCurrency(monthTax)}
+                                                                                                            </span>
+                                                                                                        </li>
+                                                                                                    )}
                                                                                                 </ul>
                                                                                             </td>
                                                                                         </tr>
@@ -3125,231 +3496,243 @@ const Simulation = () => {
                     </div>
                     <div className="panel-body">
                         <div className="profile-list-block">
+                            <div className="muted small" style={{ marginBottom: '0.5rem' }}>
+                                Profile anklicken, um sie parallel in den Stress-/Sensitivitäts-Charts zu zeigen (Mehrfachauswahl möglich).
+                            </div>
                             <div className="profile-list">
-                                {(stressProfiles || []).map((p) => (
-                                    <div className="profile-item" key={p.id}>
-                                        <div className="profile-header" onClick={() => handleToggleProfile(p)}>
-                                            <div>
-                                                <strong>{p.name}</strong>
-                                                {p.description ? <div className="muted small">{p.description}</div> : null}
-                                            </div>
-                                            <div className="profile-actions">
-                                                <button
-                                                    className="secondary"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleEditProfile(p);
-                                                    }}
-                                                >
-                                                    Bearbeiten
-                                                </button>
-                                                <button
-                                                    className="secondary danger"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleDeleteProfile(p.id);
-                                                    }}
-                                                >
-                                                    Löschen
-                                                </button>
-                                            </div>
-                                        </div>
-                                        {openProfileId === p.id && (
-                                            <div className="profile-body">
-                                                {profileLoadingId === p.id ? (
-                                                    <div className="muted small">Berechne...</div>
-                                                ) : (
-                                                    <div className="profile-summary">
-                                                        <div>
-                                                            <span className="label">Endwert Basis</span>
-                                                            <strong>
-                                                                {baseSummary?.endValue !== null && baseSummary?.endValue !== undefined
-                                                                    ? formatCurrency(baseSummary.endValue)
-                                                                    : '–'}
-                                                            </strong>
-                                                        </div>
-                                                        <div>
-                                                            <span className="label">Endwert Stress</span>
-                                                            <strong>
-                                                                {profileResults[p.id]?.endValue !== undefined && profileResults[p.id]?.endValue !== null
-                                                                    ? formatCurrency(profileResults[p.id].endValue)
-                                                                    : '–'}
-                                                            </strong>
-                                                        </div>
-                                                        <div>
-                                                            <span className="label">Delta Vermögen</span>
-                                                            <strong>
-                                                                {profileResults[p.id]?.endValue !== undefined &&
-                                                                profileResults[p.id]?.endValue !== null &&
-                                                                baseSummary?.endValue !== undefined &&
-                                                                baseSummary?.endValue !== null
-                                                                    ? formatCurrency(profileResults[p.id].endValue - baseSummary.endValue)
-                                                                    : '–'}
-                                                            </strong>
-                                                        </div>
-                                                        <div>
-                                                            <span className="label">Netto Cashflow (Stress)</span>
-                                                            <strong>
-                                                                {profileResults[p.id]?.net !== undefined && profileResults[p.id]?.net !== null
-                                                                    ? formatCurrency(profileResults[p.id].net)
-                                                                    : '–'}
-                                                            </strong>
-                                                        </div>
-                                                        <div>
-                                                            <span className="label">Delta vs Basis</span>
-                                                            <strong>
-                                                                {profileResults[p.id]?.net !== undefined &&
-                                                                profileResults[p.id]?.net !== null &&
-                                                                baseSummary?.net !== undefined &&
-                                                                baseSummary?.net !== null
-                                                                    ? formatCurrency(profileResults[p.id].net - baseSummary.net)
-                                                                    : '–'}
-                                                            </strong>
-                                                        </div>
+                                {(stressProfiles || []).map((p) => {
+                                    const isSelected = selectedProfileIds.some(
+                                        (id) => normalizeId(id) === normalizeId(p.id)
+                                    );
+                                    return (
+                                        <div className="profile-item" key={p.id}>
+                                            <div className="profile-header" onClick={() => handleToggleProfile(p)}>
+                                                <div>
+                                                    <strong>{p.name}</strong>
+                                                    {p.description ? <div className="muted small">{p.description}</div> : null}
+                                                    <div className="muted small">
+                                                        {isSelected ? 'Im Chart aktiviert' : 'Zum Anzeigen in Charts anklicken'}
                                                     </div>
-                                                )}
-                                                {editingProfileId === p.id && (
-                                                    <div className="profile-edit">
-                                                        <div className="profile-form inline">
-                                                            <input
-                                                                type="text"
-                                                                placeholder="Profilname"
-                                                                value={editingProfileName}
-                                                                onChange={(e) => setEditingProfileName(e.target.value)}
-                                                            />
-                                                            <input
-                                                                type="text"
-                                                                placeholder="Beschreibung (optional)"
-                                                                value={editingProfileDescription}
-                                                                onChange={(e) => setEditingProfileDescription(e.target.value)}
-                                                            />
+                                                </div>
+                                                <div className="profile-actions">
+                                                    {isSelected ? <span className="pill success">Aktiv</span> : null}
+                                                    <button
+                                                        className="secondary"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleEditProfile(p);
+                                                        }}
+                                                    >
+                                                        Bearbeiten
+                                                    </button>
+                                                    <button
+                                                        className="secondary danger"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDeleteProfile(p.id);
+                                                        }}
+                                                    >
+                                                        Löschen
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            {openProfileIds.some((id) => normalizeId(id) === normalizeId(p.id)) && (
+                                                <div className="profile-body">
+                                                    {profileLoadingId === p.id ? (
+                                                        <div className="muted small">Berechne...</div>
+                                                    ) : (
+                                                        <div className="profile-summary">
+                                                            <div>
+                                                                <span className="label">Endwert Basis</span>
+                                                                <strong>
+                                                                    {baseSummary?.endValue !== null && baseSummary?.endValue !== undefined
+                                                                        ? formatCurrency(baseSummary.endValue)
+                                                                        : '–'}
+                                                                </strong>
+                                                            </div>
+                                                            <div>
+                                                                <span className="label">Endwert Stress</span>
+                                                                <strong>
+                                                                    {profileResults[p.id]?.endValue !== undefined && profileResults[p.id]?.endValue !== null
+                                                                        ? formatCurrency(profileResults[p.id].endValue)
+                                                                        : '–'}
+                                                                </strong>
+                                                            </div>
+                                                            <div>
+                                                                <span className="label">Delta Vermögen</span>
+                                                                <strong>
+                                                                    {profileResults[p.id]?.endValue !== undefined &&
+                                                                    profileResults[p.id]?.endValue !== null &&
+                                                                    baseSummary?.endValue !== undefined &&
+                                                                    baseSummary?.endValue !== null
+                                                                        ? formatCurrency(profileResults[p.id].endValue - baseSummary.endValue)
+                                                                        : '–'}
+                                                                </strong>
+                                                            </div>
+                                                            <div>
+                                                                <span className="label">Netto Cashflow (Stress)</span>
+                                                                <strong>
+                                                                    {profileResults[p.id]?.net !== undefined && profileResults[p.id]?.net !== null
+                                                                        ? formatCurrency(profileResults[p.id].net)
+                                                                        : '–'}
+                                                                </strong>
+                                                            </div>
+                                                            <div>
+                                                                <span className="label">Delta vs Basis</span>
+                                                                <strong>
+                                                                    {profileResults[p.id]?.net !== undefined &&
+                                                                    profileResults[p.id]?.net !== null &&
+                                                                    baseSummary?.net !== undefined &&
+                                                                    baseSummary?.net !== null
+                                                                        ? formatCurrency(profileResults[p.id].net - baseSummary.net)
+                                                                        : '–'}
+                                                                </strong>
+                                                            </div>
                                                         </div>
-                                                        <div className="risk-grid single">
-                                                            {(editingProfileOverrides.shocks || []).map((shock, idx) => (
-                                                                <div className="risk-row" key={shock.id}>
-                                                                    <label className="stacked">
-                                                                        <span>Risiko {idx + 1} Typ</span>
-                                                                        <select
-                                                                            value={shock.assetType}
-                                                                            onChange={(e) =>
-                                                                                setEditingProfileOverrides((prev) => ({
-                                                                                    ...prev,
-                                                                                    shocks: prev.shocks.map((s) =>
-                                                                                        s.id === shock.id ? { ...s, assetType: e.target.value } : s
-                                                                                    ),
-                                                                                }))
-                                                                            }
-                                                                        >
-                                                                            <option value="portfolio">Portfolio</option>
-                                                                            <option value="real_estate">Immobilie</option>
-                                                                            <option value="mortgage_interest">Zins (Hypothek)</option>
-                                                                            <option value="income_tax">Einkommensteuer</option>
-                                                                            <option value="inflation">Inflation</option>
-                                                                        </select>
-                                                                    </label>
-                                                                    <label className="stacked">
-                                                                        <span>Δ (%)</span>
-                                                                        <input
-                                                                            type="number"
-                                                                            step="0.1"
-                                                                            value={shock.delta}
-                                                                            onChange={(e) =>
-                                                                                setEditingProfileOverrides((prev) => ({
-                                                                                    ...prev,
-                                                                                    shocks: prev.shocks.map((s) =>
-                                                                                        s.id === shock.id ? { ...s, delta: e.target.value } : s
-                                                                                    ),
-                                                                                }))
-                                                                            }
-                                                                        />
-                                                                    </label>
-                                                                    <label className="stacked">
-                                                                        <span>Start</span>
-                                                                        <input
-                                                                            type="month"
-                                                                            value={shock.start}
-                                                                            onChange={(e) =>
-                                                                                setEditingProfileOverrides((prev) => ({
-                                                                                    ...prev,
-                                                                                    shocks: prev.shocks.map((s) =>
-                                                                                        s.id === shock.id ? { ...s, start: e.target.value } : s
-                                                                                    ),
-                                                                                }))
-                                                                            }
-                                                                        />
-                                                                    </label>
-                                                                    <label className="stacked">
-                                                                        <span>Ende</span>
-                                                                        <input
-                                                                            type="month"
-                                                                            value={shock.end}
-                                                                            onChange={(e) =>
-                                                                                setEditingProfileOverrides((prev) => ({
-                                                                                    ...prev,
-                                                                                    shocks: prev.shocks.map((s) =>
-                                                                                        s.id === shock.id ? { ...s, end: e.target.value } : s
-                                                                                    ),
-                                                                                }))
-                                                                            }
-                                                                        />
-                                                                    </label>
-                                                                    <div className="risk-row-actions">
-                                                                        <button
-                                                                            className="secondary danger"
-                                                                            type="button"
-                                                                            onClick={() =>
-                                                                                setEditingProfileOverrides((prev) => ({
-                                                                                    ...prev,
-                                                                                    shocks: (prev.shocks || []).filter((s) => s.id !== shock.id),
-                                                                                }))
-                                                                            }
-                                                                        >
-                                                                            Löschen
-                                                                        </button>
+                                                    )}
+                                                    {editingProfileId === p.id && (
+                                                        <div className="profile-edit">
+                                                            <div className="profile-form inline">
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Profilname"
+                                                                    value={editingProfileName}
+                                                                    onChange={(e) => setEditingProfileName(e.target.value)}
+                                                                />
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Beschreibung (optional)"
+                                                                    value={editingProfileDescription}
+                                                                    onChange={(e) => setEditingProfileDescription(e.target.value)}
+                                                                />
+                                                            </div>
+                                                            <div className="risk-grid single">
+                                                                {(editingProfileOverrides.shocks || []).map((shock, idx) => (
+                                                                    <div className="risk-row" key={shock.id}>
+                                                                        <label className="stacked">
+                                                                            <span>Risiko {idx + 1} Typ</span>
+                                                                            <select
+                                                                                value={shock.assetType}
+                                                                                onChange={(e) =>
+                                                                                    setEditingProfileOverrides((prev) => ({
+                                                                                        ...prev,
+                                                                                        shocks: prev.shocks.map((s) =>
+                                                                                            s.id === shock.id ? { ...s, assetType: e.target.value } : s
+                                                                                        ),
+                                                                                    }))
+                                                                                }
+                                                                            >
+                                                                                <option value="portfolio">Portfolio</option>
+                                                                                <option value="real_estate">Immobilie</option>
+                                                                                <option value="mortgage_interest">Zins (Hypothek)</option>
+                                                                                <option value="income_tax">Einkommensteuer</option>
+                                                                                <option value="inflation">Inflation</option>
+                                                                            </select>
+                                                                        </label>
+                                                                        <label className="stacked">
+                                                                            <span>Δ (%)</span>
+                                                                            <input
+                                                                                type="number"
+                                                                                step="0.1"
+                                                                                value={shock.delta}
+                                                                                onChange={(e) =>
+                                                                                    setEditingProfileOverrides((prev) => ({
+                                                                                        ...prev,
+                                                                                        shocks: prev.shocks.map((s) =>
+                                                                                            s.id === shock.id ? { ...s, delta: e.target.value } : s
+                                                                                        ),
+                                                                                    }))
+                                                                                }
+                                                                            />
+                                                                        </label>
+                                                                        <label className="stacked">
+                                                                            <span>Start</span>
+                                                                            <input
+                                                                                type="month"
+                                                                                value={shock.start}
+                                                                                onChange={(e) =>
+                                                                                    setEditingProfileOverrides((prev) => ({
+                                                                                        ...prev,
+                                                                                        shocks: prev.shocks.map((s) =>
+                                                                                            s.id === shock.id ? { ...s, start: e.target.value } : s
+                                                                                        ),
+                                                                                    }))
+                                                                                }
+                                                                            />
+                                                                        </label>
+                                                                        <label className="stacked">
+                                                                            <span>Ende</span>
+                                                                            <input
+                                                                                type="month"
+                                                                                value={shock.end}
+                                                                                onChange={(e) =>
+                                                                                    setEditingProfileOverrides((prev) => ({
+                                                                                        ...prev,
+                                                                                        shocks: prev.shocks.map((s) =>
+                                                                                            s.id === shock.id ? { ...s, end: e.target.value } : s
+                                                                                        ),
+                                                                                    }))
+                                                                                }
+                                                                            />
+                                                                        </label>
+                                                                        <div className="risk-row-actions">
+                                                                            <button
+                                                                                className="secondary danger"
+                                                                                type="button"
+                                                                                onClick={() =>
+                                                                                    setEditingProfileOverrides((prev) => ({
+                                                                                        ...prev,
+                                                                                        shocks: (prev.shocks || []).filter((s) => s.id !== shock.id),
+                                                                                    }))
+                                                                                }
+                                                                            >
+                                                                                Löschen
+                                                                            </button>
+                                                                        </div>
                                                                     </div>
-                                                                </div>
-                                                            ))}
+                                                                ))}
+                                                            </div>
+                                                            <div className="risk-buttons">
+                                                                <button
+                                                                    className="secondary"
+                                                                    onClick={() =>
+                                                                        setEditingProfileOverrides((prev) => ({
+                                                                            ...prev,
+                                                                            shocks: [
+                                                                                ...(prev.shocks || []),
+                                                                                {
+                                                                                    id: `edit-${(prev.shocks || []).length + 1}-${Date.now()}`,
+                                                                                    assetType: 'portfolio',
+                                                                                    delta: '0',
+                                                                                    start: '',
+                                                                                    end: '',
+                                                                                },
+                                                                            ],
+                                                                        }))
+                                                                    }
+                                                                >
+                                                                    Neues Risiko
+                                                                </button>
+                                                                <button className="secondary" onClick={handleSaveProfileEdits}>
+                                                                    Änderungen speichern
+                                                                </button>
+                                                                <button
+                                                                    className="secondary danger"
+                                                                    onClick={() => {
+                                                                        setEditingProfileId('');
+                                                                        setEditingProfileOverrides({ shocks: [] });
+                                                                    }}
+                                                                >
+                                                                    Abbrechen
+                                                                </button>
+                                                            </div>
                                                         </div>
-                                                        <div className="risk-buttons">
-                                                            <button
-                                                                className="secondary"
-                                                                onClick={() =>
-                                                                    setEditingProfileOverrides((prev) => ({
-                                                                        ...prev,
-                                                                        shocks: [
-                                                                            ...(prev.shocks || []),
-                                                                            {
-                                                                                id: `edit-${(prev.shocks || []).length + 1}-${Date.now()}`,
-                                                                                assetType: 'portfolio',
-                                                                                delta: '0',
-                                                                                start: '',
-                                                                                end: '',
-                                                                            },
-                                                                        ],
-                                                                    }))
-                                                                }
-                                                            >
-                                                                Neues Risiko
-                                                            </button>
-                                                            <button className="secondary" onClick={handleSaveProfileEdits}>
-                                                                Änderungen speichern
-                                                            </button>
-                                                            <button
-                                                                className="secondary danger"
-                                                                onClick={() => {
-                                                                    setEditingProfileId('');
-                                                                    setEditingProfileOverrides({ shocks: [] });
-                                                                }}
-                                                            >
-                                                                Abbrechen
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                                 {(!stressProfiles || stressProfiles.length === 0) && (
                                     <div className="muted small">Noch keine Profile gespeichert.</div>
                                 )}
@@ -3510,6 +3893,8 @@ const Simulation = () => {
                                 </button>
                             </div>
                         </div>
+                        </>
+                        )}
                         <div className="risk-summary">
                             <div className="summary-card">
                                 <span className="label">Endwert Basis</span>
@@ -3546,8 +3931,48 @@ const Simulation = () => {
                                 )}
                             </div>
                         </div>
-                        </>
-                        )}
+                        <div className="panel">
+                            <div className="panel-header">
+                                <div>
+                                    <p className="eyebrow">Vergleich</p>
+                                    <h3>Basis vs. Stress</h3>
+                                </div>
+                            </div>
+                            <div className="panel-body">
+                                {comparisonTotalChart ? (
+                                    <div className="chart-wrapper">
+                                        <Line
+                                            data={comparisonTotalChart}
+                                            options={{
+                                                responsive: true,
+                                                maintainAspectRatio: false,
+                                                plugins: { legend: { position: 'top' } },
+                                                scales: { y: { ticks: { callback: (v) => formatCurrency(v) } } },
+                                            }}
+                                        />
+                                    </div>
+                                ) : (
+                                    <p className="placeholder">Keine Vergleichsdaten vorhanden.</p>
+                                )}
+                            </div>
+                            <div className="panel-body">
+                                {comparisonCashflowChart ? (
+                                    <div className="chart-wrapper">
+                                        <Line
+                                            data={comparisonCashflowChart}
+                                            options={{
+                                                responsive: true,
+                                                maintainAspectRatio: false,
+                                                plugins: { legend: { position: 'top' } },
+                                                scales: { y: { ticks: { callback: (v) => formatCurrency(v) } } },
+                                            }}
+                                        />
+                                    </div>
+                                ) : (
+                                    <p className="placeholder">Keine Cashflow-Vergleichsdaten vorhanden.</p>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
