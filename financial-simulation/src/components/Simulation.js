@@ -2068,15 +2068,6 @@ const Simulation = () => {
                 rate: Number(rate) || 0,
             }));
         };
-        const sanitizeFederal = (rows, fallback) => {
-            const base = Array.isArray(rows) && rows.length ? rows : fallback;
-            return (base || []).map(({ income, base: rowBase, per100 }) => ({
-                income: Number(income) || 0,
-                base: Number(rowBase) || 0,
-                per100: Number(per100) || 0,
-            }));
-        };
-
         const incomeBrackets = sanitizeBrackets(activeTaxProfile?.income_brackets, []);
         const wealthBrackets = sanitizeBrackets(activeTaxProfile?.wealth_brackets, []);
         const incomeTariffRows =
@@ -2157,7 +2148,6 @@ const Simulation = () => {
         currentSimulation,
         selectedUser,
         derivedTaxSettings,
-        scenarioDetails,
     ]);
 
     const taxableIncomeMap = useMemo(() => {

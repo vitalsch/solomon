@@ -11,7 +11,7 @@ function App() {
             <div className="app-shell">
                 <header className="app-header">
                     <div className="app-brand">
-                        <span>Solomon Planner</span>
+                        <span>Personal Financial Planner</span>
                     </div>
                     <div className="view-switcher">
                         <button
