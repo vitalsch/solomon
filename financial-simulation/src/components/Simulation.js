@@ -1441,11 +1441,16 @@ const Simulation = () => {
         }
     }, [currentScenarioId, saveScenarioSettings, runSimulation]);
 
-    // Auto-simulate when a scenario becomes active (incl. after login)
+    const autoSimAttemptRef = useRef({});
+
+    // Auto-simulate once when a scenario becomes active (incl. after login).
+    // If it fails (e.g., missing data), do not keep retrying until the user makes a new change.
     useEffect(() => {
         if (!currentScenarioId) return;
         const key = cacheKey(selectedUserId, currentScenarioId);
         if (simulationCache[key]) return;
+        if (autoSimAttemptRef.current[key]) return;
+        autoSimAttemptRef.current[key] = true;
         handleSimulate(currentScenarioId);
     }, [currentScenarioId, selectedUserId, simulationCache, handleSimulate]);
 
@@ -1785,7 +1790,8 @@ const Simulation = () => {
                     tension: 0.1,
                     pointRadius: 0,
                     borderDash: [6, 4],
-                    stack: 'compare',
+                    // use a unique stack so comparison lines overlay instead of stacking
+                    stack: `compare-${scenarioId}`,
                 };
             })
             .filter(Boolean);
