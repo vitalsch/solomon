@@ -4,6 +4,52 @@
   text-align: center;
 }
 
+.app-shell {
+  min-height: 100vh;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.app-brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.view-switcher {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.view-switcher button {
+  padding: 0.5rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: white;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.view-switcher button.active {
+  background: #111827;
+  color: white;
+  border-color: #111827;
+}
+
+.app-shell main {
+  flex: 1;
+}
+
 .simulation {
   text-align: left;
   padding: clamp(1.2rem, 3vw, 2.4rem);
@@ -1272,4 +1318,288 @@ button.secondary:hover {
   box-shadow: 0 12px 28px rgba(25, 37, 57, 0.14);
   cursor: pointer;
   font-weight: 700;
+}
+
+.admin-panel {
+  text-align: left;
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  padding: 1.5rem;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.admin-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.admin-login {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: 320px;
+  margin: 1rem auto 0;
+}
+
+.admin-login input {
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+}
+
+.admin-login button {
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  border: none;
+  background: #0f172a;
+  color: white;
+  cursor: pointer;
+}
+
+.admin-panel button.secondary {
+  background: transparent;
+  color: #111827;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+}
+
+.admin-panel button.danger {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  padding: 0.3rem 0.9rem;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.admin-tabs button {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: #fff;
+  border-radius: 10px;
+  padding: 0.5rem 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.admin-tabs button.active {
+  background: #111827;
+  color: #fff;
+  border-color: #111827;
+}
+
+.admin-tab-panel {
+  margin-top: 1rem;
+}
+
+.admin-error {
+  color: #c2410c;
+  font-weight: 500;
+}
+
+.admin-empty {
+  color: var(--muted);
+  margin: 0.75rem 0;
+}
+
+.admin-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.admin-form {
+  margin: 1.5rem 0;
+}
+
+.admin-form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+
+.admin-form__grid input {
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+}
+
+.admin-form__grid button {
+  padding: 0.65rem 0.8rem;
+  border-radius: 10px;
+  border: none;
+  background: #111827;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.admin-table-wrapper {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+}
+
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 0.75rem;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.admin-table thead {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+.admin-table td.empty {
+  text-align: center;
+  padding: 1.5rem;
+  color: var(--muted);
+}
+
+.state-tariff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.state-tariff-card {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  padding: 1rem;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.09);
+}
+
+.state-tariff-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.state-tariff-header h3 {
+  margin: 0;
+}
+
+.state-tariff-header .tag {
+  background: #ecfeff;
+  color: #0e7490;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.8rem;
+  margin-left: 0.4rem;
+}
+
+.state-tariff-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.json-upload {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+  font-weight: 500;
+  background: #f8fafc;
+}
+
+.json-upload input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.canton-inline {
+  margin-top: 0.4rem;
+}
+
+.cell-button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inline-edit {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.inline-edit input {
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+}
+
+.inline-edit button {
+  border-radius: 8px;
+  border: none;
+  padding: 0.35rem 0.6rem;
+  background: #111827;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.inline-edit button.secondary {
+  background: #f1f5f9;
+  color: #111827;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+}
+
+.state-tariff-table th,
+.state-tariff-table td {
+  white-space: nowrap;
+}
+
+.state-tariff-rowform {
+  margin-top: 0.85rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.5rem;
+}
+
+.state-tariff-rowform input {
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+}
+
+.state-tariff-rowform button {
+  border-radius: 10px;
+  border: none;
+  background: #111827;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
 }

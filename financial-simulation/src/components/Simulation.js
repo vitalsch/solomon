@@ -36,7 +36,6 @@ import {
     simulateScenario,
     simulateScenarioStress,
     listTaxProfiles,
-    createTaxProfile,
     listStressProfiles,
     createStressProfile,
     updateStressProfile,
@@ -44,6 +43,10 @@ import {
     setAuthToken,
     getAuthToken,
     importTaxProfiles,
+    listTaxCantons,
+    listMunicipalTaxEntries,
+    listStateTaxTariffsPublic,
+    listFederalTaxTablesPublic,
 } from '../api';
 import '../TransactionsList.css';
 
@@ -60,151 +63,16 @@ ChartJS.register(
 
 const normalizeId = (value) => (value === null || value === undefined ? '' : String(value));
 const cacheKey = (userId, scenarioId) => `${normalizeId(userId)}::${normalizeId(scenarioId)}`;
+const normalizeStressProfile = (profile = {}) => ({
+    ...profile,
+    is_public: Boolean(profile?.is_public),
+});
+const isProfileOwner = (profile, userId) => normalizeId(profile?.user_id) === normalizeId(userId);
 
-// Standard-Steuerprofil als Fallback und zum initialen Befüllen der Datenbank
-const DEFAULT_TAX_PROFILE = {
-    name: 'Standard CH',
-    description: 'Initialprofil aus den Frontend-Defaults',
-    municipal_tax_factor: 1.15,
-    cantonal_tax_factor: 0.98,
-    church_tax_factor: 0.14,
-    personal_tax_per_person: 24,
-    income_brackets: [
-        { cap: 6900, rate: 0 },
-        { cap: 4900, rate: 0.02 },
-        { cap: 4800, rate: 0.03 },
-        { cap: 7900, rate: 0.04 },
-        { cap: 9600, rate: 0.05 },
-        { cap: 11000, rate: 0.06 },
-        { cap: 12900, rate: 0.07 },
-        { cap: 17400, rate: 0.08 },
-        { cap: 33600, rate: 0.09 },
-        { cap: 33200, rate: 0.1 },
-        { cap: 52700, rate: 0.11 },
-        { cap: 68400, rate: 0.12 },
-        { cap: null, rate: 0.13 },
-    ],
-    wealth_brackets: [
-        { cap: 80000, rate: 0 },
-        { cap: 238000, rate: 0.0005 },
-        { cap: 399000, rate: 0.001 },
-        { cap: 636000, rate: 0.0015 },
-        { cap: 956000, rate: 0.002 },
-        { cap: 953000, rate: 0.0025 },
-        { cap: null, rate: 0.003 },
-    ],
-    federal_table: [
-        { income: 18500, base: 25.41, per100: 0.77 },
-        { income: 19000, base: 29.26, per100: 0.77 },
-        { income: 20000, base: 36.96, per100: 0.77 },
-        { income: 21000, base: 44.66, per100: 0.77 },
-        { income: 22000, base: 52.36, per100: 0.77 },
-        { income: 23000, base: 60.06, per100: 0.77 },
-        { income: 24000, base: 67.76, per100: 0.77 },
-        { income: 25000, base: 75.46, per100: 0.77 },
-        { income: 26000, base: 83.16, per100: 0.77 },
-        { income: 27000, base: 90.86, per100: 0.77 },
-        { income: 28000, base: 98.56, per100: 0.77 },
-        { income: 29000, base: 106.26, per100: 0.77 },
-        { income: 30000, base: 113.96, per100: 7.0 },
-        { income: 33000, base: 137.06, per100: 33.0 },
-        { income: 33200, base: 138.6, per100: 35.0 },
-        { income: 33300, base: 139.48, per100: 0.88 },
-        { income: 34000, base: 145.64, per100: 43.0 },
-        { income: 35000, base: 154.44, per100: 53.0 },
-        { income: 36000, base: 163.24, per100: 63.0 },
-        { income: 37000, base: 172.04, per100: 73.0 },
-        { income: 38000, base: 180.84, per100: 83.0 },
-        { income: 39000, base: 189.64, per100: 93.0 },
-        { income: 40000, base: 198.44, per100: 103.0 },
-        { income: 41000, base: 207.24, per100: 113.0 },
-        { income: 42000, base: 216.04, per100: 123.0 },
-        { income: 43500, base: 229.2, per100: 138.0 },
-        { income: 43600, base: 231.84, per100: 2.64 },
-        { income: 44000, base: 242.4, per100: 143.0 },
-        { income: 45000, base: 268.8, per100: 153.0 },
-        { income: 46000, base: 295.2, per100: 163.0 },
-        { income: 47000, base: 321.6, per100: 173.0 },
-        { income: 48000, base: 348.0, per100: 183.0 },
-        { income: 49000, base: 374.4, per100: 193.0 },
-        { income: 50000, base: 400.8, per100: 203.0 },
-        { income: 51000, base: 427.2, per100: 213.0 },
-        { income: 53400, base: 490.56, per100: 237.0 },
-        { income: 53500, base: 493.2, per100: 239.0 },
-        { income: 54000, base: 506.4, per100: 249.0 },
-        { income: 55000, base: 532.8, per100: 269.0 },
-        { income: 56000, base: 559.2, per100: 289.0 },
-        { income: 57000, base: 585.6, per100: 309.0 },
-        { income: 58000, base: 612.0, per100: 329.0 },
-        { income: 58100, base: 614.97, per100: 2.97 },
-        { income: 59000, base: 641.7, per100: 349.0 },
-        { income: 60000, base: 671.4, per100: 369.0 },
-        { income: 61300, base: 710.01, per100: 395.0 },
-        { income: 61400, base: 712.98, per100: 398.0 },
-        { income: 65000, base: 819.9, per100: 506.0 },
-        { income: 70000, base: 968.4, per100: 656.0 },
-        { income: 75000, base: 1116.9, per100: 806.0 },
-        { income: 76100, base: 1149.55, per100: 839.0 },
-        { income: 76200, base: 1155.49, per100: 5.94 },
-        { income: 77500, base: 1232.71, per100: 881.0 },
-        { income: 79100, base: 1327.75, per100: 929.0 },
-        { income: 79200, base: 1333.69, per100: 933.0 },
-        { income: 82000, base: 1500.0, per100: 1045.0 },
-        { income: 82100, base: 1506.6, per100: 6.6 },
-        { income: 85000, base: 1698.0, per100: 1165.0 },
-        { income: 90000, base: 2028.0, per100: 1365.0 },
-        { income: 94900, base: 2351.4, per100: 1561.0 },
-        { income: 95000, base: 2358.0, per100: 1566.0 },
-        { income: 100000, base: 2688.0, per100: 1816.0 },
-        { income: 105000, base: 3018.0, per100: 2066.0 },
-        { income: 108600, base: 3255.6, per100: 2246.0 },
-        { income: 108700, base: 3262.2, per100: 2252.0 },
-        { income: 108800, base: 3268.8, per100: 2258.0 },
-        { income: 108900, base: 3277.6, per100: 8.8 },
-        { income: 110000, base: 3374.4, per100: 2330.0 },
-        { income: 115000, base: 3814.4, per100: 2630.0 },
-        { income: 120500, base: 4298.4, per100: 2960.0 },
-        { income: 120600, base: 4307.2, per100: 2967.0 },
-        { income: 125000, base: 4694.4, per100: 3275.0 },
-        { income: 130000, base: 5134.4, per100: 3625.0 },
-        { income: 130500, base: 5178.4, per100: 3660.0 },
-        { income: 130600, base: 5187.2, per100: 3668.0 },
-        { income: 135000, base: 5574.4, per100: 4020.0 },
-        { income: 138300, base: 5864.8, per100: 4284.0 },
-        { income: 138400, base: 5873.6, per100: 4293.0 },
-        { income: 141500, base: 6146.4, per100: 4572.0 },
-        { income: 141600, base: 6157.4, per100: 11.0 },
-        { income: 144200, base: 6443.4, per100: 4815.0 },
-        { income: 144300, base: 6454.4, per100: 4825.0 },
-        { income: 148200, base: 6883.4, per100: 5215.0 },
-        { income: 148300, base: 6894.4, per100: 5226.0 },
-        { income: 150300, base: 7114.4, per100: 5446.0 },
-        { income: 150400, base: 7125.4, per100: 5458.0 },
-        { income: 151000, base: 7191.4, per100: 5530.0 },
-        { income: 152300, base: 7334.4, per100: 5686.0 },
-        { income: 152400, base: 7345.4, per100: 5699.0 },
-        { income: 155000, base: 7631.4, per100: 6037.0 },
-        { income: 160000, base: 8181.4, per100: 6687.0 },
-        { income: 170000, base: 9281.4, per100: 7987.0 },
-        { income: 184900, base: 10920.4, per100: 9924.0 },
-        { income: 185000, base: 10933.6, per100: 13.2 },
-        { income: 186000, base: 11065.6, per100: 10067.0 },
-        { income: 190000, base: 11593.6, per100: 10587.0 },
-        { income: 200000, base: 12913.6, per100: 11887.0 },
-        { income: 250000, base: 19513.6, per100: 18387.0 },
-        { income: 300000, base: 26113.6, per100: 24887.0 },
-        { income: 350000, base: 32713.6, per100: 31387.0 },
-        { income: 400000, base: 39313.6, per100: 37887.0 },
-        { income: 500000, base: 52513.6, per100: 50887.0 },
-        { income: 650000, base: 72313.6, per100: 70387.0 },
-        { income: 700000, base: 78913.6, per100: 76887.0 },
-        { income: 793300, base: 91229.2, per100: 89016.0 },
-        { income: 793400, base: 91241.0, per100: 11.5 },
-        { income: 800000, base: 92000.0, per100: 89887.0 },
-        { income: 940800, base: 108192.0, per100: 108191.0 },
-        { income: 940900, base: 108203.5, per100: 108203.5 },
-        { income: 950000, base: 109250.0, per100: 108203.5 },
-    ],
+const CONFESSION_FIELD_MAP = {
+    ref: 'ref_rate',
+    cath: 'cath_rate',
+    christian_cath: 'christian_cath_rate',
 };
 
 const formatTaxProfileLabel = (profile) => {
@@ -214,6 +82,49 @@ const formatTaxProfileLabel = (profile) => {
     if (profile.church) parts.push(profile.church);
     if (profile.marital_status) parts.push(profile.marital_status);
     return `${profile.name}${parts.length ? ` — ${parts.join(' / ')}` : ''}`;
+};
+
+const parseIsoLabel = (label) => {
+    if (!label) return null;
+    const [yearStr, monthStr] = label.split('-');
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) {
+        return null;
+    }
+    return { year, month };
+};
+
+const formatIsoLabel = (label) => {
+    if (!label) return '';
+    const safe = label.length === 10 ? `${label}T00:00:00` : label;
+    const date = new Date(safe);
+    if (Number.isNaN(date.getTime())) {
+        return label;
+    }
+    return date.toLocaleDateString('de-CH', { month: '2-digit', year: 'numeric' });
+};
+
+const parseNumericInput = (value) => {
+    if (typeof value === 'number') return value;
+    if (!value) return NaN;
+    const cleaned = String(value)
+        .replace(/\s+/g, '')
+        .replace(/CHF/gi, '')
+        .replace(/['’]/g, '')
+        .replace(/ /g, '')
+        .trim();
+    if (!cleaned) return NaN;
+    const hasComma = cleaned.includes(',');
+    const hasDot = cleaned.includes('.');
+    let normalized = cleaned;
+    if (hasComma && hasDot) {
+        normalized = cleaned.replace(/\./g, '').replace(',', '.');
+    } else if (hasComma) {
+        normalized = cleaned.replace(',', '.');
+    }
+    const num = Number(normalized);
+    return Number.isFinite(num) ? num : NaN;
 };
 
 const Simulation = () => {
@@ -244,15 +155,22 @@ const Simulation = () => {
     const [newScenarioStart, setNewScenarioStart] = useState('2024-05');
     const [newScenarioEnd, setNewScenarioEnd] = useState('2044-09');
     const [inflationRate, setInflationRate] = useState('');
-    const [municipalTaxRate, setMunicipalTaxRate] = useState('');
-    const [cantonalTaxRate, setCantonalTaxRate] = useState('');
-    const [churchTaxRate, setChurchTaxRate] = useState('');
-    const [personalTaxPerPerson, setPersonalTaxPerPerson] = useState('24');
     const [taxAccountId, setTaxAccountId] = useState('');
     const [taxProfiles, setTaxProfiles] = useState([]);
     const [selectedTaxProfileId, setSelectedTaxProfileId] = useState('');
     const [taxProfilesLoading, setTaxProfilesLoading] = useState(false);
     const [taxImportError, setTaxImportError] = useState('');
+    const [taxCantons, setTaxCantons] = useState([]);
+    const [taxMunicipalities, setTaxMunicipalities] = useState([]);
+    const [stateIncomeTariffs, setStateIncomeTariffs] = useState([]);
+    const [stateWealthTariffs, setStateWealthTariffs] = useState([]);
+    const [federalTariffs, setFederalTariffs] = useState([]);
+    const [selectedTaxCanton, setSelectedTaxCanton] = useState('');
+    const [selectedMunicipalityId, setSelectedMunicipalityId] = useState('');
+    const [selectedStateIncomeTariffId, setSelectedStateIncomeTariffId] = useState('');
+    const [selectedStateWealthTariffId, setSelectedStateWealthTariffId] = useState('');
+    const [selectedFederalTariffId, setSelectedFederalTariffId] = useState('');
+    const [selectedConfession, setSelectedConfession] = useState('none');
     const [newScenarioDescription, setNewScenarioDescription] = useState('');
     const [scenarioDescription, setScenarioDescription] = useState('');
     const [selectedScenarios, setSelectedScenarios] = useState([]);
@@ -274,6 +192,15 @@ const Simulation = () => {
     const [isRangeModalOpen, setIsRangeModalOpen] = useState(false);
     const [rangeStart, setRangeStart] = useState('');
     const [rangeEnd, setRangeEnd] = useState('');
+    const [isRebaseModalOpen, setIsRebaseModalOpen] = useState(false);
+    const [rebaseTarget, setRebaseTarget] = useState(null);
+    const [rebaseValue, setRebaseValue] = useState('');
+    const [rebaseLoading, setRebaseLoading] = useState(false);
+    const [rebaseAssetId, setRebaseAssetId] = useState('');
+    const [rebaseError, setRebaseError] = useState('');
+    const [isChartActionModalOpen, setIsChartActionModalOpen] = useState(false);
+    const [chartActionTarget, setChartActionTarget] = useState(null);
+    const [transactionDraft, setTransactionDraft] = useState(null);
     const [stressOverrides, setStressOverrides] = useState({
         shocks: [
             { id: 'shock-1', assetType: 'portfolio', delta: '-20', start: '', end: '' },
@@ -284,6 +211,7 @@ const Simulation = () => {
     const [stressProfiles, setStressProfiles] = useState([]);
     const [profileName, setProfileName] = useState('');
     const [profileDescription, setProfileDescription] = useState('');
+    const [profileIsPublic, setProfileIsPublic] = useState(false);
     const [profileResults, setProfileResults] = useState({});
     const [profileSimulations, setProfileSimulations] = useState({});
     const [openProfileIds, setOpenProfileIds] = useState([]);
@@ -293,10 +221,12 @@ const Simulation = () => {
     const [editingProfileName, setEditingProfileName] = useState('');
     const [editingProfileDescription, setEditingProfileDescription] = useState('');
     const [editingProfileOverrides, setEditingProfileOverrides] = useState({ shocks: [] });
+    const [editingProfileIsPublic, setEditingProfileIsPublic] = useState(false);
     const [selectedTaxYear, setSelectedTaxYear] = useState(null);
     const [stressResult, setStressResult] = useState(null);
     const [stressLoading, setStressLoading] = useState(false);
     const taxTableRef = useRef(null);
+    const chartRef = useRef(null);
     const formatCurrency = (value) => {
         const num = Number(value);
         const safe = Number.isFinite(num) ? num : 0;
@@ -328,6 +258,28 @@ const Simulation = () => {
         }
         return taxProfiles[0] || null;
     }, [selectedTaxProfileId, taxProfiles]);
+    const activeStateIncomeTariff = useMemo(
+        () =>
+            stateIncomeTariffs.find((tariff) => normalizeId(tariff.id) === normalizeId(selectedStateIncomeTariffId)) ||
+            null,
+        [stateIncomeTariffs, selectedStateIncomeTariffId]
+    );
+    const activeStateWealthTariff = useMemo(
+        () =>
+            stateWealthTariffs.find((tariff) => normalizeId(tariff.id) === normalizeId(selectedStateWealthTariffId)) ||
+            null,
+        [stateWealthTariffs, selectedStateWealthTariffId]
+    );
+    const activeFederalTariff = useMemo(
+        () =>
+            federalTariffs.find((table) => normalizeId(table.id) === normalizeId(selectedFederalTariffId)) || null,
+        [federalTariffs, selectedFederalTariffId]
+    );
+    const selectedMunicipality = useMemo(
+        () =>
+            taxMunicipalities.find((entry) => normalizeId(entry.id) === normalizeId(selectedMunicipalityId)) || null,
+        [taxMunicipalities, selectedMunicipalityId]
+    );
     const formatScenarioRange = useCallback((scenario) => {
         if (!scenario) return null;
         const { start_year, start_month, end_year, end_month } = scenario;
@@ -439,11 +391,25 @@ const Simulation = () => {
         return map;
     }, [accounts]);
 
+    const selectedRebaseAsset = useMemo(
+        () => accounts.find((acc) => acc.id === rebaseAssetId) || null,
+        [accounts, rebaseAssetId]
+    );
+
+    const rebaseDeltaPreview = useMemo(() => {
+        if (!rebaseTarget) return null;
+        const parsed = parseNumericInput(rebaseValue);
+        if (!Number.isFinite(parsed)) return null;
+        const base = Number(rebaseTarget.value) || 0;
+        return parsed - base;
+    }, [rebaseValue, rebaseTarget]);
+
     const openTransactionModal = useCallback(
-        (account, transaction = null) => {
-            const assetId = transaction?.asset_id || account?.id || accounts[0]?.id || '';
+        (account, transaction = null, defaults = null) => {
+            const assetId = transaction?.asset_id || defaults?.asset_id || account?.id || accounts[0]?.id || '';
             setTransactionModalAssetId(assetId);
             setTransactionModalTransaction(transaction);
+            setTransactionDraft(defaults || null);
             setIsTransactionModalOpen(true);
         },
         [accounts]
@@ -461,7 +427,22 @@ const Simulation = () => {
     const closeTransactionModal = useCallback(() => {
         setTransactionModalTransaction(null);
         setTransactionModalAssetId('');
+        setTransactionDraft(null);
         setIsTransactionModalOpen(false);
+    }, []);
+
+    const closeRebaseModal = useCallback(() => {
+        setIsRebaseModalOpen(false);
+        setRebaseTarget(null);
+        setRebaseValue('');
+        setRebaseAssetId('');
+        setRebaseError('');
+        setRebaseLoading(false);
+    }, []);
+
+    const closeChartActionModal = useCallback(() => {
+        setIsChartActionModalOpen(false);
+        setChartActionTarget(null);
     }, []);
 
     const fetchScenarioDetails = useCallback(
@@ -490,13 +471,15 @@ const Simulation = () => {
                 });
                 setAccountTransactions(grouped);
                 closeTransactionModal();
+                closeRebaseModal();
+                closeChartActionModal();
             } catch (err) {
                 setError(err.message);
             } finally {
                 setLoading(false);
             }
         },
-        [closeTransactionModal]
+        [closeTransactionModal, closeRebaseModal, closeChartActionModal]
     );
 
     useEffect(() => {
@@ -507,47 +490,21 @@ const Simulation = () => {
 
     useEffect(() => {
         if (scenarioDetails) {
-            const fallbackTaxProfile = activeTaxProfile || DEFAULT_TAX_PROFILE;
             setInflationRate(
                 scenarioDetails.inflation_rate === null || scenarioDetails.inflation_rate === undefined
                     ? ''
                     : scenarioDetails.inflation_rate
             );
             setScenarioDescription(scenarioDetails.description || '');
-            const fallbackMunicipal = fallbackTaxProfile?.municipal_tax_factor;
-            const fallbackCantonal = fallbackTaxProfile?.cantonal_tax_factor;
-            const fallbackChurch = fallbackTaxProfile?.church_tax_factor;
-            const fallbackPersonal =
-                fallbackTaxProfile?.personal_tax_per_person ?? DEFAULT_TAX_PROFILE.personal_tax_per_person ?? 24;
-            setMunicipalTaxRate(
-                scenarioDetails.municipal_tax_factor === null || scenarioDetails.municipal_tax_factor === undefined
-                    ? fallbackMunicipal !== null && fallbackMunicipal !== undefined
-                        ? fallbackMunicipal * 100
-                        : ''
-                    : scenarioDetails.municipal_tax_factor * 100
-            );
-            setCantonalTaxRate(
-                scenarioDetails.cantonal_tax_factor === null || scenarioDetails.cantonal_tax_factor === undefined
-                    ? fallbackCantonal !== null && fallbackCantonal !== undefined
-                        ? fallbackCantonal * 100
-                        : ''
-                    : scenarioDetails.cantonal_tax_factor * 100
-            );
-            setChurchTaxRate(
-                scenarioDetails.church_tax_factor === null || scenarioDetails.church_tax_factor === undefined
-                    ? fallbackChurch !== null && fallbackChurch !== undefined
-                        ? fallbackChurch * 100
-                        : ''
-                    : scenarioDetails.church_tax_factor * 100
-            );
-            setPersonalTaxPerPerson(
-                scenarioDetails.personal_tax_per_person === null || scenarioDetails.personal_tax_per_person === undefined
-                    ? fallbackPersonal
-                    : scenarioDetails.personal_tax_per_person
-            );
             setTaxAccountId(scenarioDetails.tax_account_id || '');
+            setSelectedTaxCanton(scenarioDetails.tax_canton || '');
+            setSelectedMunicipalityId(scenarioDetails.tax_municipality_id || '');
+            setSelectedStateIncomeTariffId(scenarioDetails.tax_state_income_tariff_id || '');
+            setSelectedStateWealthTariffId(scenarioDetails.tax_state_wealth_tariff_id || '');
+            setSelectedFederalTariffId(scenarioDetails.tax_federal_tariff_id || '');
+            setSelectedConfession(scenarioDetails.tax_confession || 'none');
         }
-    }, [scenarioDetails, activeTaxProfile]);
+    }, [scenarioDetails]);
 
     useEffect(() => {
         const validIds = new Set(scenarios.map((s) => normalizeId(s.id)));
@@ -658,14 +615,7 @@ const Simulation = () => {
         setTaxProfilesLoading(true);
         setTaxImportError('');
         try {
-            let profiles = await listTaxProfiles();
-            if (!profiles || !profiles.length) {
-                const created = await createTaxProfile({
-                    ...DEFAULT_TAX_PROFILE,
-                    description: DEFAULT_TAX_PROFILE.description,
-                });
-                profiles = created ? [created] : [];
-            }
+            const profiles = (await listTaxProfiles()) || [];
             setTaxProfiles(profiles);
             setSelectedTaxProfileId((prev) => {
                 if (prev && profiles.some((profile) => normalizeId(profile.id) === normalizeId(prev))) {
@@ -684,10 +634,184 @@ const Simulation = () => {
         fetchTaxProfilesRemote();
     }, [fetchTaxProfilesRemote]);
 
+    useEffect(() => {
+        if (!selectedUserId) {
+            setTaxCantons([]);
+            setFederalTariffs([]);
+            return;
+        }
+        let cancelled = false;
+        const loadStaticTaxData = async () => {
+            try {
+                const [cantons, federal] = await Promise.all([listTaxCantons(), listFederalTaxTablesPublic()]);
+                if (!cancelled) {
+                    setTaxCantons(cantons || []);
+                    setFederalTariffs(federal || []);
+                }
+            } catch (err) {
+                if (!cancelled) {
+                    setError(err.message);
+                    setTaxCantons([]);
+                    setFederalTariffs([]);
+                }
+            }
+        };
+        loadStaticTaxData();
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedUserId]);
+
+    useEffect(() => {
+        if (!selectedUserId) {
+            setTaxMunicipalities([]);
+            setStateIncomeTariffs([]);
+            setStateWealthTariffs([]);
+            return;
+        }
+        let cancelled = false;
+        const loadDynamicTaxData = async () => {
+            try {
+                const cantonParam = selectedTaxCanton || undefined;
+                const municipalPromise = selectedTaxCanton
+                    ? listMunicipalTaxEntries(selectedTaxCanton)
+                    : Promise.resolve([]);
+                const [municipalData, incomeTariffsData, wealthTariffsData] = await Promise.all([
+                    municipalPromise,
+                    listStateTaxTariffsPublic('income', cantonParam),
+                    listStateTaxTariffsPublic('wealth', cantonParam),
+                ]);
+                if (!cancelled) {
+                    setTaxMunicipalities(selectedTaxCanton ? municipalData || [] : []);
+                    setStateIncomeTariffs(incomeTariffsData || []);
+                    setStateWealthTariffs(wealthTariffsData || []);
+                }
+            } catch (err) {
+                if (!cancelled) {
+                    setError(err.message);
+                    if (selectedTaxCanton) {
+                        setTaxMunicipalities([]);
+                    }
+                    setStateIncomeTariffs([]);
+                    setStateWealthTariffs([]);
+                }
+            }
+        };
+        loadDynamicTaxData();
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedTaxCanton, selectedUserId]);
+
+    useEffect(() => {
+        if (!selectedTaxCanton) {
+            setSelectedMunicipalityId('');
+        }
+    }, [selectedTaxCanton]);
+
+    useEffect(() => {
+        if (!selectedMunicipalityId) return;
+        if (!taxMunicipalities.length) return;
+        const exists = taxMunicipalities.some(
+            (entry) => normalizeId(entry.id) === normalizeId(selectedMunicipalityId)
+        );
+        if (!exists) {
+            setSelectedMunicipalityId('');
+        }
+    }, [taxMunicipalities, selectedMunicipalityId]);
+
+    useEffect(() => {
+        if (!selectedStateIncomeTariffId) return;
+        if (!stateIncomeTariffs.length) return;
+        const exists = stateIncomeTariffs.some(
+            (tariff) => normalizeId(tariff.id) === normalizeId(selectedStateIncomeTariffId)
+        );
+        if (!exists) {
+            setSelectedStateIncomeTariffId('');
+        }
+    }, [stateIncomeTariffs, selectedStateIncomeTariffId]);
+
+    useEffect(() => {
+        if (!selectedStateWealthTariffId) return;
+        if (!stateWealthTariffs.length) return;
+        const exists = stateWealthTariffs.some(
+            (tariff) => normalizeId(tariff.id) === normalizeId(selectedStateWealthTariffId)
+        );
+        if (!exists) {
+            setSelectedStateWealthTariffId('');
+        }
+    }, [stateWealthTariffs, selectedStateWealthTariffId]);
+
+    useEffect(() => {
+        if (!selectedMunicipality) return;
+        if (selectedMunicipality.canton && selectedMunicipality.canton !== selectedTaxCanton) {
+            setSelectedTaxCanton(selectedMunicipality.canton);
+        }
+    }, [selectedMunicipality, selectedTaxCanton]);
+
+    const derivedTaxSettings = useMemo(() => {
+        const normalizePercent = (value) => {
+            const num = Number(value);
+            return Number.isFinite(num) ? num : null;
+        };
+        const scenarioMunicipalFactor =
+            scenarioDetails && scenarioDetails.municipal_tax_factor !== null && scenarioDetails.municipal_tax_factor !== undefined
+                ? Number(scenarioDetails.municipal_tax_factor)
+                : null;
+        const municipalPercent =
+            normalizePercent(selectedMunicipality?.base_rate) ??
+            (scenarioMunicipalFactor !== null ? scenarioMunicipalFactor * 100 : null);
+        const municipalFactor =
+            municipalPercent !== null && municipalPercent !== undefined ? municipalPercent / 100 : 0;
+
+        const scenarioCantonalFactor =
+            scenarioDetails && scenarioDetails.cantonal_tax_factor !== null && scenarioDetails.cantonal_tax_factor !== undefined
+                ? Number(scenarioDetails.cantonal_tax_factor)
+                : null;
+        const cantonalFactor = Number.isFinite(scenarioCantonalFactor) ? scenarioCantonalFactor : 0;
+        const cantonalPercent = Number.isFinite(cantonalFactor) ? cantonalFactor * 100 : null;
+
+        let churchPercent = null;
+        if (selectedConfession === 'none') {
+            churchPercent = 0;
+        } else if (selectedMunicipality) {
+            const field = CONFESSION_FIELD_MAP[selectedConfession];
+            if (field) {
+                churchPercent = normalizePercent(selectedMunicipality[field]);
+            }
+        } else if (
+            scenarioDetails &&
+            scenarioDetails.church_tax_factor !== null &&
+            scenarioDetails.church_tax_factor !== undefined
+        ) {
+            churchPercent = scenarioDetails.church_tax_factor * 100;
+        }
+        const churchFactor =
+            churchPercent !== null && churchPercent !== undefined ? churchPercent / 100 : 0;
+
+        const scenarioPersonal =
+            scenarioDetails &&
+            scenarioDetails.personal_tax_per_person !== null &&
+            scenarioDetails.personal_tax_per_person !== undefined
+                ? Number(scenarioDetails.personal_tax_per_person)
+                : null;
+        const personalTax = Number.isFinite(scenarioPersonal) ? scenarioPersonal : null;
+
+        return {
+            municipalPercent,
+            municipalFactor,
+            cantonalPercent,
+            cantonalFactor,
+            churchPercent,
+            churchFactor,
+            personalTax,
+        };
+    }, [selectedMunicipality, scenarioDetails, selectedConfession]);
+
     const fetchStressProfilesRemote = useCallback(async () => {
         try {
             const profiles = await listStressProfiles();
-            setStressProfiles(profiles || []);
+            setStressProfiles((profiles || []).map((profile) => normalizeStressProfile(profile)));
         } catch (err) {
             setError(err.message);
         }
@@ -1081,53 +1205,6 @@ const Simulation = () => {
         }
     };
 
-    const handleUpdateScenarioSettings = async () => {
-        if (!currentScenarioId) {
-            setError('Kein Szenario ausgewählt.');
-            return;
-        }
-        setLoading(true);
-        setError(null);
-        try {
-            const updated = await updateScenario(currentScenarioId, {
-                description: scenarioDescription || null,
-                inflation_rate: inflationRate === '' ? null : parseFloat(inflationRate),
-                municipal_tax_factor: municipalTaxRate === '' ? null : parseFloat(municipalTaxRate) / 100,
-                cantonal_tax_factor: cantonalTaxRate === '' ? null : parseFloat(cantonalTaxRate) / 100,
-                church_tax_factor: churchTaxRate === '' ? null : parseFloat(churchTaxRate) / 100,
-                personal_tax_per_person: personalTaxPerPerson === '' ? null : parseFloat(personalTaxPerPerson),
-                tax_account_id: taxAccountId || null,
-            });
-            setScenarioDetails(updated);
-            setSimulationCache((prev) => {
-                const next = { ...prev };
-                delete next[cacheKey(selectedUserId, normalizeId(currentScenarioId))];
-                return next;
-            });
-            await handleSimulate(updated.id);
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const applyTaxProfileToFields = useCallback(() => {
-        const profile = activeTaxProfile || DEFAULT_TAX_PROFILE;
-        if (profile.municipal_tax_factor !== undefined && profile.municipal_tax_factor !== null) {
-            setMunicipalTaxRate(profile.municipal_tax_factor * 100);
-        }
-        if (profile.cantonal_tax_factor !== undefined && profile.cantonal_tax_factor !== null) {
-            setCantonalTaxRate(profile.cantonal_tax_factor * 100);
-        }
-        if (profile.church_tax_factor !== undefined && profile.church_tax_factor !== null) {
-            setChurchTaxRate(profile.church_tax_factor * 100);
-        }
-        if (profile.personal_tax_per_person !== undefined && profile.personal_tax_per_person !== null) {
-            setPersonalTaxPerPerson(profile.personal_tax_per_person);
-        }
-    }, [activeTaxProfile]);
-
     const handleImportTaxProfiles = useCallback(
         async (file) => {
             if (!file) return;
@@ -1219,15 +1296,95 @@ const Simulation = () => {
         };
     }, []);
 
-    const handleSimulate = useCallback(async (scenarioIdOverride) => {
-        const scenarioKey = normalizeId(scenarioIdOverride || currentScenarioId);
-        if (!scenarioKey) {
-            setError('Bitte zuerst ein Szenario auswählen.');
-            return;
+    const buildScenarioSettingsPayload = useCallback(
+        () => ({
+            description: scenarioDescription || null,
+            inflation_rate: inflationRate === '' ? null : parseFloat(inflationRate),
+            tax_account_id: taxAccountId || null,
+            tax_canton: selectedTaxCanton || null,
+            tax_municipality_id: selectedMunicipalityId || null,
+            tax_state_income_tariff_id: selectedStateIncomeTariffId || null,
+            tax_state_wealth_tariff_id: selectedStateWealthTariffId || null,
+            tax_federal_tariff_id: selectedFederalTariffId || null,
+            tax_confession: selectedConfession || null,
+        }),
+        [
+            scenarioDescription,
+            inflationRate,
+            taxAccountId,
+            selectedTaxCanton,
+            selectedMunicipalityId,
+            selectedStateIncomeTariffId,
+            selectedStateWealthTariffId,
+            selectedFederalTariffId,
+            selectedConfession,
+        ]
+    );
+
+    const taxSettingsDirty = useMemo(() => {
+        if (!scenarioDetails) return false;
+        const payload = buildScenarioSettingsPayload();
+        const normalizeValue = (value) => {
+            if (value === undefined || value === null || value === '') {
+                return null;
+            }
+            if (typeof value === 'number') {
+                return Number(value);
+            }
+            return String(value);
+        };
+        const scenarioMap = {
+            description: scenarioDetails.description || null,
+            inflation_rate:
+                scenarioDetails.inflation_rate === null || scenarioDetails.inflation_rate === undefined
+                    ? null
+                    : Number(scenarioDetails.inflation_rate),
+            tax_account_id: scenarioDetails.tax_account_id || null,
+            tax_canton: scenarioDetails.tax_canton || null,
+            tax_municipality_id: scenarioDetails.tax_municipality_id || null,
+            tax_state_income_tariff_id: scenarioDetails.tax_state_income_tariff_id || null,
+            tax_state_wealth_tariff_id: scenarioDetails.tax_state_wealth_tariff_id || null,
+            tax_federal_tariff_id: scenarioDetails.tax_federal_tariff_id || null,
+            tax_confession: scenarioDetails.tax_confession || null,
+        };
+        return Object.entries(payload).some(([key, value]) => normalizeValue(value) !== normalizeValue(scenarioMap[key]));
+    }, [scenarioDetails, buildScenarioSettingsPayload]);
+
+    const saveScenarioSettings = useCallback(async () => {
+        if (!currentScenarioId) {
+            throw new Error('Kein Szenario ausgewählt.');
         }
-        setLoading(true);
-        setError(null);
-        try {
+        if (!taxSettingsDirty) {
+            return scenarioDetails;
+        }
+        const payload = buildScenarioSettingsPayload();
+        const updated = await updateScenario(currentScenarioId, payload);
+        setScenarioDetails(updated);
+        setSimulationCache((prev) => {
+            const next = { ...prev };
+            delete next[cacheKey(selectedUserId, normalizeId(currentScenarioId))];
+            return next;
+        });
+        return updated;
+    }, [
+        currentScenarioId,
+        taxSettingsDirty,
+        buildScenarioSettingsPayload,
+        selectedUserId,
+        scenarioDetails,
+        setSimulationCache,
+    ]);
+
+    const runSimulation = useCallback(
+        async (scenarioId) => {
+            const scenarioKey = normalizeId(scenarioId);
+            if (!scenarioKey) {
+                throw new Error('Kein Szenario ausgewählt.');
+            }
+            setRebaseTarget(null);
+            setIsRebaseModalOpen(false);
+            setChartActionTarget(null);
+            setIsChartActionModalOpen(false);
             const result = await simulateScenario(scenarioKey);
             setSimulationCache((prev) => ({ ...prev, [cacheKey(selectedUserId, scenarioKey)]: result }));
             setCashFlows(result.cash_flows || []);
@@ -1236,12 +1393,53 @@ const Simulation = () => {
             }
             const labels = result.total_wealth.map((point) => point.date);
             setChartRange({ start: 0, end: labels.length ? labels.length - 1 : null });
+            return result;
+        },
+        [selectedUserId, selectedScenarios]
+    );
+
+    const handleSimulate = useCallback(
+        async (scenarioIdOverride) => {
+            const scenarioKey = normalizeId(scenarioIdOverride || currentScenarioId);
+            if (!scenarioKey) {
+                setError('Bitte zuerst ein Szenario auswählen.');
+                return;
+            }
+            setLoading(true);
+            setError(null);
+            try {
+                const updatedScenario = taxSettingsDirty ? await saveScenarioSettings() : scenarioDetails;
+                const targetScenarioId = normalizeId(scenarioIdOverride || updatedScenario?.id || scenarioKey);
+                if (!targetScenarioId) {
+                    throw new Error('Bitte zuerst ein Szenario auswählen.');
+                }
+                await runSimulation(targetScenarioId);
+            } catch (err) {
+                setError(err.message);
+            } finally {
+                setLoading(false);
+            }
+        },
+        [currentScenarioId, taxSettingsDirty, saveScenarioSettings, scenarioDetails, runSimulation]
+    );
+
+    const handleUpdateScenarioSettings = useCallback(async () => {
+        if (!currentScenarioId) {
+            setError('Kein Szenario ausgewählt.');
+            return;
+        }
+        setLoading(true);
+        setError(null);
+        try {
+            const updated = await saveScenarioSettings();
+            const targetScenarioId = normalizeId(updated?.id || currentScenarioId);
+            await runSimulation(targetScenarioId);
         } catch (err) {
             setError(err.message);
         } finally {
             setLoading(false);
         }
-    }, [currentScenarioId, selectedScenarios, selectedUserId]);
+    }, [currentScenarioId, saveScenarioSettings, runSimulation]);
 
     // Auto-simulate when a scenario becomes active (incl. after login)
     useEffect(() => {
@@ -1334,6 +1532,67 @@ const Simulation = () => {
         }
     };
 
+    const handleConfirmRebase = useCallback(async () => {
+        if (!rebaseTarget) {
+            setRebaseError('Keine Auswahl vorhanden.');
+            return;
+        }
+        const parsedValue = parseNumericInput(rebaseValue);
+        if (!Number.isFinite(parsedValue)) {
+            setRebaseError('Bitte einen gültigen Betrag eingeben.');
+            return;
+        }
+        const original = Number(rebaseTarget.value) || 0;
+        const delta = parsedValue - original;
+        if (Math.abs(delta) < 0.01) {
+            closeRebaseModal();
+            return;
+        }
+        const assetId = rebaseAssetId || rebaseTarget.asset?.id || accounts[0]?.id || '';
+        if (!assetId) {
+            setRebaseError('Bitte zuerst ein Asset auswählen.');
+            return;
+        }
+        const dateParts = parseIsoLabel(rebaseTarget.date);
+        if (!dateParts) {
+            setRebaseError('Datum konnte nicht ermittelt werden.');
+            return;
+        }
+        setRebaseLoading(true);
+        setRebaseError('');
+        try {
+            await createTransaction(currentScenarioId, {
+                asset_id: assetId,
+                name: `Manuelle Anpassung ${formatIsoLabel(rebaseTarget.date)}`,
+                amount: delta,
+                type: 'one_time',
+                start_year: dateParts.year,
+                start_month: dateParts.month,
+                end_year: dateParts.year,
+                end_month: dateParts.month,
+                frequency: null,
+                annual_growth_rate: 0,
+                correction: true,
+            });
+            await fetchScenarioDetails(currentScenarioId);
+            await handleSimulate(currentScenarioId);
+            closeRebaseModal();
+        } catch (err) {
+            setRebaseError(err.message);
+        } finally {
+            setRebaseLoading(false);
+        }
+    }, [
+        accounts,
+        closeRebaseModal,
+        currentScenarioId,
+        fetchScenarioDetails,
+        handleSimulate,
+        rebaseAssetId,
+        rebaseTarget,
+        rebaseValue,
+    ]);
+
     const colorFromIndex = (idx) => {
         const palette = [
             '#2563eb',
@@ -1347,6 +1606,114 @@ const Simulation = () => {
         ];
         return palette[idx % palette.length];
     };
+
+    const handleChartClick = useCallback(
+        (event) => {
+            if (!chartRef.current || !event?.nativeEvent) return;
+
+            const { current } = chartRef;
+            const pointElements = current.getElementsAtEventForMode(
+                event.nativeEvent,
+                'nearest',
+                { intersect: true },
+                true
+            );
+            if (!pointElements || pointElements.length === 0) {
+                return;
+            }
+
+            const point = pointElements[0];
+            const datasetIndex = point.datasetIndex;
+            const dataIndex = point.index;
+            const dataset = current.data.datasets?.[datasetIndex];
+            if (!dataset) {
+                return;
+            }
+
+            const datasetStack = dataset.stack || '';
+            if (datasetStack === 'compare') {
+                return;
+            }
+
+            const label = current.data.labels?.[dataIndex];
+            const rawValue = dataset.data?.[dataIndex];
+            const value = Number(rawValue);
+            if (!label || !Number.isFinite(value)) {
+                return;
+            }
+
+            const accountName = dataset.label;
+            const assetMatch =
+                datasetStack === 'assets' && accountName
+                    ? accounts.find((acc) => acc.name === accountName) || null
+                    : null;
+            const fallbackAssetId = assetMatch?.id || accounts[0]?.id || '';
+            if (!fallbackAssetId) {
+                setError('Bitte zuerst ein Asset erstellen, um Werte zu bearbeiten.');
+                return;
+            }
+
+            const dateParts = parseIsoLabel(label);
+            setChartActionTarget({
+                date: label,
+                value,
+                datasetIndex,
+                dataIndex,
+                accountName,
+                asset: assetMatch,
+                assetId: fallbackAssetId,
+                stack: datasetStack,
+                dateParts,
+            });
+            setIsChartActionModalOpen(true);
+        },
+        [accounts, setError]
+    );
+
+    const handleChartActionAdjust = useCallback(() => {
+        if (!chartActionTarget) return;
+        const fallbackAssetId = chartActionTarget.assetId || chartActionTarget.asset?.id || accounts[0]?.id || '';
+        if (!fallbackAssetId) {
+            setError('Bitte zuerst ein Asset erstellen, um Werte zu bearbeiten.');
+            return;
+        }
+        setRebaseAssetId(fallbackAssetId);
+        setRebaseTarget({
+            date: chartActionTarget.date,
+            value: chartActionTarget.value,
+            datasetIndex: chartActionTarget.datasetIndex,
+            dataIndex: chartActionTarget.dataIndex,
+            accountName: chartActionTarget.accountName,
+            asset: chartActionTarget.asset,
+            stack: chartActionTarget.stack,
+        });
+        setRebaseValue(String(chartActionTarget.value));
+        setRebaseError('');
+        setRebaseLoading(false);
+        setIsChartActionModalOpen(false);
+        setChartActionTarget(null);
+        setIsRebaseModalOpen(true);
+    }, [accounts, chartActionTarget, setError]);
+
+    const handleChartActionCreateTransaction = useCallback(() => {
+        if (!chartActionTarget) return;
+        const fallbackAssetId = chartActionTarget.assetId || chartActionTarget.asset?.id || accounts[0]?.id || '';
+        if (!fallbackAssetId) {
+            setError('Bitte zuerst ein Asset erstellen, um eine Transaktion zu erfassen.');
+            return;
+        }
+        const defaults = {
+            asset_id: fallbackAssetId,
+            start_month: chartActionTarget.dateParts?.month || '',
+            start_year: chartActionTarget.dateParts?.year || '',
+            type: 'one_time',
+            name: chartActionTarget.accountName ? `${chartActionTarget.accountName} Buchung` : '',
+        };
+        const accountMatch = chartActionTarget.asset || accounts.find((acc) => acc.id === fallbackAssetId) || null;
+        setIsChartActionModalOpen(false);
+        setChartActionTarget(null);
+        openTransactionModal(accountMatch, null, defaults);
+    }, [accounts, chartActionTarget, openTransactionModal, setError]);
 
     const assetChartData = useMemo(() => {
         const data = simulationCache[cacheKey(selectedUserId, currentScenarioId)];
@@ -1561,41 +1928,19 @@ const Simulation = () => {
                 }))
                 .sort((a, b) => a.year - b.year);
         }
-        const percentToFactor = (value, fallback) => {
-            const num = Number(value);
-            if (Number.isFinite(num)) return num / 100;
-            if (Number.isFinite(fallback)) return fallback;
-            return 0;
-        };
-
-        const taxProfile = activeTaxProfile || DEFAULT_TAX_PROFILE;
-        const municipalTaxFactor = percentToFactor(
-            municipalTaxRate,
-            scenarioDetails?.municipal_tax_factor ??
-                taxProfile?.municipal_tax_factor ??
-                DEFAULT_TAX_PROFILE.municipal_tax_factor ??
-                0
-        );
-        const cantonalTaxFactor = percentToFactor(
-            cantonalTaxRate,
-            scenarioDetails?.cantonal_tax_factor ??
-                taxProfile?.cantonal_tax_factor ??
-                DEFAULT_TAX_PROFILE.cantonal_tax_factor ??
-                0
-        );
-        const churchTaxFactor = percentToFactor(
-            churchTaxRate,
-            scenarioDetails?.church_tax_factor ??
-                taxProfile?.church_tax_factor ??
-                DEFAULT_TAX_PROFILE.church_tax_factor ??
-                0
-        );
+        const municipalTaxFactor = Number.isFinite(derivedTaxSettings.municipalFactor)
+            ? derivedTaxSettings.municipalFactor
+            : 0;
+        const cantonalTaxFactor = Number.isFinite(derivedTaxSettings.cantonalFactor)
+            ? derivedTaxSettings.cantonalFactor
+            : 0;
+        const churchTaxFactor = Number.isFinite(derivedTaxSettings.churchFactor)
+            ? derivedTaxSettings.churchFactor
+            : 0;
         // Personalsteuer pauschal pro Person (CHF)
-        const personalTaxVal = Number.isFinite(Number(personalTaxPerPerson))
-            ? Number(personalTaxPerPerson)
-            : Number.isFinite(scenarioDetails?.personal_tax_per_person)
-            ? scenarioDetails.personal_tax_per_person
-            : taxProfile?.personal_tax_per_person ?? DEFAULT_TAX_PROFILE.personal_tax_per_person ?? 24;
+        const personalTaxVal = Number.isFinite(derivedTaxSettings.personalTax)
+            ? derivedTaxSettings.personalTax
+            : 0;
         const householdSize = selectedUser ? 1 : 1; // adjust if user has household size
 
         const calcProgressive = (amount, brackets) => {
@@ -1608,6 +1953,60 @@ const Simulation = () => {
                 remaining -= slice;
             }
             return tax;
+        };
+        const calcTariffTableTax = (amount, rows, keyMap, lastPer100Cap) => {
+            const taxable = Math.max(0, amount || 0);
+            if (!Array.isArray(rows) || rows.length === 0) {
+                return 0;
+            }
+            const thresholdKey = keyMap?.threshold || 'threshold';
+            const baseKey = keyMap?.base || 'base';
+            const perKey = keyMap?.per100 || 'per100';
+            const entries = rows
+                .map((row) => {
+                    const threshold =
+                        Number(
+                            row?.[thresholdKey] ??
+                                row?.threshold ??
+                                row?.income ??
+                                0
+                        ) || 0;
+                    const base =
+                        Number(
+                            row?.[baseKey] ??
+                                row?.base_amount ??
+                                row?.base ??
+                                0
+                        ) || 0;
+                    const per =
+                        Number(
+                            row?.[perKey] ??
+                                row?.per_100_amount ??
+                                row?.per100 ??
+                                0
+                        ) || 0;
+                    return { threshold, base, per100: per };
+                })
+                .filter((entry) => Number.isFinite(entry.threshold))
+                .sort((a, b) => a.threshold - b.threshold);
+            if (!entries.length) {
+                return 0;
+            }
+            if (taxable <= entries[0].threshold) {
+                const entry = entries[0];
+                return Math.max(0, entry.base + ((taxable - entry.threshold) / 100) * entry.per100);
+            }
+            for (let i = 0; i < entries.length - 1; i += 1) {
+                const curr = entries[i];
+                const next = entries[i + 1];
+                if (taxable >= curr.threshold && taxable < next.threshold) {
+                    return curr.base + ((taxable - curr.threshold) / 100) * curr.per100;
+                }
+            }
+            const last = entries[entries.length - 1];
+            const cappedPer =
+                typeof lastPer100Cap === 'number' ? Math.min(last.per100, lastPer100Cap) : last.per100;
+            return Math.max(0, last.base + ((taxable - last.threshold) / 100) * cappedPer);
         };
 
         const addEntry = (map, year, incomeAdd, expenseAdd) => {
@@ -1678,35 +2077,51 @@ const Simulation = () => {
             }));
         };
 
-        const incomeBrackets = sanitizeBrackets(taxProfile?.income_brackets, DEFAULT_TAX_PROFILE.income_brackets);
-        const wealthBrackets = sanitizeBrackets(taxProfile?.wealth_brackets, DEFAULT_TAX_PROFILE.wealth_brackets);
-        const federalTable = sanitizeFederal(taxProfile?.federal_table, DEFAULT_TAX_PROFILE.federal_table);
-
-        const calcFederalTax = (income) => {
-            const taxable = Math.max(0, income || 0);
-            const sorted = [...federalTable].sort((a, b) => a.income - b.income);
-            if (taxable <= sorted[0].income) {
-                const entry = sorted[0];
-                return entry.base + ((taxable - entry.income) / 100) * entry.per100;
-            }
-            for (let i = 0; i < sorted.length - 1; i++) {
-                const curr = sorted[i];
-                const next = sorted[i + 1];
-                if (taxable >= curr.income && taxable < next.income) {
-                    return curr.base + ((taxable - curr.income) / 100) * curr.per100;
-                }
-            }
-            // above last bracket: 11.5% marginal
-            const last = sorted[sorted.length - 1];
-            return last.base + (taxable - last.income) * 0.115;
+        const incomeBrackets = sanitizeBrackets(activeTaxProfile?.income_brackets, []);
+        const wealthBrackets = sanitizeBrackets(activeTaxProfile?.wealth_brackets, []);
+        const incomeTariffRows =
+            Array.isArray(activeStateIncomeTariff?.rows) && activeStateIncomeTariff.rows.length
+                ? activeStateIncomeTariff.rows
+                : null;
+        const wealthTariffRows =
+            Array.isArray(activeStateWealthTariff?.rows) && activeStateWealthTariff.rows.length
+                ? activeStateWealthTariff.rows
+                : null;
+        const hasCustomFederal = Array.isArray(activeFederalTariff?.rows) && activeFederalTariff.rows.length;
+        const fallbackFederalRows =
+            Array.isArray(activeTaxProfile?.federal_table) && activeTaxProfile.federal_table.length
+                ? activeTaxProfile.federal_table
+                : [];
+        const federalRows = hasCustomFederal ? activeFederalTariff.rows : fallbackFederalRows;
+        const federalKeyMap = hasCustomFederal
+            ? { threshold: 'threshold', base: 'base_amount', per100: 'per_100_amount' }
+            : { threshold: 'income', base: 'base', per100: 'per100' };
+        const formatRate = (value) => {
+            if (Number.isFinite(value)) return value.toFixed(2);
+            return '0.00';
         };
 
         return Array.from(results.values())
             .sort((a, b) => a.year - b.year)
             .map((row) => {
                 const wealth = wealthPerYear.get(row.year) ?? null;
-                const incomeTax = calcProgressive(row.net, incomeBrackets);
-                const wealthTax = wealth !== null ? calcProgressive(wealth, wealthBrackets) : null;
+                const incomeTax = incomeTariffRows
+                    ? calcTariffTableTax(row.net, incomeTariffRows, {
+                          threshold: 'threshold',
+                          base: 'base_amount',
+                          per100: 'per_100_amount',
+                      })
+                    : calcProgressive(row.net, incomeBrackets);
+                const wealthTax =
+                    wealth !== null
+                        ? wealthTariffRows
+                            ? calcTariffTableTax(wealth, wealthTariffRows, {
+                                  threshold: 'threshold',
+                                  base: 'base_amount',
+                                  per100: 'per_100_amount',
+                              })
+                            : calcProgressive(wealth, wealthBrackets)
+                        : null;
                 const baseTax = incomeTax + (wealthTax || 0); // einfache Staatssteuer
                 const personalTax = personalTaxVal * householdSize;
                 const totalTaxWithRate =
@@ -1714,7 +2129,7 @@ const Simulation = () => {
                     baseTax * cantonalTaxFactor +
                     baseTax * churchTaxFactor +
                     personalTax;
-                const federalTax = calcFederalTax(row.net);
+                const federalTax = calcTariffTableTax(row.net, federalRows, federalKeyMap, 11.5);
                 return {
                     ...row,
                     wealth,
@@ -1725,19 +2140,23 @@ const Simulation = () => {
                     taxTotal: totalTaxWithRate,
                     federalTax,
                     totalAll: totalTaxWithRate + federalTax,
-                    taxRateLabel: `${(municipalTaxFactor * 100).toFixed(2)}% / ${(cantonalTaxFactor * 100).toFixed(2)}% / ${(churchTaxFactor * 100).toFixed(2)}%`,
+                    taxRateLabel: `${formatRate(
+                        derivedTaxSettings.municipalPercent ?? municipalTaxFactor * 100
+                    )}% / ${formatRate(derivedTaxSettings.cantonalPercent ?? cantonalTaxFactor * 100)}% / ${formatRate(
+                        derivedTaxSettings.churchPercent ?? churchTaxFactor * 100
+                    )}%`,
                 };
             });
     }, [
         activeTaxProfile,
+        activeStateIncomeTariff,
+        activeStateWealthTariff,
+        activeFederalTariff,
         allTransactions,
         categorizeTransaction,
         currentSimulation,
         selectedUser,
-        municipalTaxRate,
-        cantonalTaxRate,
-        churchTaxRate,
-        personalTaxPerPerson,
+        derivedTaxSettings,
         scenarioDetails,
     ]);
 
@@ -2039,15 +2458,26 @@ const Simulation = () => {
                     currentScenario?.description || '–',
                     formatPercent(inflationRate),
                     formatPercentValue(
-                        municipalTaxRate !== '' ? municipalTaxRate : (scenarioDetails?.municipal_tax_factor || 0) * 100
+                        derivedTaxSettings.municipalPercent ??
+                            (Number.isFinite(scenarioDetails?.municipal_tax_factor)
+                                ? scenarioDetails.municipal_tax_factor * 100
+                                : null)
                     ),
                     formatPercentValue(
-                        cantonalTaxRate !== '' ? cantonalTaxRate : (scenarioDetails?.cantonal_tax_factor || 0) * 100
+                        derivedTaxSettings.cantonalPercent ??
+                            (Number.isFinite(scenarioDetails?.cantonal_tax_factor)
+                                ? scenarioDetails.cantonal_tax_factor * 100
+                                : null)
                     ),
                     formatPercentValue(
-                        churchTaxRate !== '' ? churchTaxRate : (scenarioDetails?.church_tax_factor || 0) * 100
+                        derivedTaxSettings.churchPercent ??
+                            (Number.isFinite(scenarioDetails?.church_tax_factor)
+                                ? scenarioDetails.church_tax_factor * 100
+                                : null)
                     ),
-                    Number.isFinite(Number(personalTaxPerPerson)) ? formatCurrency(personalTaxPerPerson) : '–',
+                    Number.isFinite(derivedTaxSettings.personalTax)
+                        ? formatCurrency(derivedTaxSettings.personalTax)
+                        : '–',
                 ],
             ]
         );
@@ -2129,15 +2559,10 @@ const Simulation = () => {
         formatScenarioRange,
         yearlyCashFlow,
         inflationRate,
-        municipalTaxRate,
-        cantonalTaxRate,
-        churchTaxRate,
-        personalTaxPerPerson,
+        derivedTaxSettings,
         usesBackendTaxes,
         getTaxPaymentForYear,
-        scenarioDetails?.municipal_tax_factor,
-        scenarioDetails?.cantonal_tax_factor,
-        scenarioDetails?.church_tax_factor,
+        scenarioDetails,
         handleSimulate,
         stressProfiles,
         buildStressPayload,
@@ -2152,16 +2577,31 @@ const Simulation = () => {
                 name: profileName.trim(),
                 description: profileDescription.trim(),
                 overrides: stressOverrides,
+                is_public: profileIsPublic,
             });
-            setStressProfiles((prev) => [...prev, created]);
+            setStressProfiles((prev) => [...prev, normalizeStressProfile(created)]);
             setProfileName('');
             setProfileDescription('');
+            setProfileIsPublic(false);
+            setShowNewProfileEditor(false);
         } catch (err) {
             setError(err.message);
         }
-    }, [profileName, profileDescription, stressOverrides]);
+    }, [profileIsPublic, profileDescription, profileName, stressOverrides]);
+
+    const handleCancelNewProfile = useCallback(() => {
+        setShowNewProfileEditor(false);
+        setProfileName('');
+        setProfileDescription('');
+        setProfileIsPublic(false);
+    }, [setProfileDescription, setProfileIsPublic, setProfileName, setShowNewProfileEditor]);
 
     const handleDeleteProfile = useCallback(async (profileId) => {
+        const profile = stressProfiles.find((p) => normalizeId(p.id) === normalizeId(profileId));
+        if (!profile || !isProfileOwner(profile, selectedUserId)) {
+            setError('Nur eigene Profile können gelöscht werden.');
+            return;
+        }
         try {
             await deleteStressProfileApi(profileId);
             const normalized = normalizeId(profileId);
@@ -2189,7 +2629,7 @@ const Simulation = () => {
         } catch (err) {
             setError(err.message);
         }
-    }, []);
+    }, [selectedUserId, stressProfiles]);
 
     const recomputeProfileResult = useCallback(
         async (profile) => {
@@ -2212,16 +2652,21 @@ const Simulation = () => {
     );
 
     const handleEditProfile = useCallback((profile) => {
+        if (!isProfileOwner(profile, selectedUserId)) {
+            setError('Nur eigene Profile können bearbeitet werden.');
+            return;
+        }
         const profileKey = normalizeId(profile.id);
         setEditingProfileId(profile.id);
         setEditingProfileName(profile.name || '');
         setEditingProfileDescription(profile.description || '');
         setEditingProfileOverrides(profile.overrides || { shocks: [] });
+        setEditingProfileIsPublic(Boolean(profile.is_public));
         setOpenProfileIds((prev) => (prev.some((id) => normalizeId(id) === profileKey) ? prev : [...prev, profileKey]));
         setSelectedProfileIds((prev) =>
             prev.some((id) => normalizeId(id) === profileKey) ? prev : [...prev, profileKey]
         );
-    }, []);
+    }, [selectedUserId]);
 
     const handleToggleProfile = useCallback(
         async (profile) => {
@@ -2247,14 +2692,28 @@ const Simulation = () => {
 
     const handleSaveProfileEdits = useCallback(async () => {
         if (!editingProfileId) return;
+        const draftProfile = stressProfiles.find((p) => p.id === editingProfileId);
+        if (!draftProfile || !isProfileOwner(draftProfile, selectedUserId)) {
+            setError('Nur eigene Profile können bearbeitet werden.');
+            setEditingProfileId('');
+            setEditingProfileName('');
+            setEditingProfileDescription('');
+            setEditingProfileOverrides({ shocks: [] });
+            setEditingProfileIsPublic(false);
+            return;
+        }
         let updatedProfileRef = null;
         try {
-            const updated = await updateStressProfile(editingProfileId, {
+            const payload = {
                 name: editingProfileName.trim() || undefined,
                 description: editingProfileDescription.trim(),
                 overrides: editingProfileOverrides,
-            });
-            setStressProfiles((prev) => prev.map((p) => (p.id === editingProfileId ? updated : p)));
+                is_public: editingProfileIsPublic,
+            };
+            const updated = await updateStressProfile(editingProfileId, payload);
+            setStressProfiles((prev) =>
+                prev.map((p) => (p.id === editingProfileId ? normalizeStressProfile(updated) : p))
+            );
             updatedProfileRef = updated;
         } catch (err) {
             setError(err.message);
@@ -2263,15 +2722,19 @@ const Simulation = () => {
         setEditingProfileName('');
         setEditingProfileDescription('');
         setEditingProfileOverrides({ shocks: [] });
+        setEditingProfileIsPublic(false);
         if (updatedProfileRef) {
             await recomputeProfileResult(updatedProfileRef);
         }
     }, [
         editingProfileDescription,
         editingProfileId,
+        editingProfileIsPublic,
         editingProfileName,
         editingProfileOverrides,
         recomputeProfileResult,
+        selectedUserId,
+        stressProfiles,
     ]);
 
     const renderTransactionItem = (tx) => {
@@ -2674,6 +3137,107 @@ const Simulation = () => {
                                             <p className="eyebrow">Einstellungen</p>
                                             <div className="scenario-form-grid">
                                                 <label className="stacked">
+                                                    <span>Kanton</span>
+                                                    <select
+                                                        value={selectedTaxCanton}
+                                                        onChange={(e) => setSelectedTaxCanton(e.target.value)}
+                                                    >
+                                                        <option value="">Bitte wählen</option>
+                                                        {taxCantons.map((canton) => (
+                                                            <option key={canton} value={canton}>
+                                                                {canton}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </label>
+                                                <label className="stacked">
+                                                    <span>Gemeinde</span>
+                                                    <select
+                                                        value={selectedMunicipalityId}
+                                                        onChange={(e) => setSelectedMunicipalityId(e.target.value)}
+                                                        disabled={!selectedTaxCanton}
+                                                    >
+                                                        <option value="">Bitte wählen</option>
+                                                        {taxMunicipalities.map((entry) => (
+                                                            <option key={entry.id} value={entry.id}>
+                                                                {entry.municipality}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    {selectedMunicipality && (
+                                                        <small className="muted">
+                                                            Steuerfuss ohne Kirche:{' '}
+                                                            {Number(selectedMunicipality.base_rate || 0).toFixed(2)} %
+                                                        </small>
+                                                    )}
+                                                </label>
+                                                <label className="stacked">
+                                                    <span>Tarif Staatssteuer (Einkommen)</span>
+                                                    <select
+                                                        value={selectedStateIncomeTariffId}
+                                                        onChange={(e) => setSelectedStateIncomeTariffId(e.target.value)}
+                                                    >
+                                                        <option value="">Bitte wählen</option>
+                                                        {stateIncomeTariffs.map((tariff) => (
+                                                            <option key={tariff.id} value={tariff.id}>
+                                                                {tariff.name}
+                                                                {tariff.canton ? ` (${tariff.canton})` : ''}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    {activeStateIncomeTariff?.description && (
+                                                        <small className="muted">{activeStateIncomeTariff.description}</small>
+                                                    )}
+                                                </label>
+                                                <label className="stacked">
+                                                    <span>Tarif Staatssteuer (Vermögen)</span>
+                                                    <select
+                                                        value={selectedStateWealthTariffId}
+                                                        onChange={(e) => setSelectedStateWealthTariffId(e.target.value)}
+                                                    >
+                                                        <option value="">Bitte wählen</option>
+                                                        {stateWealthTariffs.map((tariff) => (
+                                                            <option key={tariff.id} value={tariff.id}>
+                                                                {tariff.name}
+                                                                {tariff.canton ? ` (${tariff.canton})` : ''}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    {activeStateWealthTariff?.description && (
+                                                        <small className="muted">{activeStateWealthTariff.description}</small>
+                                                    )}
+                                                </label>
+                                                <label className="stacked">
+                                                    <span>Tarif Bundessteuer</span>
+                                                    <select
+                                                        value={selectedFederalTariffId}
+                                                        onChange={(e) => setSelectedFederalTariffId(e.target.value)}
+                                                    >
+                                                        <option value="">Standard</option>
+                                                        {federalTariffs.map((table) => (
+                                                            <option key={table.id} value={table.id}>
+                                                                {table.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    {activeFederalTariff?.description && (
+                                                        <small className="muted">{activeFederalTariff.description}</small>
+                                                    )}
+                                                </label>
+                                                <label className="stacked">
+                                                    <span>Konfession</span>
+                                                    <select
+                                                        value={selectedConfession}
+                                                        onChange={(e) => setSelectedConfession(e.target.value)}
+                                                    >
+                                                        <option value="none">Keine</option>
+                                                        <option value="ref">Reformiert</option>
+                                                        <option value="cath">Katholisch</option>
+                                                        <option value="christian_cath">Christkatholisch</option>
+                                                    </select>
+                                                    {!selectedMunicipality && <small className="muted">Gemeinde auswählen, um Kirchentarife zu laden.</small>}
+                                                </label>
+                                                <label className="stacked">
                                                     <span>Inflation p.a.</span>
                                                     <input
                                                         type="number"
@@ -2738,51 +3302,6 @@ const Simulation = () => {
                                                         Wähle das Konto/Asset, von dem die berechneten Steuern abgebucht werden sollen.
                                                     </small>
                                                 </label>
-                                            <label className="stacked">
-                                                <span>Gemeindesteuerfuss (%)</span>
-                                                <input
-                                                    type="number"
-                                                    value={municipalTaxRate}
-                                                    onChange={(e) => setMunicipalTaxRate(e.target.value)}
-                                                    step="0.01"
-                                                />
-                                            </label>
-                                            <label className="stacked">
-                                                <span>Staatssteuerfuss (%)</span>
-                                                <input
-                                                    type="number"
-                                                    value={cantonalTaxRate}
-                                                    onChange={(e) => setCantonalTaxRate(e.target.value)}
-                                                    step="0.01"
-                                                />
-                                            </label>
-                                            <label className="stacked">
-                                                <span>Kirchensteuerfuss (%)</span>
-                                                <input
-                                                    type="number"
-                                                    value={churchTaxRate}
-                                                    onChange={(e) => setChurchTaxRate(e.target.value)}
-                                                    step="0.01"
-                                                />
-                                            </label>
-                                            <label className="stacked">
-                                                <span>Personalsteuer pro Person (CHF)</span>
-                                                <input
-                                                    type="number"
-                                                    value={personalTaxPerPerson}
-                                                    onChange={(e) => setPersonalTaxPerPerson(e.target.value)}
-                                                    step="0.01"
-                                                />
-                                            </label>
-                                        </div>
-                                        <div className="scenario-actions">
-                                            <button
-                                                className="secondary"
-                                                onClick={applyTaxProfileToFields}
-                                                disabled={!activeTaxProfile && !taxProfiles.length}
-                                            >
-                                                Profilwerte übernehmen
-                                            </button>
                                         </div>
                                         <button onClick={handleUpdateScenarioSettings} disabled={!currentScenarioId}>
                                             Einstellungen speichern
@@ -3449,7 +3968,9 @@ const Simulation = () => {
                                         </div>
                                     </div>
                                     <Line
+                                        ref={chartRef}
                                         data={assetChartData}
+                                        onClick={handleChartClick}
                                         options={{
                                             responsive: true,
                                             plugins: {
@@ -3504,6 +4025,8 @@ const Simulation = () => {
                                     const isSelected = selectedProfileIds.some(
                                         (id) => normalizeId(id) === normalizeId(p.id)
                                     );
+                                    const isOwner = isProfileOwner(p, selectedUserId);
+                                    const visibilityLabel = p.is_public ? 'Öffentlich' : 'Privat';
                                     return (
                                         <div className="profile-item" key={p.id}>
                                             <div className="profile-header" onClick={() => handleToggleProfile(p)}>
@@ -3511,29 +4034,37 @@ const Simulation = () => {
                                                     <strong>{p.name}</strong>
                                                     {p.description ? <div className="muted small">{p.description}</div> : null}
                                                     <div className="muted small">
-                                                        {isSelected ? 'Im Chart aktiviert' : 'Zum Anzeigen in Charts anklicken'}
+                                                        {isSelected ? 'Im Chart aktiviert' : 'Zum Anzeigen in Charts anklicken'} ·{' '}
+                                                        {isOwner ? 'Eigenes Profil' : 'Nur Leseberechtigung'}
                                                     </div>
                                                 </div>
                                                 <div className="profile-actions">
                                                     {isSelected ? <span className="pill success">Aktiv</span> : null}
-                                                    <button
-                                                        className="secondary"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            handleEditProfile(p);
-                                                        }}
-                                                    >
-                                                        Bearbeiten
-                                                    </button>
-                                                    <button
-                                                        className="secondary danger"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            handleDeleteProfile(p.id);
-                                                        }}
-                                                    >
-                                                        Löschen
-                                                    </button>
+                                                    <span className={`badge ${p.is_public ? 'success' : 'muted'}`}>
+                                                        {visibilityLabel}
+                                                    </span>
+                                                    {isOwner && (
+                                                        <>
+                                                            <button
+                                                                className="secondary"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleEditProfile(p);
+                                                                }}
+                                                            >
+                                                                Bearbeiten
+                                                            </button>
+                                                            <button
+                                                                className="secondary danger"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleDeleteProfile(p.id);
+                                                                }}
+                                                            >
+                                                                Löschen
+                                                            </button>
+                                                        </>
+                                                    )}
                                                 </div>
                                             </div>
                                             {openProfileIds.some((id) => normalizeId(id) === normalizeId(p.id)) && (
@@ -3605,6 +4136,23 @@ const Simulation = () => {
                                                                     value={editingProfileDescription}
                                                                     onChange={(e) => setEditingProfileDescription(e.target.value)}
                                                                 />
+                                                            </div>
+                                                            <div className="profile-visibility-toggle">
+                                                                <label style={{ display: 'flex', alignItems: 'center' }}>
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={editingProfileIsPublic}
+                                                                        onChange={(e) =>
+                                                                            setEditingProfileIsPublic(e.target.checked)
+                                                                        }
+                                                                    />
+                                                                    <span style={{ marginLeft: '0.5rem' }}>
+                                                                        Profil öffentlich teilen
+                                                                    </span>
+                                                                </label>
+                                                                <div className="muted small">
+                                                                    Öffentliche Profile sind für alle Nutzer sichtbar.
+                                                                </div>
                                                             </div>
                                                             <div className="risk-grid single">
                                                                 {(editingProfileOverrides.shocks || []).map((shock, idx) => (
@@ -3720,7 +4268,10 @@ const Simulation = () => {
                                                                     className="secondary danger"
                                                                     onClick={() => {
                                                                         setEditingProfileId('');
+                                                                        setEditingProfileName('');
+                                                                        setEditingProfileDescription('');
                                                                         setEditingProfileOverrides({ shocks: [] });
+                                                                        setEditingProfileIsPublic(false);
                                                                     }}
                                                                 >
                                                                     Abbrechen
@@ -3888,13 +4439,27 @@ const Simulation = () => {
                                     value={profileDescription}
                                     onChange={(e) => setProfileDescription(e.target.value)}
                                 />
-                                <button className="secondary" onClick={handleSaveProfile} disabled={!profileName.trim()}>
-                                    Speichern
-                                </button>
+                                <label style={{ display: 'flex', alignItems: 'center' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={profileIsPublic}
+                                        onChange={(e) => setProfileIsPublic(e.target.checked)}
+                                    />
+                                    <span style={{ marginLeft: '0.5rem' }}>Profil öffentlich teilen</span>
+                                </label>
+                                <div className="muted small" style={{ marginBottom: '0.5rem' }}>
+                                    Öffentliche Profile sind für alle Nutzer sichtbar, private nur für dich.
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    <button className="secondary" onClick={handleSaveProfile} disabled={!profileName.trim()}>
+                                        Speichern
+                                    </button>
+                                    <button className="secondary danger" onClick={handleCancelNewProfile}>
+                                        Abbrechen
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                        </>
-                        )}
                         <div className="risk-summary">
                             <div className="summary-card">
                                 <span className="label">Endwert Basis</span>
@@ -3931,6 +4496,8 @@ const Simulation = () => {
                                 )}
                             </div>
                         </div>
+                        </>
+                        )}
                         <div className="panel">
                             <div className="panel-header">
                                 <div>
@@ -4000,6 +4567,7 @@ const Simulation = () => {
                             onSave={handleSaveTransaction}
                             onDelete={handleDeleteTransaction}
                             disableAssetSelect={Boolean(transactionModalTransaction?.double_entry)}
+                            initialValues={transactionDraft}
                         />
                     </div>
                 </div>
@@ -4163,6 +4731,112 @@ const Simulation = () => {
                         <div className="modal-actions">
                             <button onClick={handleSaveRange} disabled={!rangeStart || !rangeEnd}>
                                 Zeitraum speichern
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {isChartActionModalOpen && chartActionTarget && (
+                <div className="modal-overlay" onClick={closeChartActionModal}>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <div>
+                                <p className="eyebrow">Assets</p>
+                                <h3>Datenpunkt auswählen</h3>
+                                <div className="muted small">
+                                    {chartActionTarget.accountName || 'Total'} · {formatIsoLabel(chartActionTarget.date)}
+                                </div>
+                            </div>
+                            <div className="modal-header-actions">
+                                <button className="secondary" onClick={closeChartActionModal}>
+                                    Schließen
+                                </button>
+                            </div>
+                        </div>
+                        <div className="modal-grid">
+                            <p style={{ gridColumn: '1 / -1' }}>
+                                Was möchtest du mit diesem Wert tun?
+                            </p>
+                            <div className="button-row" style={{ display: 'flex', gap: '1rem' }}>
+                                <button className="primary" onClick={handleChartActionAdjust}>
+                                    Wert anpassen
+                                </button>
+                                <button className="secondary" onClick={handleChartActionCreateTransaction}>
+                                    Transaktion erstellen
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {isRebaseModalOpen && rebaseTarget && (
+                <div className="modal-overlay" onClick={closeRebaseModal}>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <div>
+                                <p className="eyebrow">Assets</p>
+                                <h3>Wert aktualisieren</h3>
+                                <div className="muted small">
+                                    {rebaseTarget.accountName || 'Total'} · {formatIsoLabel(rebaseTarget.date)}
+                                </div>
+                            </div>
+                            <div className="modal-header-actions">
+                                <button className="secondary" onClick={closeRebaseModal}>
+                                    Schließen
+                                </button>
+                            </div>
+                        </div>
+                        <div className="modal-grid">
+                            <label className="stacked">
+                                <span>Asset für Anpassung</span>
+                                <select value={rebaseAssetId} onChange={(e) => setRebaseAssetId(e.target.value)}>
+                                    <option value="">Bitte wählen</option>
+                                    {accounts.map((account) => (
+                                        <option key={account.id} value={account.id}>
+                                            {account.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            <label className="stacked">
+                                <span>Datum</span>
+                                <input type="text" value={formatIsoLabel(rebaseTarget.date)} disabled />
+                            </label>
+                            <label className="stacked">
+                                <span>Aktueller Wert</span>
+                                <input type="text" value={formatCurrency(rebaseTarget.value)} disabled />
+                            </label>
+                            <label className="stacked">
+                                <span>Neuer Wert</span>
+                                <input
+                                    type="text"
+                                    value={rebaseValue}
+                                    onChange={(e) => setRebaseValue(e.target.value)}
+                                    placeholder="z.B. 150000"
+                                />
+                            </label>
+                        </div>
+                        {Number.isFinite(rebaseDeltaPreview) && (
+                            <div className="muted small" style={{ marginTop: '0.75rem' }}>
+                                Delta: {formatCurrency(rebaseDeltaPreview)} · Verbucht auf{' '}
+                                {selectedRebaseAsset?.name || 'gewähltes Asset'} ab {formatIsoLabel(rebaseTarget.date)}
+                            </div>
+                        )}
+                        {rebaseError && (
+                            <div className="muted small" style={{ color: '#dc2626', marginTop: '0.75rem' }}>
+                                {rebaseError}
+                            </div>
+                        )}
+                        <div className="modal-actions">
+                            <button className="secondary" onClick={closeRebaseModal}>
+                                Abbrechen
+                            </button>
+                            <button
+                                className="primary"
+                                onClick={handleConfirmRebase}
+                                disabled={rebaseLoading || !selectedRebaseAsset}
+                            >
+                                {rebaseLoading ? 'Speichere...' : 'Wert übernehmen'}
                             </button>
                         </div>
                     </div>

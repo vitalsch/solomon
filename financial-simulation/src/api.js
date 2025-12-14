@@ -44,19 +44,24 @@ export const getAuthToken = () => localStorage.getItem(TOKEN_KEY);
 const defaultHeaders = { 'Content-Type': 'application/json' };
 
 async function request(path, options = {}) {
-    const token = getAuthToken();
+    const { skipAuth = false, ...fetchOptions } = options;
+    const token = skipAuth ? null : getAuthToken();
+    const headers = {
+        ...defaultHeaders,
+        ...(!skipAuth && token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(fetchOptions.headers || {}),
+    };
+
     const response = await fetch(`${API_BASE}${path}`, {
-        ...options,
-        headers: {
-            ...defaultHeaders,
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            ...(options.headers || {}),
-        },
+        ...fetchOptions,
+        headers,
     });
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(errorText || 'API request failed');
+        const error = new Error(errorText || 'API request failed');
+        error.status = response.status;
+        throw error;
     }
 
     if (response.status === 204) {
@@ -65,6 +70,22 @@ async function request(path, options = {}) {
 
     return response.json();
 }
+
+const adminRequest = (path, adminAuthHeader, options = {}) => {
+    if (!adminAuthHeader) {
+        const err = new Error('Missing admin credentials');
+        err.status = 401;
+        throw err;
+    }
+    return request(path, {
+        ...options,
+        skipAuth: true,
+        headers: {
+            ...(options.headers || {}),
+            Authorization: adminAuthHeader,
+        },
+    });
+};
 
 // Auth & User ---------------------------------------------------------------
 export const registerUser = async (payload) => {
@@ -101,6 +122,21 @@ export const updateScenario = (scenarioId, payload) =>
     request(`/scenarios/${scenarioId}`, { method: 'PATCH', body: JSON.stringify(payload) });
 export const deleteScenario = (scenarioId) =>
     request(`/scenarios/${scenarioId}`, { method: 'DELETE' });
+
+// Tax metadata ------------------------------------------------------------
+export const listTaxCantons = () => request('/tax/cantons');
+export const listMunicipalTaxEntries = (canton) => {
+    const query = canton ? `?canton=${encodeURIComponent(canton)}` : '';
+    return request(`/tax/municipalities${query}`);
+};
+export const listStateTaxTariffsPublic = (scope, canton) => {
+    const params = [];
+    if (scope) params.push(`scope=${encodeURIComponent(scope)}`);
+    if (canton) params.push(`canton=${encodeURIComponent(canton)}`);
+    const query = params.length ? `?${params.join('&')}` : '';
+    return request(`/tax/state-tariffs${query}`);
+};
+export const listFederalTaxTablesPublic = () => request('/tax/federal-tariffs');
 
 // Assets --------------------------------------------------------------------
 export const listAssets = (scenarioId) => request(`/scenarios/${scenarioId}/assets`);
@@ -173,4 +209,98 @@ export const applyAssistantPlan = (plan) =>
     request(`/assistant/apply`, {
         method: 'POST',
         body: JSON.stringify({ plan }),
+    });
+
+// Admin: Municipal Tax Tables --------------------------------------------
+export const listMunicipalTaxRatesAdmin = (adminAuthHeader, canton = 'ZH') =>
+    adminRequest(`/admin/tax-tables?canton=${encodeURIComponent(canton)}`, adminAuthHeader);
+
+export const createMunicipalTaxRateAdmin = (adminAuthHeader, payload) =>
+    adminRequest('/admin/tax-tables', adminAuthHeader, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+export const updateMunicipalTaxRateAdmin = (adminAuthHeader, entryId, payload) =>
+    adminRequest(`/admin/tax-tables/${entryId}`, adminAuthHeader, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+    });
+
+export const deleteMunicipalTaxRateAdmin = (adminAuthHeader, entryId) =>
+    adminRequest(`/admin/tax-tables/${entryId}`, adminAuthHeader, {
+        method: 'DELETE',
+    });
+
+export const listStateTaxTariffsAdmin = (adminAuthHeader, scope) => {
+    const query = scope ? `?scope=${encodeURIComponent(scope)}` : '';
+    return adminRequest(`/admin/state-tariffs${query}`, adminAuthHeader);
+};
+
+export const createStateTaxTariffAdmin = (adminAuthHeader, payload) =>
+    adminRequest('/admin/state-tariffs', adminAuthHeader, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+export const updateStateTaxTariffAdmin = (adminAuthHeader, tariffId, payload) =>
+    adminRequest(`/admin/state-tariffs/${tariffId}`, adminAuthHeader, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+    });
+
+export const deleteStateTaxTariffAdmin = (adminAuthHeader, tariffId) =>
+    adminRequest(`/admin/state-tariffs/${tariffId}`, adminAuthHeader, {
+        method: 'DELETE',
+    });
+
+export const importStateTaxTariffRowsAdmin = (adminAuthHeader, tariffId, rows) =>
+    adminRequest(`/admin/state-tariffs/${tariffId}/rows/import`, adminAuthHeader, {
+        method: 'POST',
+        body: JSON.stringify({ rows }),
+    });
+
+export const listFederalTaxTablesAdmin = (adminAuthHeader) =>
+    adminRequest('/admin/federal-tax-tables', adminAuthHeader);
+
+export const createFederalTaxTableAdmin = (adminAuthHeader, payload) =>
+    adminRequest('/admin/federal-tax-tables', adminAuthHeader, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+export const updateFederalTaxTableAdmin = (adminAuthHeader, tableId, payload) =>
+    adminRequest(`/admin/federal-tax-tables/${tableId}`, adminAuthHeader, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+    });
+
+export const deleteFederalTaxTableAdmin = (adminAuthHeader, tableId) =>
+    adminRequest(`/admin/federal-tax-tables/${tableId}`, adminAuthHeader, {
+        method: 'DELETE',
+    });
+
+export const importFederalTaxTableRowsAdmin = (adminAuthHeader, tableId, rows) =>
+    adminRequest(`/admin/federal-tax-tables/${tableId}/rows/import`, adminAuthHeader, {
+        method: 'POST',
+        body: JSON.stringify({ rows }),
+    });
+
+export const listPersonalTaxesAdmin = (adminAuthHeader) => adminRequest('/admin/personal-taxes', adminAuthHeader);
+
+export const createPersonalTaxAdmin = (adminAuthHeader, payload) =>
+    adminRequest('/admin/personal-taxes', adminAuthHeader, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+export const updatePersonalTaxAdmin = (adminAuthHeader, entryId, payload) =>
+    adminRequest(`/admin/personal-taxes/${entryId}`, adminAuthHeader, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+    });
+
+export const deletePersonalTaxAdmin = (adminAuthHeader, entryId) =>
+    adminRequest(`/admin/personal-taxes/${entryId}`, adminAuthHeader, {
+        method: 'DELETE',
     });

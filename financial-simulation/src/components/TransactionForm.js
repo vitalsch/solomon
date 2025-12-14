@@ -7,6 +7,7 @@ const TransactionForm = ({
     onSave,
     onDelete,
     disableAssetSelect = false,
+    initialValues = null,
 }) => {
     const [assetId, setAssetId] = useState(selectedAssetId || '');
     const [name, setName] = useState('');
@@ -74,24 +75,34 @@ const TransactionForm = ({
                     : transaction.amount ?? ''
             );
         } else {
-            setAssetId(selectedAssetId || accounts[0]?.id || '');
-            setName('');
-            setAmount('');
-            setMonth('');
-            setYear('');
-            setType('');
-            setFrequency('');
-            setEndMonth('');
-            setEndYear('');
-            setAnnualGrowthRate('');
-            setCounterAssetId('');
-            setDoubleEntry(false);
-            setMortgageAssetId('');
-            setInterestRate('');
-            setTaxable(false);
-            setTaxableAmount('');
+            const defaults = initialValues || {};
+            setAssetId(defaults.asset_id || selectedAssetId || accounts[0]?.id || '');
+            setName(defaults.name || '');
+            setAmount(
+                defaults.amount !== undefined && defaults.amount !== null ? defaults.amount : ''
+            );
+            setMonth(defaults.start_month ?? '');
+            setYear(defaults.start_year ?? '');
+            const resolvedType =
+                defaults && defaults.type !== undefined && defaults.type !== null ? defaults.type : '';
+            setType(resolvedType);
+            setFrequency(defaults.frequency ?? '');
+            setEndMonth(defaults.end_month ?? '');
+            setEndYear(defaults.end_year ?? '');
+            setAnnualGrowthRate(defaults.annual_growth_rate ?? '');
+            setCounterAssetId(defaults.counter_asset_id || '');
+            setDoubleEntry(Boolean(defaults.double_entry));
+            setMortgageAssetId(defaults.mortgage_asset_id || '');
+            setInterestRate(defaults.annual_interest_rate ?? '');
+            const taxableDefault = defaults.taxable ?? false;
+            setTaxable(Boolean(taxableDefault));
+            setTaxableAmount(
+                defaults.taxable_amount !== undefined && defaults.taxable_amount !== null
+                    ? defaults.taxable_amount
+                    : defaults.amount ?? ''
+            );
         }
-    }, [transaction, selectedAssetId, accounts]);
+    }, [transaction, selectedAssetId, accounts, initialValues]);
 
     const parseIntSafe = (value) => (value === '' || value === undefined ? undefined : parseInt(value, 10));
     const parseFloatSafe = (value) => (value === '' || value === undefined ? undefined : parseFloat(value));

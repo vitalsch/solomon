@@ -26,6 +26,25 @@ Dieses Backend stellt REST Endpunkte bereit, um Nutzer, Szenarien, Assets und Tr
     - Tax: `taxable` (bool), `taxable_amount` (Basis); Szenario-`income_tax_rate` wird angewendet  
   - `PATCH /transactions/{transaction_id}` optionale Felder wie oben, `DELETE /transactions/{transaction_id}`
   - Assistant-Plan-Aktion `update_transaction` erlaubt Updates per Name/ID (alias) statt Neuanlage; oder `overwrite=true` bei create, um alte gleichnamige zu ersetzen.
+- Stress-Profile  
+  - `GET /stress-profiles` liefert alle eigenen Profile plus öffentlich freigegebene anderer Nutzer (`is_public=true`).  
+  - `POST /stress-profiles` `{name, description?, overrides, is_public=false}` speichert ein Profil und markiert es optional als öffentlich einsehbar.  
+  - `PATCH /stress-profiles/{id}` kann `name`, `description`, `overrides` sowie `is_public` aktualisieren (nur für eigene Profile möglich), `DELETE /stress-profiles/{id}` löscht sie.
+- Admin-Steuertarife (Basic Auth, Username `ADMIN_USERNAME` standardmäßig `admin`, Passwort via `ADMIN_PASSWORD`)  
+  - `GET /admin/tax-tables?canton=ZH` liefert alle gespeicherten Gemeindesteuerfüsse  
+  - `POST /admin/tax-tables` `{municipality, canton=ZH, base_rate, ref_rate?, cath_rate?, christian_cath_rate?}` legt eine Zeile an  
+  - `PATCH /admin/tax-tables/{id}` aktualisiert Felder, `DELETE /admin/tax-tables/{id}` entfernt sie  
+  - `GET /admin/state-tariffs?scope=income|wealth` listet alle Staatssteuer-Tarife inkl. Tabellenzeilen  
+  - `POST /admin/state-tariffs` `{name, scope, canton, description?, rows:[{threshold, base_amount, per_100_amount, note?}]}` legt einen Tarif samt Tabelle an  
+  - `PATCH /admin/state-tariffs/{id}` aktualisiert Name/Scope/Beschreibung oder ersetzt die hinterlegten Zeilen, `DELETE /admin/state-tariffs/{id}` entfernt ihn  
+  - `POST /admin/state-tariffs/{id}/rows/import` `{rows:[{schwelle_chf?, threshold?, sockelbetrag_chf?, base_amount?, je_100_chf?, per_100_amount?, hinweis?, note?}]}` ersetzt die Tabelle anhand eines JSON-Arrays (z.B. Datei-Upload)  
+  - `GET /admin/federal-tax-tables` liefert die Tabellen der direkten Bundessteuer (nur Einkommen)  
+  - `POST /admin/federal-tax-tables` `{name, description?, rows:[{threshold, base_amount, per_100_amount, note?}]}` legt eine Tabelle an  
+  - `PATCH /admin/federal-tax-tables/{id}` aktualisiert Name/Beschreibung/Zeilen, `DELETE /admin/federal-tax-tables/{id}` entfernt sie  
+  - `POST /admin/federal-tax-tables/{id}/rows/import` `{rows:[...wie oben...]}` ersetzt die Tabelle anhand eines JSON-Arrays  
+  - `GET /admin/personal-taxes` liefert Personalsteuer pro Kanton (CHF pro Person)  
+  - `POST /admin/personal-taxes` `{canton, amount}` legt einen Eintrag an, `PATCH /admin/personal-taxes/{id}` bzw. `DELETE ...` aktualisieren oder löschen ihn  
+  - Die Werte werden intern auf zwei Dezimalstellen gerundet und stehen dem Frontend für eigene Admin-Tabs zur Pflege der Zürcher Tabellen zur Verfügung.
 - Assistant-spezifisch  
   - `POST /assistant/chat` `{messages:[{role: system|user|assistant, content}], context?:{scenario_id?, scenario_name?, auto_apply?}}` → `{messages, plan|null, reply}`; benötigt `OPENAI_API_KEY`  
   - `POST /assistant/apply` `{plan:{actions:[...]}}` führt Plan-Aktionen aus (create/update/delete Asset/Transaction, create/use/delete Scenario etc.)
@@ -71,6 +90,8 @@ uvicorn backend.api:app --reload
 ```
 
 Der Server läuft anschließend auf `http://127.0.0.1:8000`. Die FastAPI Doku ist unter `http://127.0.0.1:8000/docs` erreichbar.
+
+> **Admin Zugriff aktivieren:** Setze `ADMIN_PASSWORD="<dein_geheimes_passwort>"` (optional `ADMIN_USERNAME`, Default `admin`), damit das Admin-UI und die `/admin/tax-tables` Endpunkte zugreifbar sind. Ohne Passwort bleiben diese Endpunkte deaktiviert.
 
 ### Alles-in-einem Skript
 

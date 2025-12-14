@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import re
+import secrets
 from pathlib import Path
 import httpx
 from datetime import datetime
@@ -10,7 +11,7 @@ from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field, validator
 from typing import Any, Dict, List
 
@@ -36,7 +37,87 @@ app.add_middleware(
 )
 
 repo = WealthRepository()
+
+CONFESSION_FIELD_MAP = {
+    "ref": "ref_rate",
+    "cath": "cath_rate",
+    "christian_cath": "christian_cath_rate",
+}
+
+
+def _percent_to_factor(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    return round(float(value) / 100, 6)
+
+
+def _apply_tax_field_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
+    data = dict(updates)
+    for key in (
+        "tax_municipality_id",
+        "tax_state_income_tariff_id",
+        "tax_state_wealth_tariff_id",
+        "tax_federal_tariff_id",
+    ):
+        if key in data and not data[key]:
+            data[key] = None
+
+    municipality = None
+    municipality_id = data.get("tax_municipality_id")
+    if municipality_id:
+        municipality = repo.get_municipal_tax_rate(municipality_id)
+        if not municipality:
+            raise HTTPException(status_code=404, detail="Gemeinde nicht gefunden")
+        data["tax_canton"] = municipality.get("canton")
+        data["tax_municipality_name"] = municipality.get("municipality")
+        base_factor = _percent_to_factor(municipality.get("base_rate"))
+        if base_factor is not None:
+            data["municipal_tax_factor"] = base_factor
+    elif "tax_municipality_id" in data and data.get("tax_municipality_id") is None:
+        data["tax_municipality_name"] = None
+        if "municipal_tax_factor" not in data:
+            data["municipal_tax_factor"] = None
+
+    confession = data.get("tax_confession")
+    if confession:
+        if confession == "none":
+            data["church_tax_factor"] = 0.0
+        else:
+            source = municipality
+            if not source and municipality_id:
+                source = repo.get_municipal_tax_rate(municipality_id)
+            if not source:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Konfession kann nur gesetzt werden, wenn eine Gemeinde ausgewählt ist.",
+                )
+            rate_field = CONFESSION_FIELD_MAP.get(confession)
+            rate_value = source.get(rate_field) if rate_field else None
+            data["church_tax_factor"] = _percent_to_factor(rate_value) or 0.0
+
+    canton = data.get("tax_canton")
+    if canton and "personal_tax_per_person" not in data:
+        personal = repo.get_personal_tax_for_canton(canton)
+        if personal and personal.get("amount") is not None:
+            data["personal_tax_per_person"] = personal["amount"]
+    elif "tax_canton" in data and not data.get("tax_canton"):
+        data.setdefault("personal_tax_per_person", None)
+
+    # Validate referenced tariffs exist (without loading heavy data twice later)
+    for key, getter, label in (
+        ("tax_state_income_tariff_id", repo.get_state_tax_tariff, "Staatssteuer-Tarif (Einkommen)"),
+        ("tax_state_wealth_tariff_id", repo.get_state_tax_tariff, "Staatssteuer-Tarif (Vermögen)"),
+        ("tax_federal_tariff_id", repo.get_federal_tax_table, "Bundessteuer-Tarif"),
+    ):
+        value = data.get(key)
+        if value:
+            obj = getter(value)
+            if not obj:
+                raise HTTPException(status_code=404, detail=f"{label} nicht gefunden")
+
+    return data
 auth_scheme = HTTPBearer()
+admin_scheme = HTTPBasic()
 
 try:
     from openai import OpenAI
@@ -51,6 +132,8 @@ except Exception:  # pragma: no cover - dependency optional
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 _cached_openai_client = None
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
 # Patch httpx.Client/__init__ to accept "proxies" kwarg (OpenAI may pass it) for newer httpx versions
 try:
@@ -122,6 +205,14 @@ class ScenarioCreate(BaseModel):
     church_tax_factor: Optional[float] = Field(None, description="Kirchensteuerfuss (z.B. 0.14 für 14%)")
     personal_tax_per_person: Optional[float] = Field(None, description="Personalsteuer pro Person in CHF")
     tax_account_id: Optional[str] = Field(None, description="Asset/Konto, von dem Steuern abgebucht werden sollen")
+    tax_canton: Optional[str] = Field(None, description="Kanton für Steuerberechnung (z.B. ZH)")
+    tax_municipality_id: Optional[str] = Field(None, description="Gemeinde-ID aus den Steuerfüssen")
+    tax_state_income_tariff_id: Optional[str] = Field(None, description="Tarif-ID für Kantonssteuer (Einkommen)")
+    tax_state_wealth_tariff_id: Optional[str] = Field(None, description="Tarif-ID für Kantonssteuer (Vermögen)")
+    tax_federal_tariff_id: Optional[str] = Field(None, description="Tarif-ID für direkte Bundessteuer")
+    tax_confession: Optional[Literal["none", "ref", "cath", "christian_cath"]] = Field(
+        None, description="Konfession für Kirchensteuer"
+    )
 
     @validator("end_year")
     def validate_years(cls, v, values):
@@ -145,6 +236,12 @@ class ScenarioUpdate(BaseModel):
     church_tax_factor: Optional[float] = None
     personal_tax_per_person: Optional[float] = None
     tax_account_id: Optional[str] = None
+    tax_canton: Optional[str] = None
+    tax_municipality_id: Optional[str] = None
+    tax_state_income_tariff_id: Optional[str] = None
+    tax_state_wealth_tariff_id: Optional[str] = None
+    tax_federal_tariff_id: Optional[str] = None
+    tax_confession: Optional[Literal["none", "ref", "cath", "christian_cath"]] = None
 
 
 class PortfolioShock(BaseModel):
@@ -174,11 +271,13 @@ class StressProfileCreate(BaseModel):
     name: str
     description: Optional[str] = None
     overrides: Dict[str, Any]
+    is_public: bool = False
 
 class StressProfileUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     overrides: Optional[Dict[str, Any]] = None
+    is_public: Optional[bool] = None
 
 class AssetCreate(BaseModel):
     name: str
@@ -219,6 +318,7 @@ class TransactionCreate(BaseModel):
     annual_interest_rate: Optional[float] = None
     taxable: bool = False
     taxable_amount: Optional[float] = None
+    correction: bool = False
 
     @validator("frequency", always=True)
     def validate_frequency(cls, v, values):
@@ -255,6 +355,7 @@ class TransactionUpdate(BaseModel):
     annual_interest_rate: Optional[float] = None
     taxable: Optional[bool] = None
     taxable_amount: Optional[float] = None
+    correction: Optional[bool] = None
 
 
 class TaxBracket(BaseModel):
@@ -302,6 +403,77 @@ class TaxProfileImportRequest(BaseModel):
     profiles: List[TaxProfileCreate] = Field(default_factory=list)
 
 
+class MunicipalTaxRateBase(BaseModel):
+    municipality: str = Field(..., min_length=1, description="Gemeindename")
+    canton: str = Field(default="ZH", description="Kanton (Standard ZH)")
+    base_rate: float = Field(..., ge=0, description="Steuerfuss ohne Kirchsteuer in Prozent")
+    ref_rate: Optional[float] = Field(None, ge=0, description="Reformierte Kirchensteuer in Prozent")
+    cath_rate: Optional[float] = Field(None, ge=0, description="Katholische Kirchensteuer in Prozent")
+    christian_cath_rate: Optional[float] = Field(None, ge=0, description="Christkatholische Kirchensteuer in Prozent")
+
+
+class MunicipalTaxRateCreate(MunicipalTaxRateBase):
+    pass
+
+
+class MunicipalTaxRateUpdate(BaseModel):
+    municipality: Optional[str] = None
+    canton: Optional[str] = None
+    base_rate: Optional[float] = Field(None, ge=0)
+    ref_rate: Optional[float] = Field(None, ge=0)
+    cath_rate: Optional[float] = Field(None, ge=0)
+    christian_cath_rate: Optional[float] = Field(None, ge=0)
+
+
+class StateTaxTariffRow(BaseModel):
+    threshold: float = Field(..., ge=0, description="Schwelle (steuerbares Einkommen/Vermögen) in CHF")
+    base_amount: float = Field(..., ge=0, description="Sockelbetrag in CHF")
+    per_100_amount: float = Field(..., ge=0, description="Zusatzbetrag je 100 CHF über der Schwelle")
+    note: Optional[str] = Field(None, description="Freitext z.B. Tarifabschnitt")
+
+
+class StateTaxTariffCreate(BaseModel):
+    name: str = Field(..., description="Name des Tarifs, z.B. Grundtarif ledig")
+    scope: Literal["income", "wealth"] = Field(..., description="Einsatzgebiet: Einkommen oder Vermögen")
+    canton: str = Field(..., min_length=2, max_length=10, description="Kanton (z.B. ZH)")
+    description: Optional[str] = Field(None, description="Optionaler Hinweis")
+    rows: List[StateTaxTariffRow] = Field(default_factory=list, description="Tabelleneinträge")
+
+
+class StateTaxTariffUpdate(BaseModel):
+    name: Optional[str] = None
+    scope: Optional[Literal["income", "wealth"]] = None
+    canton: Optional[str] = None
+    description: Optional[str] = None
+    rows: Optional[List[StateTaxTariffRow]] = None
+
+
+class FederalTaxTableCreate(BaseModel):
+    name: str = Field(..., description="Name der Tabelle (z.B. Ledig)")
+    description: Optional[str] = Field(None, description="Optionaler Hinweis")
+    rows: List[StateTaxTariffRow] = Field(default_factory=list, description="Tabelleneinträge")
+
+
+class FederalTaxTableUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    rows: Optional[List[StateTaxTariffRow]] = None
+
+
+class TariffRowsImport(BaseModel):
+    rows: List[Dict[str, Any]] = Field(..., description="Liste von Zeilenobjekten (schwelle_chf, sockelbetrag_chf, je_100_chf, hinweis)")
+
+
+class PersonalTaxEntry(BaseModel):
+    canton: str = Field(..., min_length=2, max_length=10, description="Kanton (z.B. ZH)")
+    amount: float = Field(..., ge=0, description="Personalsteuer in CHF pro Person")
+
+
+class PersonalTaxUpdate(BaseModel):
+    canton: Optional[str] = None
+    amount: Optional[float] = Field(None, ge=0)
+
+
 class AssistantMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
@@ -329,6 +501,16 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(auth_sc
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
     return user
+
+
+def require_admin(credentials: HTTPBasicCredentials = Depends(admin_scheme)):
+    if not ADMIN_PASSWORD:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Admin login is not configured")
+    username_valid = secrets.compare_digest(credentials.username or "", ADMIN_USERNAME)
+    password_valid = secrets.compare_digest(credentials.password or "", ADMIN_PASSWORD)
+    if not (username_valid and password_valid):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
+    return {"username": ADMIN_USERNAME}
 
 
 @app.post("/auth/register")
@@ -366,22 +548,31 @@ def delete_me(current_user=Depends(get_current_user)):
 
 @app.post("/scenarios")
 def create_scenario(payload: ScenarioCreate, current_user=Depends(get_current_user)):
+    payload_data = payload.dict()
+    enriched = _apply_tax_field_updates(payload_data)
     return repo.create_scenario(
         current_user["id"],
-        payload.name,
-        payload.start_year,
-        payload.start_month,
-        payload.end_year,
-        payload.end_month,
-        payload.description,
-        payload.inflation_rate,
-        payload.income_tax_rate,
-        payload.wealth_tax_rate,
-        payload.municipal_tax_factor,
-        payload.cantonal_tax_factor,
-        payload.church_tax_factor,
-        payload.personal_tax_per_person,
-        payload.tax_account_id,
+        enriched["name"],
+        enriched["start_year"],
+        enriched["start_month"],
+        enriched["end_year"],
+        enriched["end_month"],
+        enriched.get("description"),
+        enriched.get("inflation_rate"),
+        enriched.get("income_tax_rate"),
+        enriched.get("wealth_tax_rate"),
+        enriched.get("municipal_tax_factor"),
+        enriched.get("cantonal_tax_factor"),
+        enriched.get("church_tax_factor"),
+        enriched.get("personal_tax_per_person"),
+        enriched.get("tax_account_id"),
+        enriched.get("tax_canton"),
+        enriched.get("tax_municipality_id"),
+        enriched.get("tax_municipality_name"),
+        enriched.get("tax_state_income_tariff_id"),
+        enriched.get("tax_state_wealth_tariff_id"),
+        enriched.get("tax_federal_tariff_id"),
+        enriched.get("tax_confession"),
     )
 
 
@@ -407,9 +598,34 @@ def get_scenario(scenario_id: str, current_user=Depends(get_current_user)):
     return scenario
 
 
+@app.get("/tax/cantons")
+def list_tax_cantons(current_user=Depends(get_current_user)):
+    return repo.list_municipal_cantons()
+
+
+@app.get("/tax/municipalities")
+def list_tax_municipalities(canton: Optional[str] = None, current_user=Depends(get_current_user)):
+    return repo.list_municipal_tax_rates(canton)
+
+
+@app.get("/tax/state-tariffs")
+def list_state_tax_tariffs(
+    scope: Optional[Literal["income", "wealth"]] = None,
+    canton: Optional[str] = None,
+    current_user=Depends(get_current_user),
+):
+    return repo.list_state_tax_tariffs(scope, canton)
+
+
+@app.get("/tax/federal-tariffs")
+def list_federal_tax_tariffs(current_user=Depends(get_current_user)):
+    return repo.list_federal_tax_tables()
+
+
 @app.patch("/scenarios/{scenario_id}")
 def update_scenario(scenario_id: str, payload: ScenarioUpdate, current_user=Depends(get_current_user)):
-    updates = {k: v for k, v in payload.dict().items() if v is not None}
+    updates = payload.dict(exclude_unset=True)
+    updates = _apply_tax_field_updates(updates)
     if not updates:
         raise HTTPException(status_code=400, detail="No updates supplied")
     scenario = repo.get_scenario(scenario_id)
@@ -581,6 +797,7 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
             annual_interest_rate,
             payload.taxable,
             payload.taxable_amount if payload.taxable_amount is not None else None,
+            payload.correction,
         )
 
     return repo.add_transaction(
@@ -602,6 +819,7 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
         None,
         payload.taxable,
         payload.taxable_amount if payload.taxable_amount is not None else payload.amount if payload.taxable else None,
+        payload.correction,
     )
 
 
@@ -612,7 +830,8 @@ def list_transactions(scenario_id: str, current_user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Scenario not found")
     if scenario["user_id"] != current_user["id"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to view this scenario")
-    return repo.list_transactions_for_scenario(scenario_id)
+    transactions = repo.list_transactions_for_scenario(scenario_id)
+    return [tx for tx in transactions if not tx.get("correction")]
 
 
 @app.patch("/transactions/{transaction_id}")
@@ -686,7 +905,9 @@ def list_stress_profiles(current_user=Depends(get_current_user)):
 
 @app.post("/stress-profiles")
 def create_stress_profile(payload: StressProfileCreate, current_user=Depends(get_current_user)):
-    return repo.create_stress_profile(current_user["id"], payload.name, payload.description, payload.overrides)
+    return repo.create_stress_profile(
+        current_user["id"], payload.name, payload.description, payload.overrides, payload.is_public
+    )
 
 
 @app.patch("/stress-profiles/{profile_id}")
@@ -786,6 +1007,189 @@ def import_tax_profiles(payload: TaxProfileImportRequest, current_user=Depends(g
             )
         )
     return created
+
+
+# Admin: Municipal Tax Tables ---------------------------------------------
+@app.get("/admin/tax-tables")
+def list_municipal_tax_rates(canton: str = "ZH", admin=Depends(require_admin)):
+    return repo.list_municipal_tax_rates(canton)
+
+
+@app.post("/admin/tax-tables")
+def create_municipal_tax_rate(payload: MunicipalTaxRateCreate, admin=Depends(require_admin)):
+    return repo.create_municipal_tax_rate(
+        payload.municipality,
+        payload.canton,
+        payload.base_rate,
+        payload.ref_rate,
+        payload.cath_rate,
+        payload.christian_cath_rate,
+    )
+
+
+@app.patch("/admin/tax-tables/{entry_id}")
+def update_municipal_tax_rate(entry_id: str, payload: MunicipalTaxRateUpdate, admin=Depends(require_admin)):
+    updates = payload.dict(exclude_unset=True)
+    updated = repo.update_municipal_tax_rate(entry_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Tax table entry not found")
+    return updated
+
+
+@app.delete("/admin/tax-tables/{entry_id}")
+def delete_municipal_tax_rate(entry_id: str, admin=Depends(require_admin)):
+    ok = repo.delete_municipal_tax_rate(entry_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Tax table entry not found")
+    return {"status": "deleted"}
+
+
+@app.get("/admin/state-tariffs")
+def list_state_tax_tariffs(
+    scope: Optional[Literal["income", "wealth"]] = None,
+    canton: Optional[str] = None,
+    admin=Depends(require_admin),
+):
+    return repo.list_state_tax_tariffs(scope, canton)
+
+
+@app.post("/admin/state-tariffs")
+def create_state_tax_tariff(payload: StateTaxTariffCreate, admin=Depends(require_admin)):
+    return repo.create_state_tax_tariff(payload.name, payload.scope, payload.rows, payload.description, payload.canton)
+
+
+@app.patch("/admin/state-tariffs/{tariff_id}")
+def update_state_tax_tariff(tariff_id: str, payload: StateTaxTariffUpdate, admin=Depends(require_admin)):
+    updates = payload.dict(exclude_unset=True)
+    updated = repo.update_state_tax_tariff(tariff_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="State tax tariff not found")
+    return updated
+
+
+@app.delete("/admin/state-tariffs/{tariff_id}")
+def delete_state_tax_tariff(tariff_id: str, admin=Depends(require_admin)):
+    ok = repo.delete_state_tax_tariff(tariff_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="State tax tariff not found")
+    return {"status": "deleted"}
+
+
+def _parse_numeric(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace("'", "").replace("’", "").replace(" ", "")
+        cleaned = cleaned.replace(",", ".")
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+    return None
+
+
+def _convert_import_rows(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    converted: List[Dict[str, Any]] = []
+    for entry in entries:
+        threshold = _parse_numeric(entry.get("threshold") or entry.get("schwelle_chf") or entry.get("income"))
+        base_amount = _parse_numeric(entry.get("base_amount") or entry.get("sockelbetrag_chf") or entry.get("base"))
+        per_100 = _parse_numeric(entry.get("per_100_amount") or entry.get("je_100_chf") or entry.get("per100"))
+        note = entry.get("note") or entry.get("hinweis")
+        if threshold is None:
+            continue
+        converted.append(
+            {
+                "threshold": threshold,
+                "base_amount": base_amount or 0.0,
+                "per_100_amount": per_100 or 0.0,
+                "note": note,
+            }
+        )
+    return converted
+
+
+@app.post("/admin/state-tariffs/{tariff_id}/rows/import")
+def import_state_tariff_rows(tariff_id: str, payload: TariffRowsImport, admin=Depends(require_admin)):
+    tariff = repo.get_state_tax_tariff(tariff_id)
+    if not tariff:
+        raise HTTPException(status_code=404, detail="State tax tariff not found")
+    converted = _convert_import_rows(payload.rows)
+    if not converted:
+        raise HTTPException(status_code=400, detail="No valid rows found in payload")
+    updated = repo.update_state_tax_tariff(tariff_id, {"rows": converted})
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to import rows")
+    return updated
+
+
+@app.get("/admin/federal-tax-tables")
+def list_federal_tax_tables(admin=Depends(require_admin)):
+    return repo.list_federal_tax_tables()
+
+
+@app.post("/admin/federal-tax-tables")
+def create_federal_tax_table(payload: FederalTaxTableCreate, admin=Depends(require_admin)):
+    return repo.create_federal_tax_table(payload.name, payload.rows, payload.description)
+
+
+@app.patch("/admin/federal-tax-tables/{table_id}")
+def update_federal_tax_table(table_id: str, payload: FederalTaxTableUpdate, admin=Depends(require_admin)):
+    updates = payload.dict(exclude_unset=True)
+    updated = repo.update_federal_tax_table(table_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Federal tax table not found")
+    return updated
+
+
+@app.delete("/admin/federal-tax-tables/{table_id}")
+def delete_federal_tax_table(table_id: str, admin=Depends(require_admin)):
+    ok = repo.delete_federal_tax_table(table_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Federal tax table not found")
+    return {"status": "deleted"}
+
+
+@app.post("/admin/federal-tax-tables/{table_id}/rows/import")
+def import_federal_tax_table_rows(table_id: str, payload: TariffRowsImport, admin=Depends(require_admin)):
+    table = repo.get_federal_tax_table(table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="Federal tax table not found")
+    converted = _convert_import_rows(payload.rows)
+    if not converted:
+        raise HTTPException(status_code=400, detail="No valid rows found in payload")
+    updated = repo.update_federal_tax_table(table_id, {"rows": converted})
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to import rows")
+    return updated
+
+
+@app.get("/admin/personal-taxes")
+def list_personal_taxes(admin=Depends(require_admin)):
+    return repo.list_personal_taxes()
+
+
+@app.post("/admin/personal-taxes")
+def create_personal_tax(payload: PersonalTaxEntry, admin=Depends(require_admin)):
+    return repo.create_personal_tax(payload.canton, payload.amount)
+
+
+@app.patch("/admin/personal-taxes/{entry_id}")
+def update_personal_tax(entry_id: str, payload: PersonalTaxUpdate, admin=Depends(require_admin)):
+    updates = payload.dict(exclude_unset=True)
+    updated = repo.update_personal_tax(entry_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Personal tax entry not found")
+    return updated
+
+
+@app.delete("/admin/personal-taxes/{entry_id}")
+def delete_personal_tax(entry_id: str, admin=Depends(require_admin)):
+    ok = repo.delete_personal_tax(entry_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Personal tax entry not found")
+    return {"status": "deleted"}
 
 
 def _ensure_scenario_access(scenario_id: str, current_user):
@@ -1082,6 +1486,8 @@ def _ensure_unique_transaction_name(scenario_id: str, name: str):
     """Ensure the scenario has no other transaction with the same (case-insensitive) name."""
     txs = repo.list_transactions_for_scenario(scenario_id)
     for tx in txs:
+        if tx.get("correction"):
+            continue
         if tx.get("name") and tx["name"].lower() == name.lower():
             raise HTTPException(status_code=400, detail=f"Transaction name '{name}' already exists in this scenario.")
 
@@ -1090,6 +1496,8 @@ def _delete_transactions_by_name(scenario_id: str, name: str):
     """Delete all transactions in a scenario that match a name (case-insensitive)."""
     txs = repo.list_transactions_for_scenario(scenario_id)
     for tx in txs:
+        if tx.get("correction"):
+            continue
         if tx.get("name") and tx["name"].lower() == name.lower():
             try:
                 repo.delete_transaction(tx["id"])
