@@ -227,6 +227,7 @@ def _collect_yearly_tax(
         "church_tax_factor": _safe_number(scenario.get("church_tax_factor"), 0.0),
         "personal_tax_per_person": _safe_number(scenario.get("personal_tax_per_person"), 0.0),
     }
+    household_size = 2 if scenario.get("tax_marital_status") == "verheiratet" else 1
 
     for tx in transactions:
         if not tx.get("taxable"):
@@ -310,7 +311,7 @@ def _collect_yearly_tax(
                 "per_100_amount",
             )
         base_tax = income_tax + (wealth_tax or 0.0)
-        personal_tax = defaults["personal_tax_per_person"]  # household size = 1 aktuell
+        personal_tax = defaults["personal_tax_per_person"] * household_size if defaults["personal_tax_per_person"] else 0.0  # adjust for household size
         tax_total = (
             base_tax * defaults["municipal_tax_factor"]
             + base_tax * defaults["cantonal_tax_factor"]
@@ -477,6 +478,11 @@ def run_scenario_simulation(
     transactions = repo.list_transactions_for_scenario(scenario_id)
 
     scenario, assets, transactions = _apply_overrides(scenario, assets, transactions, overrides)
+
+    if scenario.get("tax_canton"):
+        canton_rate = repo.get_state_tax_rate_for_canton(scenario.get("tax_canton"))
+        if canton_rate and canton_rate.get("rate") is not None:
+            scenario["cantonal_tax_factor"] = _safe_number(canton_rate.get("rate"), 0.0) / 100.0
 
     tax_tables: Dict[str, Dict] = {}
     income_tariff_id = scenario.get("tax_state_income_tariff_id")

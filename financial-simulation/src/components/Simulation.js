@@ -44,10 +44,12 @@ import {
     getAuthToken,
     importTaxProfiles,
     listTaxCantons,
+    listStateTaxRates,
     listMunicipalTaxEntries,
     listStateTaxTariffsPublic,
     listFederalTaxTablesPublic,
 } from '../api';
+import VaultGate from './VaultGate';
 import '../TransactionsList.css';
 
 ChartJS.register(
@@ -161,6 +163,7 @@ const Simulation = () => {
     const [taxProfilesLoading, setTaxProfilesLoading] = useState(false);
     const [taxImportError, setTaxImportError] = useState('');
     const [taxCantons, setTaxCantons] = useState([]);
+    const [stateTaxRates, setStateTaxRates] = useState([]);
     const [taxMunicipalities, setTaxMunicipalities] = useState([]);
     const [stateIncomeTariffs, setStateIncomeTariffs] = useState([]);
     const [stateWealthTariffs, setStateWealthTariffs] = useState([]);
@@ -170,7 +173,9 @@ const Simulation = () => {
     const [selectedStateIncomeTariffId, setSelectedStateIncomeTariffId] = useState('');
     const [selectedStateWealthTariffId, setSelectedStateWealthTariffId] = useState('');
     const [selectedFederalTariffId, setSelectedFederalTariffId] = useState('');
+    const [selectedMaritalStatus, setSelectedMaritalStatus] = useState('ledig');
     const [selectedConfession, setSelectedConfession] = useState('none');
+    const [selectedConfessionPartner, setSelectedConfessionPartner] = useState('none');
     const [newScenarioDescription, setNewScenarioDescription] = useState('');
     const [scenarioDescription, setScenarioDescription] = useState('');
     const [selectedScenarios, setSelectedScenarios] = useState([]);
@@ -186,6 +191,8 @@ const Simulation = () => {
     const [expandedYears, setExpandedYears] = useState([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [scenarioCount, setScenarioCount] = useState(0);
+    const [vaultUnlocked, setVaultUnlocked] = useState(false);
+    const [vaultDek, setVaultDek] = useState(null);
     const scenarioSectionRef = useRef(null);
     const scenarioMenuRef = useRef(null);
     const [isScenarioMenuOpen, setIsScenarioMenuOpen] = useState(false);
@@ -503,6 +510,20 @@ const Simulation = () => {
             setSelectedStateWealthTariffId(scenarioDetails.tax_state_wealth_tariff_id || '');
             setSelectedFederalTariffId(scenarioDetails.tax_federal_tariff_id || '');
             setSelectedConfession(scenarioDetails.tax_confession || 'none');
+            setSelectedConfessionPartner(scenarioDetails.tax_confession_partner || 'none');
+            setSelectedMaritalStatus(scenarioDetails.tax_marital_status || 'ledig');
+        } else {
+            setInflationRate('');
+            setScenarioDescription('');
+            setTaxAccountId('');
+            setSelectedTaxCanton('');
+            setSelectedMunicipalityId('');
+            setSelectedStateIncomeTariffId('');
+            setSelectedStateWealthTariffId('');
+            setSelectedFederalTariffId('');
+            setSelectedConfession('none');
+            setSelectedConfessionPartner('none');
+            setSelectedMaritalStatus('ledig');
         }
     }, [scenarioDetails]);
 
@@ -638,21 +659,28 @@ const Simulation = () => {
         if (!selectedUserId) {
             setTaxCantons([]);
             setFederalTariffs([]);
+            setStateTaxRates([]);
             return;
         }
         let cancelled = false;
         const loadStaticTaxData = async () => {
             try {
-                const [cantons, federal] = await Promise.all([listTaxCantons(), listFederalTaxTablesPublic()]);
+                const [cantons, federal, stateRates] = await Promise.all([
+                    listTaxCantons(),
+                    listFederalTaxTablesPublic(),
+                    listStateTaxRates(),
+                ]);
                 if (!cancelled) {
                     setTaxCantons(cantons || []);
                     setFederalTariffs(federal || []);
+                    setStateTaxRates(stateRates || []);
                 }
             } catch (err) {
                 if (!cancelled) {
                     setError(err.message);
                     setTaxCantons([]);
                     setFederalTariffs([]);
+                    setStateTaxRates([]);
                 }
             }
         };
@@ -708,6 +736,19 @@ const Simulation = () => {
             setSelectedMunicipalityId('');
         }
     }, [selectedTaxCanton]);
+
+    useEffect(() => {
+        if (selectedMaritalStatus !== 'verheiratet') {
+            setSelectedConfessionPartner('none');
+        }
+    }, [selectedMaritalStatus]);
+
+    useEffect(() => {
+        if (!selectedTaxCanton) return;
+        if (!taxCantons.includes(selectedTaxCanton)) {
+            setSelectedTaxCanton('');
+        }
+    }, [taxCantons, selectedTaxCanton]);
 
     useEffect(() => {
         if (!selectedMunicipalityId) return;
@@ -768,18 +809,45 @@ const Simulation = () => {
             scenarioDetails && scenarioDetails.cantonal_tax_factor !== null && scenarioDetails.cantonal_tax_factor !== undefined
                 ? Number(scenarioDetails.cantonal_tax_factor)
                 : null;
-        const cantonalFactor = Number.isFinite(scenarioCantonalFactor) ? scenarioCantonalFactor : 0;
-        const cantonalPercent = Number.isFinite(cantonalFactor) ? cantonalFactor * 100 : null;
-
-        let churchPercent = null;
-        if (selectedConfession === 'none') {
-            churchPercent = 0;
-        } else if (selectedMunicipality) {
-            const field = CONFESSION_FIELD_MAP[selectedConfession];
-            if (field) {
-                churchPercent = normalizePercent(selectedMunicipality[field]);
+        let cantonalFactor = Number.isFinite(scenarioCantonalFactor) ? scenarioCantonalFactor : null;
+        if ((cantonalFactor === null || cantonalFactor === undefined) && selectedTaxCanton) {
+            const match = stateTaxRates.find((entry) => entry.canton === selectedTaxCanton);
+            if (match && match.rate !== undefined && match.rate !== null) {
+                const rateNum = Number(match.rate);
+                cantonalFactor = Number.isFinite(rateNum) ? rateNum / 100 : null;
             }
-        } else if (
+        }
+        const cantonalPercent = Number.isFinite(cantonalFactor) ? cantonalFactor * 100 : null;
+        cantonalFactor = Number.isFinite(cantonalFactor) ? cantonalFactor : 0;
+
+        const isMarried = selectedMaritalStatus === 'verheiratet';
+        const confessionPercent = (conf) => {
+            if (conf === 'none') return 0;
+            if (!conf) return null;
+            if (!selectedMunicipality) return null;
+            const field = CONFESSION_FIELD_MAP[conf];
+            if (field) {
+                return normalizePercent(selectedMunicipality[field]);
+            }
+            return null;
+        };
+        let churchPercent = null;
+        if (isMarried) {
+            const pctA = confessionPercent(selectedConfession);
+            const pctB = confessionPercent(selectedConfessionPartner);
+            if (pctA !== null || pctB !== null) {
+                churchPercent = ((pctA || 0) + (pctB || 0)) / 2;
+            }
+        } else {
+            const pct = confessionPercent(selectedConfession);
+            if (pct !== null) {
+                churchPercent = pct;
+            } else if (selectedConfession === 'none') {
+                churchPercent = 0;
+            }
+        }
+        if (
+            churchPercent === null &&
             scenarioDetails &&
             scenarioDetails.church_tax_factor !== null &&
             scenarioDetails.church_tax_factor !== undefined
@@ -795,7 +863,8 @@ const Simulation = () => {
             scenarioDetails.personal_tax_per_person !== undefined
                 ? Number(scenarioDetails.personal_tax_per_person)
                 : null;
-        const personalTax = Number.isFinite(scenarioPersonal) ? scenarioPersonal : null;
+        const householdSize = isMarried ? 2 : 1;
+        const personalTax = Number.isFinite(scenarioPersonal) ? scenarioPersonal * householdSize : null;
 
         return {
             municipalPercent,
@@ -806,7 +875,15 @@ const Simulation = () => {
             churchFactor,
             personalTax,
         };
-    }, [selectedMunicipality, scenarioDetails, selectedConfession]);
+    }, [
+        selectedMunicipality,
+        scenarioDetails,
+        selectedConfession,
+        selectedConfessionPartner,
+        selectedTaxCanton,
+        selectedMaritalStatus,
+        stateTaxRates,
+    ]);
 
     const fetchStressProfilesRemote = useCallback(async () => {
         try {
@@ -866,6 +943,8 @@ const Simulation = () => {
             setAuthToken(token);
             setUsers([user]);
             setSelectedUserId(user.id);
+            setVaultUnlocked(false);
+            setVaultDek(null);
             setNewUsername('');
             setNewUserPassword('');
             setNewUserName('');
@@ -890,6 +969,8 @@ const Simulation = () => {
             setAuthToken(token);
             setUsers([user]);
             setSelectedUserId(user.id);
+            setVaultUnlocked(false);
+            setVaultDek(null);
             setNewUserPassword('');
             await loadScenariosForUser(user.id);
         } catch (err) {
@@ -898,6 +979,22 @@ const Simulation = () => {
             setLoading(false);
         }
     };
+
+    const handleVaultUnlocked = useCallback(
+        ({ dek }) => {
+            setVaultDek(dek);
+            setVaultUnlocked(true);
+        },
+        [setVaultDek]
+    );
+
+    const handleVaultLocked = useCallback(() => {
+        setVaultUnlocked(false);
+        setVaultDek(null);
+        setSelectedUserId('');
+        setUsers([]);
+        setAuthToken(null);
+    }, []);
 
     const parseMonthValue = (value) => {
         if (!value) return null;
@@ -1307,6 +1404,9 @@ const Simulation = () => {
             tax_state_wealth_tariff_id: selectedStateWealthTariffId || null,
             tax_federal_tariff_id: selectedFederalTariffId || null,
             tax_confession: selectedConfession || null,
+            tax_confession_partner:
+                selectedMaritalStatus === 'verheiratet' ? selectedConfessionPartner || null : null,
+            tax_marital_status: selectedMaritalStatus || null,
         }),
         [
             scenarioDescription,
@@ -1318,6 +1418,8 @@ const Simulation = () => {
             selectedStateWealthTariffId,
             selectedFederalTariffId,
             selectedConfession,
+            selectedConfessionPartner,
+            selectedMaritalStatus,
         ]
     );
 
@@ -1346,6 +1448,8 @@ const Simulation = () => {
             tax_state_wealth_tariff_id: scenarioDetails.tax_state_wealth_tariff_id || null,
             tax_federal_tariff_id: scenarioDetails.tax_federal_tariff_id || null,
             tax_confession: scenarioDetails.tax_confession || null,
+            tax_confession_partner: scenarioDetails.tax_confession_partner || null,
+            tax_marital_status: scenarioDetails.tax_marital_status || null,
         };
         return Object.entries(payload).some(([key, value]) => normalizeValue(value) !== normalizeValue(scenarioMap[key]));
     }, [scenarioDetails, buildScenarioSettingsPayload]);
@@ -2904,6 +3008,14 @@ const Simulation = () => {
 
     return (
         <>
+            {selectedUserId && !vaultUnlocked && (
+                <VaultGate
+                    key={selectedUserId}
+                    user={selectedUser}
+                    onUnlocked={handleVaultUnlocked}
+                    onLocked={handleVaultLocked}
+                />
+            )}
             <div className="simulation">
                 <div className="market-hero">
                     <button
@@ -2920,6 +3032,9 @@ const Simulation = () => {
                             <p className="eyebrow">Financials Overview</p>
                             <h1>Portfolio Simulation</h1>
                             <div className="hero-meta">
+                                <div className={`pill ${vaultDek ? 'success' : 'warning'}`}>
+                                    Vault {vaultDek ? 'entsperrt' : 'gesperrt'}
+                                </div>
                                 <div className="scenario-pill-menu" ref={scenarioMenuRef}>
                                     <button
                                         type="button"
@@ -3145,6 +3260,13 @@ const Simulation = () => {
                                                             </option>
                                                         ))}
                                                     </select>
+                                                    {derivedTaxSettings.cantonalPercent !== null &&
+                                                        derivedTaxSettings.cantonalPercent !== undefined && (
+                                                            <small className="muted">
+                                                                Staatssteuerfuss:{' '}
+                                                                {Number(derivedTaxSettings.cantonalPercent || 0).toFixed(2)} %
+                                                            </small>
+                                                        )}
                                                 </label>
                                                 <label className="stacked">
                                                     <span>Gemeinde</span>
@@ -3221,7 +3343,18 @@ const Simulation = () => {
                                                     )}
                                                 </label>
                                                 <label className="stacked">
-                                                    <span>Konfession</span>
+                                                    <span>Familienstand</span>
+                                                    <select
+                                                        value={selectedMaritalStatus}
+                                                        onChange={(e) => setSelectedMaritalStatus(e.target.value)}
+                                                    >
+                                                        <option value="ledig">Ledig</option>
+                                                        <option value="verheiratet">Verheiratet</option>
+                                                        <option value="verwitwet">Verwitwet</option>
+                                                    </select>
+                                                </label>
+                                                <div className="stacked">
+                                                    <span>Konfession{selectedMaritalStatus === 'verheiratet' ? ' (Person 1)' : ''}</span>
                                                     <select
                                                         value={selectedConfession}
                                                         onChange={(e) => setSelectedConfession(e.target.value)}
@@ -3232,7 +3365,26 @@ const Simulation = () => {
                                                         <option value="christian_cath">Christkatholisch</option>
                                                     </select>
                                                     {!selectedMunicipality && <small className="muted">Gemeinde auswählen, um Kirchentarife zu laden.</small>}
-                                                </label>
+                                                </div>
+                                                {selectedMaritalStatus === 'verheiratet' && (
+                                                    <div className="stacked">
+                                                        <span>Konfession (Person 2)</span>
+                                                        <select
+                                                            value={selectedConfessionPartner}
+                                                            onChange={(e) => setSelectedConfessionPartner(e.target.value)}
+                                                        >
+                                                            <option value="none">Keine</option>
+                                                            <option value="ref">Reformiert</option>
+                                                            <option value="cath">Katholisch</option>
+                                                            <option value="christian_cath">Christkatholisch</option>
+                                                        </select>
+                                                        {!selectedMunicipality && (
+                                                            <small className="muted">
+                                                                Gemeinde auswählen, um Kirchentarife zu laden.
+                                                            </small>
+                                                        )}
+                                                    </div>
+                                                )}
                                                 <label className="stacked">
                                                     <span>Inflation p.a.</span>
                                                     <input

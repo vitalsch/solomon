@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import AdminMunicipalTaxes from './AdminMunicipalTaxes';
+import AdminStateTaxRates from './AdminStateTaxRates';
 import AdminStateTaxTariffs from './AdminStateTaxTariffs';
 import AdminPersonalTaxes from './AdminPersonalTaxes';
 
@@ -20,6 +21,7 @@ const readStoredAdminAuth = () => {
 
 const tabs = [
     { key: 'municipal', label: 'Gemeindesteuerfüsse' },
+    { key: 'state_rates', label: 'Staatssteuerfüsse' },
     { key: 'state', label: 'Staatssteuer-Tarife' },
     { key: 'federal', label: 'Direkte Bundessteuer' },
     { key: 'personal', label: 'Personalsteuer' },
@@ -125,6 +127,9 @@ function AdminPortal() {
             <div className="admin-tab-panel">
                 {activeTab === 'municipal' && (
                     <AdminMunicipalTaxes adminAuth={adminAuth} onUnauthorized={handleUnauthorized} />
+                )}
+                {activeTab === 'state_rates' && (
+                    <AdminStateTaxRates adminAuth={adminAuth} onUnauthorized={handleUnauthorized} />
                 )}
                 {activeTab === 'state' && (
                     <AdminStateTaxTariffs adminAuth={adminAuth} onUnauthorized={handleUnauthorized} />

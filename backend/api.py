@@ -78,29 +78,61 @@ def _apply_tax_field_updates(updates: Dict[str, Any]) -> Dict[str, Any]:
         if "municipal_tax_factor" not in data:
             data["municipal_tax_factor"] = None
 
-    confession = data.get("tax_confession")
-    if confession:
-        if confession == "none":
+    marital_status = data.get("tax_marital_status")
+    confession_primary = data.get("tax_confession")
+    confession_partner = data.get("tax_confession_partner")
+
+    def _conf_rate(conf):
+        if conf is None:
+            return None
+        if conf == "none":
+            return 0.0
+        src = municipality
+        if not src and municipality_id:
+            src = repo.get_municipal_tax_rate(municipality_id)
+        if not src:
+            raise HTTPException(
+                status_code=400,
+                detail="Konfession kann nur gesetzt werden, wenn eine Gemeinde ausgewählt ist.",
+            )
+        rate_field = CONFESSION_FIELD_MAP.get(conf)
+        rate_value = src.get(rate_field) if rate_field else None
+        return rate_value
+
+    if marital_status and marital_status != "verheiratet":
+        data["tax_confession_partner"] = None
+
+    if marital_status == "verheiratet":
+        rate_a = _conf_rate(confession_primary)
+        rate_b = _conf_rate(confession_partner)
+        rate_a = rate_a if rate_a is not None else 0.0
+        rate_b = rate_b if rate_b is not None else 0.0
+        combined_factor = _percent_to_factor((rate_a + rate_b) / 2) if rate_a or rate_b else 0.0
+        data["church_tax_factor"] = combined_factor
+        data.setdefault("tax_confession_partner", confession_partner)
+    elif confession_primary is not None:
+        if confession_primary == "none":
             data["church_tax_factor"] = 0.0
         else:
-            source = municipality
-            if not source and municipality_id:
-                source = repo.get_municipal_tax_rate(municipality_id)
-            if not source:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Konfession kann nur gesetzt werden, wenn eine Gemeinde ausgewählt ist.",
-                )
-            rate_field = CONFESSION_FIELD_MAP.get(confession)
-            rate_value = source.get(rate_field) if rate_field else None
+            rate_value = _conf_rate(confession_primary)
             data["church_tax_factor"] = _percent_to_factor(rate_value) or 0.0
+        data.setdefault("tax_confession_partner", None)
 
     canton = data.get("tax_canton")
+    canton_in_payload = "tax_canton" in data
     if canton and "personal_tax_per_person" not in data:
         personal = repo.get_personal_tax_for_canton(canton)
         if personal and personal.get("amount") is not None:
             data["personal_tax_per_person"] = personal["amount"]
-    elif "tax_canton" in data and not data.get("tax_canton"):
+    if canton_in_payload and "cantonal_tax_factor" not in data:
+        if canton:
+            canton_rate = repo.get_state_tax_rate_for_canton(canton)
+            data["cantonal_tax_factor"] = (
+                _percent_to_factor(canton_rate["rate"]) if canton_rate and canton_rate.get("rate") is not None else None
+            )
+        else:
+            data["cantonal_tax_factor"] = None
+    if canton_in_payload and not data.get("tax_canton"):
         data.setdefault("personal_tax_per_person", None)
 
     # Validate referenced tariffs exist (without loading heavy data twice later)
@@ -213,6 +245,12 @@ class ScenarioCreate(BaseModel):
     tax_confession: Optional[Literal["none", "ref", "cath", "christian_cath"]] = Field(
         None, description="Konfession für Kirchensteuer"
     )
+    tax_confession_partner: Optional[Literal["none", "ref", "cath", "christian_cath"]] = Field(
+        None, description="Konfession zweite Person (falls verheiratet)"
+    )
+    tax_marital_status: Optional[Literal["ledig", "verheiratet", "verwitwet"]] = Field(
+        None, description="Familienstand für Steuerberechnung"
+    )
 
     @validator("end_year")
     def validate_years(cls, v, values):
@@ -242,6 +280,8 @@ class ScenarioUpdate(BaseModel):
     tax_state_wealth_tariff_id: Optional[str] = None
     tax_federal_tariff_id: Optional[str] = None
     tax_confession: Optional[Literal["none", "ref", "cath", "christian_cath"]] = None
+    tax_confession_partner: Optional[Literal["none", "ref", "cath", "christian_cath"]] = None
+    tax_marital_status: Optional[Literal["ledig", "verheiratet", "verwitwet"]] = None
 
 
 class PortfolioShock(BaseModel):
@@ -425,6 +465,16 @@ class MunicipalTaxRateUpdate(BaseModel):
     christian_cath_rate: Optional[float] = Field(None, ge=0)
 
 
+class StateTaxRateEntry(BaseModel):
+    canton: str = Field(..., min_length=2, max_length=10, description="Kanton (z.B. ZH)")
+    rate: float = Field(..., ge=0, description="Staatssteuerfuss in Prozent (z.B. 100 für 100%)")
+
+
+class StateTaxRateUpdate(BaseModel):
+    canton: Optional[str] = None
+    rate: Optional[float] = Field(None, ge=0)
+
+
 class StateTaxTariffRow(BaseModel):
     threshold: float = Field(..., ge=0, description="Schwelle (steuerbares Einkommen/Vermögen) in CHF")
     base_amount: float = Field(..., ge=0, description="Sockelbetrag in CHF")
@@ -494,6 +544,40 @@ class AssistantApplyRequest(BaseModel):
     plan: Dict[str, Any]
 
 
+class VaultWrappedKey(BaseModel):
+    """Wrapped DEK metadata stored server-side (ciphertext only)."""
+
+    wrapped: str = Field(..., description="Base64url-wrapped DEK bytes")
+    iv: str = Field(..., description="Base64url IV used during wrap")
+    salt: str = Field(..., description="Base64url salt used for KDF")
+    iterations: int = Field(..., ge=100000, description="PBKDF2 iterations for KEK derivation")
+    kdf: Literal["PBKDF2-HMAC-SHA256"] = "PBKDF2-HMAC-SHA256"
+    alg: Literal["AES-GCM"] = "AES-GCM"
+
+
+class VaultPayload(BaseModel):
+    """Optional encrypted payload blob stored with the vault."""
+
+    ciphertext: Optional[str] = None
+    iv: Optional[str] = None
+    aad: Optional[str] = None
+
+
+class VaultUpsertRequest(BaseModel):
+    version: str = "v1"
+    wrapped_dek: VaultWrappedKey
+    recovery_wrapped_dek: Optional[VaultWrappedKey] = None
+    payload: Optional[VaultPayload] = None
+
+
+class VaultResponse(BaseModel):
+    version: str = "v1"
+    wrapped_dek: Optional[VaultWrappedKey] = None
+    recovery_wrapped_dek: Optional[VaultWrappedKey] = None
+    payload: Optional[VaultPayload] = None
+    updated_at: Optional[datetime] = None
+
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(auth_scheme)):
     if not credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
@@ -546,6 +630,27 @@ def delete_me(current_user=Depends(get_current_user)):
     return {"status": "deleted"}
 
 
+@app.get("/vault", response_model=VaultResponse)
+def get_vault(current_user=Depends(get_current_user)):
+    vault, updated_at = repo.get_vault(current_user["id"])
+    response = vault or {}
+    response.setdefault("version", "v1")
+    response["updated_at"] = updated_at
+    return response
+
+
+@app.put("/vault", response_model=VaultResponse)
+def put_vault(payload: VaultUpsertRequest, current_user=Depends(get_current_user)):
+    vault_data = payload.dict(exclude_none=True)
+    try:
+        saved, updated_at = repo.upsert_vault(current_user["id"], vault_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    response = dict(saved)
+    response["updated_at"] = updated_at
+    return response
+
+
 @app.post("/scenarios")
 def create_scenario(payload: ScenarioCreate, current_user=Depends(get_current_user)):
     payload_data = payload.dict()
@@ -573,6 +678,8 @@ def create_scenario(payload: ScenarioCreate, current_user=Depends(get_current_us
         enriched.get("tax_state_wealth_tariff_id"),
         enriched.get("tax_federal_tariff_id"),
         enriched.get("tax_confession"),
+        enriched.get("tax_confession_partner"),
+        enriched.get("tax_marital_status"),
     )
 
 
@@ -600,7 +707,12 @@ def get_scenario(scenario_id: str, current_user=Depends(get_current_user)):
 
 @app.get("/tax/cantons")
 def list_tax_cantons(current_user=Depends(get_current_user)):
-    return repo.list_municipal_cantons()
+    return repo.list_tax_cantons()
+
+
+@app.get("/tax/state-rates")
+def list_state_tax_rates(current_user=Depends(get_current_user)):
+    return repo.list_state_tax_rates()
 
 
 @app.get("/tax/municipalities")
@@ -1041,6 +1153,33 @@ def delete_municipal_tax_rate(entry_id: str, admin=Depends(require_admin)):
     ok = repo.delete_municipal_tax_rate(entry_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Tax table entry not found")
+    return {"status": "deleted"}
+
+
+@app.get("/admin/state-tax-rates")
+def list_state_tax_rates_admin(admin=Depends(require_admin)):
+    return repo.list_state_tax_rates()
+
+
+@app.post("/admin/state-tax-rates")
+def create_state_tax_rate(payload: StateTaxRateEntry, admin=Depends(require_admin)):
+    return repo.create_state_tax_rate(payload.canton, payload.rate)
+
+
+@app.patch("/admin/state-tax-rates/{entry_id}")
+def update_state_tax_rate(entry_id: str, payload: StateTaxRateUpdate, admin=Depends(require_admin)):
+    updates = payload.dict(exclude_unset=True)
+    updated = repo.update_state_tax_rate(entry_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="State tax rate not found")
+    return updated
+
+
+@app.delete("/admin/state-tax-rates/{entry_id}")
+def delete_state_tax_rate(entry_id: str, admin=Depends(require_admin)):
+    ok = repo.delete_state_tax_rate(entry_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="State tax rate not found")
     return {"status": "deleted"}
 
 

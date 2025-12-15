@@ -168,6 +168,28 @@ class WealthRepository:
         result = self.db.users.delete_one({"_id": user_oid})
         return result.deleted_count > 0
 
+    # Vault (client-side encryption helpers) -------------------------------
+    def get_vault(self, user_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[datetime]]:
+        """Return vault metadata (wrapped keys only) for a user."""
+        doc = self.db.users.find_one(
+            {"_id": _ensure_object_id(user_id)}, {"vault": 1, "vault_updated_at": 1}
+        )
+        if not doc:
+            return None, None
+        return doc.get("vault"), doc.get("vault_updated_at")
+
+    def upsert_vault(self, user_id: str, vault_data: Dict[str, Any]) -> Tuple[Dict[str, Any], datetime]:
+        """Store vault metadata (no plaintext) for a user."""
+        now = datetime.utcnow()
+        updated = self.db.users.find_one_and_update(
+            {"_id": _ensure_object_id(user_id)},
+            {"$set": {"vault": vault_data, "vault_updated_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            raise ValueError("User not found")
+        return vault_data, now
+
     # Scenarios -------------------------------------------------------------
     def create_scenario(
         self,
@@ -193,6 +215,8 @@ class WealthRepository:
         tax_state_wealth_tariff_id: str | None = None,
         tax_federal_tariff_id: str | None = None,
         tax_confession: str | None = None,
+        tax_confession_partner: str | None = None,
+        tax_marital_status: str | None = None,
     ) -> Dict[str, Any]:
         doc = {
             "user_id": _ensure_object_id(user_id),
@@ -226,6 +250,8 @@ class WealthRepository:
             if tax_federal_tariff_id
             else None,
             "tax_confession": tax_confession,
+            "tax_confession_partner": tax_confession_partner,
+            "tax_marital_status": tax_marital_status,
         }
         res = self.db.scenarios.insert_one(doc)
         doc["_id"] = res.inserted_id
@@ -633,6 +659,57 @@ class WealthRepository:
     def list_municipal_cantons(self) -> List[str]:
         cantons = self.db.municipal_tax_rates.distinct("canton")
         return sorted(c for c in cantons if c)
+
+    # State Tax Rates ----------------------------------------------------
+    def list_state_tax_rates(self) -> List[Dict[str, Any]]:
+        return [
+            _serialize(doc)
+            for doc in self.db.state_tax_rates.find().sort("canton", 1)
+        ]
+
+    def list_state_tax_cantons(self) -> List[str]:
+        cantons = self.db.state_tax_rates.distinct("canton")
+        return sorted(c for c in cantons if c)
+
+    def list_tax_cantons(self) -> List[str]:
+        """Return union of cantons that have municipal or state tax data."""
+        municipal = set(self.list_municipal_cantons())
+        state = set(self.list_state_tax_cantons())
+        return sorted(municipal | state)
+
+    def get_state_tax_rate_for_canton(self, canton: str) -> Optional[Dict[str, Any]]:
+        doc = self.db.state_tax_rates.find_one({"canton": canton})
+        return _serialize(doc) if doc else None
+
+    def create_state_tax_rate(self, canton: str, rate: float) -> Dict[str, Any]:
+        doc = {
+            "canton": canton,
+            "rate": _round_two_decimals(rate),
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        }
+        res = self.db.state_tax_rates.insert_one(doc)
+        doc["_id"] = res.inserted_id
+        return _serialize(doc)
+
+    def update_state_tax_rate(self, entry_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        allowed = {}
+        for field in ("canton", "rate"):
+            if field in updates and updates[field] is not None:
+                allowed[field] = _round_two_decimals(updates[field]) if field == "rate" else updates[field]
+        if not allowed:
+            return None
+        allowed["updated_at"] = datetime.utcnow()
+        doc = self.db.state_tax_rates.find_one_and_update(
+            {"_id": _ensure_object_id(entry_id)},
+            {"$set": allowed},
+            return_document=ReturnDocument.AFTER,
+        )
+        return _serialize(doc) if doc else None
+
+    def delete_state_tax_rate(self, entry_id: str) -> bool:
+        res = self.db.state_tax_rates.delete_one({"_id": _ensure_object_id(entry_id)})
+        return res.deleted_count > 0
 
     def get_municipal_tax_rate(self, entry_id: str) -> Optional[Dict[str, Any]]:
         doc = self.db.municipal_tax_rates.find_one({"_id": _ensure_object_id(entry_id)})

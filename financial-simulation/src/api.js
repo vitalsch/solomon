@@ -125,6 +125,7 @@ export const deleteScenario = (scenarioId) =>
 
 // Tax metadata ------------------------------------------------------------
 export const listTaxCantons = () => request('/tax/cantons');
+export const listStateTaxRates = () => request('/tax/state-rates');
 export const listMunicipalTaxEntries = (canton) => {
     const query = canton ? `?canton=${encodeURIComponent(canton)}` : '';
     return request(`/tax/municipalities${query}`);
@@ -232,6 +233,25 @@ export const deleteMunicipalTaxRateAdmin = (adminAuthHeader, entryId) =>
         method: 'DELETE',
     });
 
+export const listStateTaxRatesAdmin = (adminAuthHeader) => adminRequest('/admin/state-tax-rates', adminAuthHeader);
+
+export const createStateTaxRateAdmin = (adminAuthHeader, payload) =>
+    adminRequest('/admin/state-tax-rates', adminAuthHeader, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+export const updateStateTaxRateAdmin = (adminAuthHeader, entryId, payload) =>
+    adminRequest(`/admin/state-tax-rates/${entryId}`, adminAuthHeader, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+    });
+
+export const deleteStateTaxRateAdmin = (adminAuthHeader, entryId) =>
+    adminRequest(`/admin/state-tax-rates/${entryId}`, adminAuthHeader, {
+        method: 'DELETE',
+    });
+
 export const listStateTaxTariffsAdmin = (adminAuthHeader, scope) => {
     const query = scope ? `?scope=${encodeURIComponent(scope)}` : '';
     return adminRequest(`/admin/state-tariffs${query}`, adminAuthHeader);
@@ -303,4 +323,12 @@ export const updatePersonalTaxAdmin = (adminAuthHeader, entryId, payload) =>
 export const deletePersonalTaxAdmin = (adminAuthHeader, entryId) =>
     adminRequest(`/admin/personal-taxes/${entryId}`, adminAuthHeader, {
         method: 'DELETE',
+    });
+
+// Vault (client-side encryption metadata) ----------------------------------
+export const getVault = () => request('/vault');
+export const saveVault = (payload) =>
+    request('/vault', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
     });
