@@ -49,6 +49,7 @@ import {
     listStateTaxTariffsPublic,
     listFederalTaxTablesPublic,
 } from '../api';
+import { encryptJson } from '../vault';
 import VaultGate from './VaultGate';
 import '../TransactionsList.css';
 
@@ -208,6 +209,8 @@ const Simulation = () => {
     const [isChartActionModalOpen, setIsChartActionModalOpen] = useState(false);
     const [chartActionTarget, setChartActionTarget] = useState(null);
     const [transactionDraft, setTransactionDraft] = useState(null);
+    const [encrypting, setEncrypting] = useState(false);
+    const [encryptMessage, setEncryptMessage] = useState('');
     const [stressOverrides, setStressOverrides] = useState({
         shocks: [
             { id: 'shock-1', assetType: 'portfolio', delta: '-20', start: '', end: '' },
@@ -995,6 +998,46 @@ const Simulation = () => {
         setUsers([]);
         setAuthToken(null);
     }, []);
+
+    const handleEncryptExisting = useCallback(async () => {
+        if (!vaultDek) {
+            setError('Bitte zuerst Vault entsperren.');
+            return;
+        }
+        if (!selectedUserId) {
+            setError('Kein Nutzer ausgewählt.');
+            return;
+        }
+        setEncrypting(true);
+        setEncryptMessage('Starte Verschlüsselung ...');
+        setError(null);
+        try {
+            for (const scenario of scenarios) {
+                setEncryptMessage(`Szenario verschlüsseln: ${scenario.name || scenario.id}`);
+                const fullScenario = await getScenario(scenario.id);
+                const scenarioBlob = await encryptJson(vaultDek, { ...fullScenario, encrypted: undefined });
+                await updateScenario(scenario.id, { encrypted: scenarioBlob });
+
+                const assetsInScenario = await listAssets(scenario.id);
+                for (const asset of assetsInScenario) {
+                    const assetBlob = await encryptJson(vaultDek, { ...asset, encrypted: undefined });
+                    await updateAsset(asset.id, { encrypted: assetBlob });
+                }
+
+                const txs = await listTransactions(scenario.id);
+                for (const tx of txs) {
+                    const txBlob = await encryptJson(vaultDek, { ...tx, encrypted: undefined });
+                    await updateTransaction(tx.id, { encrypted: txBlob });
+                }
+            }
+            setEncryptMessage('Verschlüsselung abgeschlossen.');
+        } catch (err) {
+            setEncryptMessage('');
+            setError(err.message || 'Verschlüsselung fehlgeschlagen');
+        } finally {
+            setEncrypting(false);
+        }
+    }, [vaultDek, selectedUserId, scenarios, setError]);
 
     const parseMonthValue = (value) => {
         if (!value) return null;
@@ -4836,7 +4879,11 @@ const Simulation = () => {
                         <button onClick={handleRegister}>Registrieren</button>
                         <button onClick={handleLogin}>Login</button>
                         <button onClick={loadCurrentUser}>Aktualisieren</button>
+                        <button onClick={handleEncryptExisting} disabled={!vaultUnlocked || encrypting || !selectedUserId}>
+                            {encrypting ? 'Verschlüssele...' : 'Daten jetzt verschlüsseln'}
+                        </button>
                     </div>
+                    {encryptMessage && <p className="muted">{encryptMessage}</p>}
                     {selectedUserId && (
                         <p className="active-user">
                             Eingeloggt als: <code>{selectedUser?.name || selectedUser?.username || selectedUserId}</code>

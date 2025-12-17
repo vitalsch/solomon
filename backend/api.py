@@ -251,6 +251,9 @@ class ScenarioCreate(BaseModel):
     tax_marital_status: Optional[Literal["ledig", "verheiratet", "verwitwet"]] = Field(
         None, description="Familienstand für Steuerberechnung"
     )
+    encrypted: Optional[Dict[str, Any]] = Field(
+        None, description="Client-seitiger Ciphertext (z. B. AES-GCM Blob)"
+    )
 
     @validator("end_year")
     def validate_years(cls, v, values):
@@ -282,6 +285,7 @@ class ScenarioUpdate(BaseModel):
     tax_confession: Optional[Literal["none", "ref", "cath", "christian_cath"]] = None
     tax_confession_partner: Optional[Literal["none", "ref", "cath", "christian_cath"]] = None
     tax_marital_status: Optional[Literal["ledig", "verheiratet", "verwitwet"]] = None
+    encrypted: Optional[Dict[str, Any]] = None
 
 
 class PortfolioShock(BaseModel):
@@ -328,6 +332,7 @@ class AssetCreate(BaseModel):
     start_month: Optional[int] = None
     end_year: Optional[int] = None
     end_month: Optional[int] = None
+    encrypted: Optional[Dict[str, Any]] = Field(None, description="Client-seitiger Ciphertext")
 
 
 class AssetUpdate(BaseModel):
@@ -339,6 +344,7 @@ class AssetUpdate(BaseModel):
     start_month: Optional[int] = None
     end_year: Optional[int] = None
     end_month: Optional[int] = None
+    encrypted: Optional[Dict[str, Any]] = None
 
 
 class TransactionCreate(BaseModel):
@@ -359,6 +365,7 @@ class TransactionCreate(BaseModel):
     taxable: bool = False
     taxable_amount: Optional[float] = None
     correction: bool = False
+    encrypted: Optional[Dict[str, Any]] = Field(None, description="Client-seitiger Ciphertext")
 
     @validator("frequency", always=True)
     def validate_frequency(cls, v, values):
@@ -396,6 +403,7 @@ class TransactionUpdate(BaseModel):
     taxable: Optional[bool] = None
     taxable_amount: Optional[float] = None
     correction: Optional[bool] = None
+    encrypted: Optional[Dict[str, Any]] = None
 
 
 class TaxBracket(BaseModel):
@@ -680,6 +688,7 @@ def create_scenario(payload: ScenarioCreate, current_user=Depends(get_current_us
         enriched.get("tax_confession"),
         enriched.get("tax_confession_partner"),
         enriched.get("tax_marital_status"),
+        enriched.get("encrypted"),
     )
 
 
@@ -783,6 +792,7 @@ def create_asset(scenario_id: str, payload: AssetCreate, current_user=Depends(ge
         start_month,
         end_year,
         end_month,
+        payload.encrypted,
     )
 
 
@@ -910,6 +920,7 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
             payload.taxable,
             payload.taxable_amount if payload.taxable_amount is not None else None,
             payload.correction,
+            payload.encrypted,
         )
 
     return repo.add_transaction(
@@ -932,6 +943,7 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
         payload.taxable,
         payload.taxable_amount if payload.taxable_amount is not None else payload.amount if payload.taxable else None,
         payload.correction,
+        payload.encrypted,
     )
 
 

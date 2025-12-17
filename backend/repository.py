@@ -217,6 +217,7 @@ class WealthRepository:
         tax_confession: str | None = None,
         tax_confession_partner: str | None = None,
         tax_marital_status: str | None = None,
+        encrypted: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         doc = {
             "user_id": _ensure_object_id(user_id),
@@ -252,6 +253,7 @@ class WealthRepository:
             "tax_confession": tax_confession,
             "tax_confession_partner": tax_confession_partner,
             "tax_marital_status": tax_marital_status,
+            "encrypted": encrypted,
         }
         res = self.db.scenarios.insert_one(doc)
         doc["_id"] = res.inserted_id
@@ -306,6 +308,7 @@ class WealthRepository:
         start_month: int | None = None,
         end_year: int | None = None,
         end_month: int | None = None,
+        encrypted: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         doc = {
             "scenario_id": _ensure_object_id(scenario_id),
@@ -318,6 +321,7 @@ class WealthRepository:
             "end_year": end_year,
             "end_month": end_month,
             "created_at": datetime.utcnow(),
+            "encrypted": encrypted,
         }
         res = self.db.assets.insert_one(doc)
         doc["_id"] = res.inserted_id
@@ -392,6 +396,7 @@ class WealthRepository:
         taxable: bool = False,
         taxable_amount: Optional[float] = None,
         correction: bool = False,
+        encrypted: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         doc = {
             "scenario_id": _ensure_object_id(scenario_id),
@@ -410,6 +415,7 @@ class WealthRepository:
             "double_entry": double_entry,
             "taxable": taxable,
             "correction": bool(correction),
+            "encrypted": encrypted,
         }
         if counter_asset_id:
             doc["counter_asset_id"] = _ensure_object_id(counter_asset_id)
