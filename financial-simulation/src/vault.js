@@ -112,21 +112,21 @@ export const unwrapDek = async (wrappedDek, kek) => {
 
 export const encryptJson = async (dek, payload, aad = '') => {
     const iv = randomBytes(12);
-    const cipher = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv, additionalData: aad ? encoder.encode(aad) : undefined },
-        dek,
-        encoder.encode(JSON.stringify(payload))
-    );
-    return { ciphertext: toBase64Url(cipher), iv: toBase64Url(iv), aad };
+    const options = { name: 'AES-GCM', iv };
+    if (aad) {
+        options.additionalData = encoder.encode(String(aad));
+    }
+    const cipher = await crypto.subtle.encrypt(options, dek, encoder.encode(JSON.stringify(payload)));
+    return { ciphertext: toBase64Url(cipher), iv: toBase64Url(iv), aad: aad || undefined };
 };
 
 export const decryptJson = async (dek, blob) => {
     const { ciphertext, iv, aad } = blob || {};
-    const plain = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: fromBase64Url(iv), additionalData: aad ? encoder.encode(aad) : undefined },
-        dek,
-        fromBase64Url(ciphertext)
-    );
+    const options = { name: 'AES-GCM', iv: fromBase64Url(iv) };
+    if (aad) {
+        options.additionalData = encoder.encode(String(aad));
+    }
+    const plain = await crypto.subtle.decrypt(options, dek, fromBase64Url(ciphertext));
     return JSON.parse(decoder.decode(plain));
 };
 
