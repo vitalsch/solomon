@@ -49,7 +49,7 @@ import {
     listStateTaxTariffsPublic,
     listFederalTaxTablesPublic,
 } from '../api';
-import { encryptJson } from '../vault';
+import { encryptJson, decryptJson } from '../vault';
 import VaultGate from './VaultGate';
 import '../TransactionsList.css';
 
@@ -224,6 +224,38 @@ const Simulation = () => {
     const [profileIsPublic, setProfileIsPublic] = useState(false);
     const [profileResults, setProfileResults] = useState({});
     const [profileSimulations, setProfileSimulations] = useState({});
+
+    const randomPlaceholder = () => `enc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const maybeEncryptRecord = async (record) => {
+        if (!vaultDek) {
+            return { sanitized: record, encrypted: null };
+        }
+        const encrypted = await encryptJson(vaultDek, record);
+        const sanitized = { ...record };
+        if (sanitized.name) sanitized.name = randomPlaceholder();
+        if (sanitized.description) sanitized.description = undefined;
+        return { sanitized, encrypted };
+    };
+
+    const maybeDecryptRecord = useCallback(
+        async (record) => {
+            if (!vaultDek || !record?.encrypted) return record;
+            try {
+                const decrypted = await decryptJson(vaultDek, record.encrypted);
+                return { ...record, ...decrypted };
+            } catch (err) {
+                console.warn('Decrypt failed', err);
+                return record;
+            }
+        },
+        [vaultDek]
+    );
+
+    const decryptRecords = useCallback(
+        async (records = []) => Promise.all((records || []).map((item) => maybeDecryptRecord(item))),
+        [maybeDecryptRecord]
+    );
     const [openProfileIds, setOpenProfileIds] = useState([]);
     const [selectedProfileIds, setSelectedProfileIds] = useState([]);
     const [profileLoadingId, setProfileLoadingId] = useState('');
@@ -461,18 +493,20 @@ const Simulation = () => {
             setError(null);
             try {
                 const key = normalizeId(scenarioId);
-                const [scenario, assets, transactions] = await Promise.all([
-                    getScenario(key),
-                    listAssets(key),
-                    listTransactions(key),
+                const [scenario, assets, transactions] = await Promise.all([getScenario(key), listAssets(key), listTransactions(key)]);
+                const [decScenario, decAssets, decTransactions] = await Promise.all([
+                    maybeDecryptRecord(scenario),
+                    decryptRecords(assets),
+                    decryptRecords(transactions),
                 ]);
-                setScenarioDetails(scenario);
-                setAccounts(assets);
-                const grouped = assets.reduce((acc, asset) => {
+                setScenarioDetails(decScenario || scenario);
+                const safeAssets = decAssets || assets;
+                setAccounts(safeAssets);
+                const grouped = safeAssets.reduce((acc, asset) => {
                     acc[asset.id] = [];
                     return acc;
                 }, {});
-                transactions.forEach((transaction) => {
+                (decTransactions || transactions).forEach((transaction) => {
                     const assetId = transaction.asset_id;
                     if (!grouped[assetId]) {
                         grouped[assetId] = [];
@@ -489,7 +523,7 @@ const Simulation = () => {
                 setLoading(false);
             }
         },
-        [closeTransactionModal, closeRebaseModal, closeChartActionModal]
+        [closeTransactionModal, closeRebaseModal, closeChartActionModal, decryptRecords, maybeDecryptRecord]
     );
 
     useEffect(() => {
@@ -578,9 +612,10 @@ const Simulation = () => {
             setError(null);
             try {
                 const userScenarios = await listScenarios();
-                setScenarios(userScenarios);
-                setScenarioCount(userScenarios.length);
-                const firstScenario = normalizeId(userScenarios[0]?.id || '');
+                const decScenarios = await decryptRecords(userScenarios);
+                setScenarios(decScenarios);
+                setScenarioCount(decScenarios.length);
+                const firstScenario = normalizeId(decScenarios[0]?.id || '');
                 setCurrentScenarioId(firstScenario);
                 setSelectedScenarios(firstScenario ? [firstScenario] : []);
                 setSimulationCache({});
@@ -598,7 +633,7 @@ const Simulation = () => {
                 setLoading(false);
             }
         },
-        [closeTransactionModal]
+        [closeTransactionModal, decryptRecords]
     );
 
     const loadCurrentUser = useCallback(async () => {
@@ -1057,10 +1092,14 @@ const Simulation = () => {
         if (!currentScenarioId || !newAccountName) {
             return;
         }
+        if (!vaultDek) {
+            setError('Bitte zuerst Vault entsperren, bevor neue Assets erstellt werden.');
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
-            const payload = {
+            const basePayload = {
                 name: newAccountName,
                 annual_growth_rate: parseFloat(newAccountGrowthRate || 0) / 100,
                 initial_balance: parseFloat(newAccountInitialBalance || 0),
@@ -1069,15 +1108,17 @@ const Simulation = () => {
             const startParts = parseMonthValue(newAccountStart);
             const endParts = parseMonthValue(newAccountEnd);
             if (startParts) {
-                payload.start_year = startParts.year;
-                payload.start_month = startParts.month;
+                basePayload.start_year = startParts.year;
+                basePayload.start_month = startParts.month;
             }
             if (endParts) {
-                payload.end_year = endParts.year;
-                payload.end_month = endParts.month;
+                basePayload.end_year = endParts.year;
+                basePayload.end_month = endParts.month;
             }
-            const account = await createAsset(currentScenarioId, payload);
-            setAccounts((prev) => [...prev, account]);
+            const { sanitized, encrypted } = await maybeEncryptRecord(basePayload);
+            const account = await createAsset(currentScenarioId, { ...sanitized, encrypted });
+            const decrypted = await maybeDecryptRecord(account);
+            setAccounts((prev) => [...prev, decrypted || account]);
             setAccountTransactions((prev) => ({ ...prev, [account.id]: [] }));
             setNewAccountName('');
             setNewAccountGrowthRate('');
@@ -1097,11 +1138,17 @@ const Simulation = () => {
     };
 
     const handleUpdateAccount = async (accountId, payload) => {
+        if (!vaultDek) {
+            setError('Bitte zuerst Vault entsperren, bevor Assets geändert werden.');
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
-            const updated = await updateAsset(accountId, payload);
-            setAccounts((prev) => prev.map((account) => (account.id === accountId ? updated : account)));
+            const { sanitized, encrypted } = await maybeEncryptRecord(payload);
+            const updated = await updateAsset(accountId, { ...sanitized, encrypted });
+            const dec = await maybeDecryptRecord(updated);
+            setAccounts((prev) => prev.map((account) => (account.id === accountId ? dec || updated : account)));
             if (currentScenarioId) {
                 await handleSimulate();
             }
@@ -1137,10 +1184,16 @@ const Simulation = () => {
         if (!currentScenarioId) {
             return;
         }
+        if (!vaultDek) {
+            setError('Bitte zuerst Vault entsperren, bevor Transaktionen erstellt werden.');
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
-            const transaction = await createTransaction(currentScenarioId, payload);
+            const { sanitized, encrypted } = await maybeEncryptRecord(payload);
+            const transaction = await createTransaction(currentScenarioId, { ...sanitized, encrypted });
+            const decTx = await maybeDecryptRecord(transaction);
             if (!transaction || !transaction.asset_id) {
                 // Fallback: Daten neu laden, statt zu crashen
                 await fetchScenarioDetails(currentScenarioId);
@@ -1155,9 +1208,9 @@ const Simulation = () => {
                     const assetId = tx.asset_id;
                     updated[assetId] = [...(updated[assetId] || []), tx];
                 };
-                addTx(transaction);
-                if (transaction.linked_transaction) {
-                    addTx(transaction.linked_transaction);
+                addTx(decTx || transaction);
+                if ((decTx || transaction).linked_transaction) {
+                    addTx((decTx || transaction).linked_transaction);
                 }
                 return updated;
             });
@@ -1173,10 +1226,15 @@ const Simulation = () => {
     };
 
     const handleUpdateTransaction = async (transactionId, payload) => {
+        if (!vaultDek) {
+            setError('Bitte zuerst Vault entsperren, bevor Transaktionen geändert werden.');
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
-            await updateTransaction(transactionId, payload);
+            const { sanitized, encrypted } = await maybeEncryptRecord(payload);
+            await updateTransaction(transactionId, { ...sanitized, encrypted });
             if (currentScenarioId) {
                 await fetchScenarioDetails(currentScenarioId);
             }
@@ -1223,19 +1281,23 @@ const Simulation = () => {
     };
 
     const copyScenarioData = async (sourceScenarioId, targetScenarioId) => {
-        const [sourceAssets, sourceTransactions] = await Promise.all([
-            listAssets(sourceScenarioId),
-            listTransactions(sourceScenarioId),
-        ]);
+        const [sourceAssetsRaw, sourceTransactionsRaw] = await Promise.all([listAssets(sourceScenarioId), listTransactions(sourceScenarioId)]);
+        const sourceAssets = await decryptRecords(sourceAssetsRaw);
+        const sourceTransactions = await decryptRecords(sourceTransactionsRaw);
 
         const assetIdMap = {};
         for (const asset of sourceAssets) {
-            const newAsset = await createAsset(targetScenarioId, {
+            const { sanitized, encrypted } = await maybeEncryptRecord({
                 name: asset.name,
                 annual_growth_rate: asset.annual_growth_rate,
                 initial_balance: asset.initial_balance,
                 asset_type: asset.asset_type,
+                start_year: asset.start_year,
+                start_month: asset.start_month,
+                end_year: asset.end_year,
+                end_month: asset.end_month,
             });
+            const newAsset = await createAsset(targetScenarioId, { ...sanitized, encrypted });
             assetIdMap[asset.id] = newAsset.id;
         }
 
@@ -1251,7 +1313,7 @@ const Simulation = () => {
             const mappedMortgageAssetId = transaction.mortgage_asset_id
                 ? assetIdMap[transaction.mortgage_asset_id]
                 : undefined;
-            await createTransaction(targetScenarioId, {
+            const { sanitized, encrypted } = await maybeEncryptRecord({
                 asset_id: mappedAssetId,
                 name: transaction.name,
                 amount: transaction.amount,
@@ -1267,6 +1329,7 @@ const Simulation = () => {
                 annual_interest_rate: transaction.annual_interest_rate,
                 double_entry: transaction.double_entry,
             });
+            await createTransaction(targetScenarioId, { ...sanitized, encrypted });
         }
     };
 
@@ -1275,12 +1338,16 @@ const Simulation = () => {
             setError('Bitte zuerst Benutzer und Szenario Namen angeben.');
             return;
         }
+        if (!vaultDek) {
+            setError('Bitte zuerst Vault entsperren, bevor Szenarien erstellt werden.');
+            return;
+        }
         const [startYear, startMonth] = newScenarioStart.split('-').map(Number);
         const [endYear, endMonth] = newScenarioEnd.split('-').map(Number);
         setLoading(true);
         setError(null);
         try {
-            const scenario = await createScenario({
+            const basePayload = {
                 name: newScenarioName,
                 description: newScenarioDescription || undefined,
                 start_year: startYear,
@@ -1288,14 +1355,18 @@ const Simulation = () => {
                 end_year: endYear,
                 end_month: endMonth,
                 inflation_rate: inflationRate === '' ? undefined : parseFloat(inflationRate),
-            });
+            };
+            const { sanitized, encrypted } = await maybeEncryptRecord(basePayload);
+            const scenario = await createScenario({ ...sanitized, encrypted });
+            const decScenario = await maybeDecryptRecord(scenario);
 
             if (cloneScenarioId) {
                 await copyScenarioData(cloneScenarioId, scenario.id);
             }
 
-            setScenarios((prev) => [...prev, scenario]);
-            setCurrentScenarioId(normalizeId(scenario.id));
+            const toStore = decScenario || scenario;
+            setScenarios((prev) => [...prev, toStore]);
+            setCurrentScenarioId(normalizeId(toStore.id));
             setNewScenarioName('');
             setNewScenarioDescription('');
             setCloneScenarioId('');
