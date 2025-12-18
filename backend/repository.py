@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import secrets
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from bson import ObjectId
@@ -36,6 +36,12 @@ def _verify_password(password: str, encoded: str) -> bool:
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _normalize_email(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    return value.strip().lower() or None
 
 
 def _ensure_object_id(value: Any) -> ObjectId:
@@ -111,15 +117,21 @@ class WealthRepository:
         return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
 
     # Users -----------------------------------------------------------------
-    def create_user(self, username: str, password: str, name: str | None, email: str | None) -> Dict[str, Any]:
+    def create_user(self, username: str, password: str, name: str | None, email: str) -> Dict[str, Any]:
         username_token = self._tokenize_username(username)
         if self.db.users.find_one({"username_token": username_token}):
             raise ValueError("Username already exists")
+        normalized_email = _normalize_email(email)
+        if not normalized_email:
+            raise ValueError("Email is required")
+        if self.db.users.find_one({"email": normalized_email}):
+            raise ValueError("Email already in use")
         doc = {
             "username_token": username_token,
             "password_hash": _hash_password(password),
             "name": name,
-            "email": email,
+            "email": normalized_email,
+            "email_verified": False,
             "created_at": datetime.utcnow(),
         }
         result = self.db.users.insert_one(doc)
@@ -128,6 +140,13 @@ class WealthRepository:
 
     def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         doc = self.db.users.find_one({"_id": _ensure_object_id(user_id)})
+        return _serialize_user(doc) if doc else None
+
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        normalized = _normalize_email(email)
+        if not normalized:
+            return None
+        doc = self.db.users.find_one({"email": normalized})
         return _serialize_user(doc) if doc else None
 
     def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
@@ -197,6 +216,80 @@ class WealthRepository:
             self.delete_scenario(str(scenario["_id"]))
         result = self.db.users.delete_one({"_id": user_oid})
         return result.deleted_count > 0
+
+    def _issue_timed_token(self, field_prefix: str, user_filter: Dict[str, Any], ttl_hours: int = 2) -> Optional[str]:
+        token = f"{secrets.randbelow(999999):06d}"
+        token_hash = _hash_token(token)
+        expires_at = datetime.utcnow() + timedelta(hours=ttl_hours)
+        updated = self.db.users.find_one_and_update(
+            user_filter,
+            {"$set": {f"{field_prefix}_token_hash": token_hash, f"{field_prefix}_expires_at": expires_at}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not updated:
+            return None
+        return token
+
+    def start_email_verification(self, user_id: str) -> Optional[str]:
+        user_oid = _ensure_object_id(user_id)
+        return self._issue_timed_token("email_verification", {"_id": user_oid})
+
+    def confirm_email_verification(self, email: str, token: str) -> Optional[Dict[str, Any]]:
+        normalized = _normalize_email(email)
+        if not normalized or not token:
+            return None
+        token_hash = _hash_token(token)
+        now = datetime.utcnow()
+        user = self.db.users.find_one(
+            {
+                "email": normalized,
+                "email_verification_token_hash": token_hash,
+                "email_verification_expires_at": {"$gte": now},
+            }
+        )
+        if not user:
+            return None
+        updated = self.db.users.find_one_and_update(
+            {"_id": user["_id"]},
+            {
+                "$set": {"email_verified": True, "email_verified_at": now},
+                "$unset": {"email_verification_token_hash": "", "email_verification_expires_at": ""},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return _serialize_user(updated) if updated else None
+
+    def create_password_reset_request(self, email: str) -> Optional[str]:
+        normalized = _normalize_email(email)
+        if not normalized:
+            return None
+        user = self.db.users.find_one({"email": normalized})
+        if not user or not user.get("email_verified"):
+            return None
+        return self._issue_timed_token("password_reset", {"_id": user["_id"]}, ttl_hours=1)
+
+    def reset_password_with_token(self, token: str, new_password: str) -> Optional[Dict[str, Any]]:
+        if not token or not new_password:
+            return None
+        token_hash = _hash_token(token)
+        now = datetime.utcnow()
+        user = self.db.users.find_one(
+            {
+                "password_reset_token_hash": token_hash,
+                "password_reset_expires_at": {"$gte": now},
+            }
+        )
+        if not user:
+            return None
+        updated = self.db.users.find_one_and_update(
+            {"_id": user["_id"]},
+            {
+                "$set": {"password_hash": _hash_password(new_password)},
+                "$unset": {"password_reset_token_hash": "", "password_reset_expires_at": ""},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return _serialize_user(updated) if updated else None
 
     # Vault (client-side encryption helpers) -------------------------------
     def get_vault(self, user_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[datetime]]:

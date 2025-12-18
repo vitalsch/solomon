@@ -112,6 +112,27 @@ export const loginUser = async (payload) => {
 
 export const getCurrentUser = () => request('/me');
 export const deleteCurrentUser = () => request('/me', { method: 'DELETE' });
+export const requestEmailVerification = (email) =>
+    request('/auth/verify/request', { method: 'POST', body: JSON.stringify({ email }) });
+export const confirmEmailVerification = async (email, code) => {
+    const result = await request('/auth/verify/confirm', { method: 'POST', body: JSON.stringify({ email, code }) });
+    if (result?.token) {
+        setAuthToken(result.token);
+    }
+    return result;
+};
+export const requestPasswordReset = (email) =>
+    request('/auth/password/reset/request', { method: 'POST', body: JSON.stringify({ email }) });
+export const confirmPasswordReset = async (token, new_password) => {
+    const result = await request('/auth/password/reset/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ token, new_password }),
+    });
+    if (result?.token) {
+        setAuthToken(result.token);
+    }
+    return result;
+};
 
 // Scenarios -----------------------------------------------------------------
 export const listScenarios = () => request('/scenarios');

@@ -12,7 +12,7 @@ from typing import Literal, Optional
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Any, Dict, List
 
 from .repository import WealthRepository
@@ -43,6 +43,13 @@ CONFESSION_FIELD_MAP = {
     "cath": "cath_rate",
     "christian_cath": "christian_cath_rate",
 }
+
+
+def _send_email(to_email: str, subject: str, body: str) -> None:
+    """Simple development mailer placeholder."""
+    if not to_email:
+        return
+    print(f"[email] to={to_email} subject={subject}\n{body}")
 
 
 def _percent_to_factor(value: Optional[float]) -> Optional[float]:
@@ -214,12 +221,30 @@ class UserCreate(BaseModel):
     username: str
     password: str
     name: Optional[str] = None
-    email: Optional[str] = None
+    email: EmailStr
 
 
 class UserLogin(BaseModel):
     username: str
     password: str
+
+
+class EmailVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+class EmailVerificationConfirm(BaseModel):
+    email: EmailStr
+    code: str = Field(..., min_length=4, max_length=12)
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(..., min_length=4, max_length=64)
+    new_password: str = Field(..., min_length=6)
 
 
 class ScenarioCreate(BaseModel):
@@ -613,8 +638,19 @@ def register(user: UserCreate):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     # Attach submitted username only to response (not stored in DB)
     created["username"] = user.username
-    token = repo.issue_auth_token(created["id"])
-    return {"user": created, "token": token}
+    verification_code = repo.start_email_verification(created["id"])
+    if verification_code:
+        _send_email(
+            created.get("email"),
+            "Bitte bestätige deine E-Mail",
+            f"Dein Verifizierungscode lautet: {verification_code}\n\n"
+            "Gib diesen Code in der App ein, um deine E-Mail zu bestätigen.",
+        )
+    return {
+        "user": created,
+        "verification_required": True,
+        "message": "Verifizierungscode wurde an deine E-Mail gesendet.",
+    }
 
 
 @app.post("/auth/login")
@@ -622,11 +658,65 @@ def login(user: UserLogin):
     auth_user = repo.authenticate_user(user.username, user.password)
     if not auth_user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    if not auth_user.get("email_verified"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email not verified. Bitte Verifizierung abschließen.",
+        )
     token = repo.issue_auth_token(auth_user["id"])
     safe_user = repo.get_user(auth_user["id"])
     if safe_user is not None:
         safe_user["username"] = user.username
     return {"user": safe_user, "token": token}
+
+
+@app.post("/auth/verify/request")
+def request_email_verification(payload: EmailVerificationRequest):
+    user = repo.get_user_by_email(payload.email)
+    if user and user.get("email_verified"):
+        return {"status": "already_verified"}
+    code = repo.start_email_verification(user["id"]) if user else None
+    if code and user:
+        _send_email(
+            user.get("email"),
+            "Bitte bestätige deine E-Mail",
+            f"Dein Verifizierungscode lautet: {code}\n\n"
+            "Gib diesen Code in der App ein, um deine E-Mail zu bestätigen.",
+        )
+    # Always return generic success to avoid user enumeration
+    return {"status": "ok"}
+
+
+@app.post("/auth/verify/confirm")
+def confirm_email_verification(payload: EmailVerificationConfirm):
+    verified_user = repo.confirm_email_verification(payload.email, payload.code)
+    if not verified_user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification code")
+    token = repo.issue_auth_token(verified_user["id"])
+    verified_user["username"] = verified_user.get("username") or None
+    return {"user": verified_user, "token": token}
+
+
+@app.post("/auth/password/reset/request")
+def request_password_reset(payload: PasswordResetRequest):
+    token = repo.create_password_reset_request(payload.email)
+    if token:
+        _send_email(
+            payload.email,
+            "Passwort zurücksetzen",
+            f"Dein Code zum Zurücksetzen lautet: {token}\n\n"
+            "Gib den Code zusammen mit deinem neuen Passwort in der App ein.",
+        )
+    return {"status": "ok"}
+
+
+@app.post("/auth/password/reset/confirm")
+def confirm_password_reset(payload: PasswordResetConfirm):
+    user = repo.reset_password_with_token(payload.token, payload.new_password)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
+    token = repo.issue_auth_token(user["id"])
+    return {"user": user, "token": token}
 
 
 @app.get("/me")

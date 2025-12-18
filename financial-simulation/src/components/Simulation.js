@@ -137,6 +137,7 @@ const Simulation = () => {
     const [newUsername, setNewUsername] = useState('');
     const [newUserPassword, setNewUserPassword] = useState('');
     const [newUserEmail, setNewUserEmail] = useState('');
+    const [authInfo, setAuthInfo] = useState('');
     const [scenarios, setScenarios] = useState([]);
     const [currentScenarioId, setCurrentScenarioId] = useState('');
     const [scenarioDetails, setScenarioDetails] = useState(null);
@@ -274,16 +275,6 @@ const Simulation = () => {
         const safe = Number.isFinite(num) ? num : 0;
         return safe.toLocaleString('de-CH', { style: 'currency', currency: 'CHF' });
     };
-
-    // Ensure we start logged out (no preselected user) until someone logs in
-    useEffect(() => {
-        setAuthToken(null);
-        setUsers([]);
-        setSelectedUserId('');
-        setScenarios([]);
-        setCurrentScenarioId('');
-        setScenarioDetails(null);
-    }, []);
 
     const currentScenario = useMemo(
         () => scenarios.find((scenario) => normalizeId(scenario.id) === normalizeId(currentScenarioId)),
@@ -965,29 +956,30 @@ const Simulation = () => {
     }, [stressProfiles]);
 
     const handleRegister = async () => {
-        if (!newUsername || !newUserPassword) {
-            setError('Bitte Benutzername und Passwort angeben.');
+        if (!newUsername || !newUserPassword || !newUserEmail) {
+            setError('Bitte Benutzername, Passwort und E-Mail angeben.');
             return;
         }
+        setAuthInfo('');
         setLoading(true);
         setError(null);
         try {
-            const { user, token } = await registerUser({
+            await registerUser({
                 username: newUsername,
                 password: newUserPassword,
                 name: newUserName,
                 email: newUserEmail,
             });
-            setAuthToken(token);
-            setUsers([user]);
-            setSelectedUserId(user.id);
+            setAuthToken(null);
+            setUsers([]);
+            setSelectedUserId('');
             setVaultUnlocked(false);
             setVaultDek(null);
             setNewUsername('');
             setNewUserPassword('');
             setNewUserName('');
             setNewUserEmail('');
-            await loadScenariosForUser(user.id);
+            setAuthInfo('Verifizierungscode gesendet. Bitte E-Mail prüfen und anschließend einloggen.');
         } catch (err) {
             setError(err.message);
         } finally {
@@ -1000,6 +992,7 @@ const Simulation = () => {
             setError('Bitte Benutzername und Passwort angeben.');
             return;
         }
+        setAuthInfo('');
         setLoading(true);
         setError(null);
         try {
@@ -4942,7 +4935,7 @@ const Simulation = () => {
                     />
                     <input
                         type="email"
-                        placeholder="E-Mail (optional)"
+                        placeholder="E-Mail (für Registrierung erforderlich)"
                         value={newUserEmail}
                         onChange={(e) => setNewUserEmail(e.target.value)}
                     />
@@ -4954,6 +4947,7 @@ const Simulation = () => {
                             {encrypting ? 'Verschlüssele...' : 'Daten jetzt verschlüsseln'}
                         </button>
                     </div>
+                    {authInfo && <p className="muted">{authInfo}</p>}
                     {encryptMessage && <p className="muted">{encryptMessage}</p>}
                     {selectedUserId && (
                         <p className="active-user">
