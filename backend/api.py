@@ -611,6 +611,8 @@ def register(user: UserCreate):
         created = repo.create_user(user.username, user.password, user.name, user.email)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    # Attach submitted username only to response (not stored in DB)
+    created["username"] = user.username
     token = repo.issue_auth_token(created["id"])
     return {"user": created, "token": token}
 
@@ -622,6 +624,8 @@ def login(user: UserLogin):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     token = repo.issue_auth_token(auth_user["id"])
     safe_user = repo.get_user(auth_user["id"])
+    if safe_user is not None:
+        safe_user["username"] = user.username
     return {"user": safe_user, "token": token}
 
 

@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import secrets
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -66,6 +67,8 @@ def _serialize_user(document: Dict[str, Any]) -> Dict[str, Any]:
     if doc:
         doc.pop("password_hash", None)
         doc.pop("auth_token_hash", None)
+        doc.pop("username_token", None)
+        doc.pop("username", None)
     return doc
 
 
@@ -97,13 +100,23 @@ class WealthRepository:
 
     def __init__(self, db=None):
         self.db = db or get_database()
+        self._username_secret = os.getenv("USERNAME_HASH_SECRET") or None
+
+    def _tokenize_username(self, username: str) -> str:
+        secret = self._username_secret
+        if not secret:
+            # Fallback secret to avoid crashes; set via env for stronger secrecy.
+            secret = "please_set_USERNAME_HASH_SECRET"
+        msg = username.strip().lower().encode("utf-8")
+        return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
 
     # Users -----------------------------------------------------------------
     def create_user(self, username: str, password: str, name: str | None, email: str | None) -> Dict[str, Any]:
-        if self.db.users.find_one({"username": username}):
+        username_token = self._tokenize_username(username)
+        if self.db.users.find_one({"username_token": username_token}):
             raise ValueError("Username already exists")
         doc = {
-            "username": username,
+            "username_token": username_token,
             "password_hash": _hash_password(password),
             "name": name,
             "email": email,
@@ -118,16 +131,33 @@ class WealthRepository:
         return _serialize_user(doc) if doc else None
 
     def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
-        doc = self.db.users.find_one({"username": username})
+        token = self._tokenize_username(username)
+        doc = self.db.users.find_one({"username_token": token})
+        if not doc:
+            # Legacy fallback: migrate plain username to tokenized
+            doc = self.db.users.find_one({"username": username})
+            if doc:
+                self.db.users.update_one(
+                    {"_id": doc["_id"]}, {"$set": {"username_token": token}, "$unset": {"username": ""}}
+                )
+                doc["username_token"] = token
+                doc.pop("username", None)
         return _serialize_user(doc) if doc else None
 
     def get_user_with_secret_fields(self, username: str) -> Optional[Dict[str, Any]]:
         """Internal helper to retrieve user with password/token hashes."""
-        doc = self.db.users.find_one({"username": username})
+        token = self._tokenize_username(username)
+        doc = self.db.users.find_one({"username_token": token})
         if not doc:
-            return None
-        doc = _serialize(doc)
-        return doc
+            # Legacy fallback: migrate and clear plaintext username
+            doc = self.db.users.find_one({"username": username})
+            if doc:
+                self.db.users.update_one(
+                    {"_id": doc["_id"]}, {"$set": {"username_token": token}, "$unset": {"username": ""}}
+                )
+                doc["username_token"] = token
+                doc.pop("username", None)
+        return _serialize(doc) if doc else None
 
     def list_users(self) -> List[Dict[str, Any]]:
         # Expose only sanitized data; callers should additionally scope to current user.
