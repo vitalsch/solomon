@@ -38,19 +38,18 @@ app.add_middleware(
 
 repo = WealthRepository()
 
+
+def _send_whatsapp_message(to_phone: str, body: str) -> None:
+    """Placeholder sending helper; currently logs to stdout."""
+    if not to_phone:
+        return
+    print(f"[whatsapp] to={to_phone}\n{body}")
+
 CONFESSION_FIELD_MAP = {
     "ref": "ref_rate",
     "cath": "cath_rate",
     "christian_cath": "christian_cath_rate",
 }
-
-
-def _send_email(to_email: str, subject: str, body: str) -> None:
-    """Simple development mailer placeholder."""
-    if not to_email:
-        return
-    print(f"[email] to={to_email} subject={subject}\n{body}")
-
 
 def _percent_to_factor(value: Optional[float]) -> Optional[float]:
     if value is None:
@@ -221,7 +220,8 @@ class UserCreate(BaseModel):
     username: str
     password: str
     name: Optional[str] = None
-    email: EmailStr
+    email: Optional[EmailStr] = None
+    phone: str = Field(..., min_length=8, description="Telefonnummer im Format +4179...")
 
 
 class UserLogin(BaseModel):
@@ -229,21 +229,17 @@ class UserLogin(BaseModel):
     password: str
 
 
-class EmailVerificationRequest(BaseModel):
-    email: EmailStr
-
-
-class EmailVerificationConfirm(BaseModel):
-    email: EmailStr
-    code: str = Field(..., min_length=4, max_length=12)
-
-
 class PasswordResetRequest(BaseModel):
-    email: EmailStr
+    phone: str = Field(..., min_length=8)
 
 
 class PasswordResetConfirm(BaseModel):
     token: str = Field(..., min_length=4, max_length=64)
+    new_password: str = Field(..., min_length=6)
+
+class PasswordChange(BaseModel):
+    # current_password kann historisch kürzer sein; Validierung erst im Repo.
+    current_password: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=6)
 
 
@@ -633,24 +629,13 @@ def require_admin(credentials: HTTPBasicCredentials = Depends(admin_scheme)):
 @app.post("/auth/register")
 def register(user: UserCreate):
     try:
-        created = repo.create_user(user.username, user.password, user.name, user.email)
+        created = repo.create_user(user.username, user.password, user.name, user.email, user.phone)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     # Attach submitted username only to response (not stored in DB)
     created["username"] = user.username
-    verification_code = repo.start_email_verification(created["id"])
-    if verification_code:
-        _send_email(
-            created.get("email"),
-            "Bitte bestätige deine E-Mail",
-            f"Dein Verifizierungscode lautet: {verification_code}\n\n"
-            "Gib diesen Code in der App ein, um deine E-Mail zu bestätigen.",
-        )
-    return {
-        "user": created,
-        "verification_required": True,
-        "message": "Verifizierungscode wurde an deine E-Mail gesendet.",
-    }
+    token = repo.issue_auth_token(created["id"])
+    return {"user": created, "token": token}
 
 
 @app.post("/auth/login")
@@ -658,11 +643,6 @@ def login(user: UserLogin):
     auth_user = repo.authenticate_user(user.username, user.password)
     if not auth_user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    if not auth_user.get("email_verified"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Email not verified. Bitte Verifizierung abschließen.",
-        )
     token = repo.issue_auth_token(auth_user["id"])
     safe_user = repo.get_user(auth_user["id"])
     if safe_user is not None:
@@ -670,41 +650,13 @@ def login(user: UserLogin):
     return {"user": safe_user, "token": token}
 
 
-@app.post("/auth/verify/request")
-def request_email_verification(payload: EmailVerificationRequest):
-    user = repo.get_user_by_email(payload.email)
-    if user and user.get("email_verified"):
-        return {"status": "already_verified"}
-    code = repo.start_email_verification(user["id"]) if user else None
-    if code and user:
-        _send_email(
-            user.get("email"),
-            "Bitte bestätige deine E-Mail",
-            f"Dein Verifizierungscode lautet: {code}\n\n"
-            "Gib diesen Code in der App ein, um deine E-Mail zu bestätigen.",
-        )
-    # Always return generic success to avoid user enumeration
-    return {"status": "ok"}
-
-
-@app.post("/auth/verify/confirm")
-def confirm_email_verification(payload: EmailVerificationConfirm):
-    verified_user = repo.confirm_email_verification(payload.email, payload.code)
-    if not verified_user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification code")
-    token = repo.issue_auth_token(verified_user["id"])
-    verified_user["username"] = verified_user.get("username") or None
-    return {"user": verified_user, "token": token}
-
-
 @app.post("/auth/password/reset/request")
 def request_password_reset(payload: PasswordResetRequest):
-    token = repo.create_password_reset_request(payload.email)
+    token = repo.create_password_reset_request(payload.phone)
     if token:
-        _send_email(
-            payload.email,
-            "Passwort zurücksetzen",
-            f"Dein Code zum Zurücksetzen lautet: {token}\n\n"
+        _send_whatsapp_message(
+            payload.phone,
+            f"Dein Code zum Zurücksetzen lautet: {token}\n"
             "Gib den Code zusammen mit deinem neuen Passwort in der App ein.",
         )
     return {"status": "ok"}
@@ -717,6 +669,14 @@ def confirm_password_reset(payload: PasswordResetConfirm):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
     token = repo.issue_auth_token(user["id"])
     return {"user": user, "token": token}
+
+@app.post("/auth/password/change")
+def change_password(payload: PasswordChange, current_user=Depends(get_current_user)):
+    updated = repo.change_password(current_user["id"], payload.current_password, payload.new_password)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aktuelles Passwort ist falsch.")
+    token = repo.issue_auth_token(updated["id"])
+    return {"user": updated, "token": token}
 
 
 @app.get("/me")
@@ -757,6 +717,7 @@ def put_vault(payload: VaultUpsertRequest, current_user=Depends(get_current_user
 def create_scenario(payload: ScenarioCreate, current_user=Depends(get_current_user)):
     payload_data = payload.dict()
     enriched = _apply_tax_field_updates(payload_data)
+    encrypted_blob = enriched.get("encrypted")
     return repo.create_scenario(
         current_user["id"],
         enriched["name"],
@@ -782,7 +743,7 @@ def create_scenario(payload: ScenarioCreate, current_user=Depends(get_current_us
         enriched.get("tax_confession"),
         enriched.get("tax_confession_partner"),
         enriched.get("tax_marital_status"),
-        enriched.get("encrypted"),
+        encrypted_blob,
     )
 
 
@@ -843,6 +804,9 @@ def update_scenario(scenario_id: str, payload: ScenarioUpdate, current_user=Depe
     updates = _apply_tax_field_updates(updates)
     if not updates:
         raise HTTPException(status_code=400, detail="No updates supplied")
+    encrypted_blob = updates.get("encrypted")
+    if encrypted_blob is not None:
+        updates["encrypted"] = encrypted_blob
     scenario = repo.get_scenario(scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
@@ -876,6 +840,7 @@ def create_asset(scenario_id: str, payload: AssetCreate, current_user=Depends(ge
     start_month = payload.start_month or scenario["start_month"]
     end_year = payload.end_year or scenario["end_year"]
     end_month = payload.end_month or scenario["end_month"]
+    encrypted_blob = payload.encrypted
     return repo.add_asset(
         scenario_id,
         payload.name,
@@ -886,7 +851,7 @@ def create_asset(scenario_id: str, payload: AssetCreate, current_user=Depends(ge
         start_month,
         end_year,
         end_month,
-        payload.encrypted,
+        encrypted_blob,
     )
 
 
@@ -905,6 +870,8 @@ def update_asset(asset_id: str, payload: AssetUpdate, current_user=Depends(get_c
     updates = {k: v for k, v in payload.dict().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No updates supplied")
+    if "encrypted" in updates:
+        updates["encrypted"] = updates.get("encrypted")
     asset = repo.get_asset(asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -946,6 +913,8 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
     if asset["scenario_id"] != scenario["id"]:
         raise HTTPException(status_code=400, detail="Asset does not belong to scenario")
 
+    encrypted_blob = payload.encrypted
+
     if payload.double_entry:
         if not payload.counter_asset_id:
             raise HTTPException(
@@ -974,6 +943,7 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
             payload.end_month or payload.start_month,
             payload.frequency,
             payload.annual_growth_rate,
+            encrypted_blob,
         )
         debit_tx["linked_transaction"] = credit_tx
         return debit_tx
@@ -1014,7 +984,7 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
             payload.taxable,
             payload.taxable_amount if payload.taxable_amount is not None else None,
             payload.correction,
-            payload.encrypted,
+            encrypted_blob,
         )
 
     return repo.add_transaction(
@@ -1037,7 +1007,7 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
         payload.taxable,
         payload.taxable_amount if payload.taxable_amount is not None else payload.amount if payload.taxable else None,
         payload.correction,
-        payload.encrypted,
+        encrypted_blob,
     )
 
 
@@ -1057,6 +1027,8 @@ def update_transaction(transaction_id: str, payload: TransactionUpdate, current_
     updates = {k: v for k, v in payload.dict().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No updates supplied")
+    if "encrypted" in updates:
+        updates["encrypted"] = updates.get("encrypted")
     transaction = repo.get_transaction(transaction_id)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -1574,6 +1546,187 @@ def _load_agent_config():
 
 
 AGENT_CONFIG = _load_agent_config()
+
+
+def _format_year_month(year, month):
+    if year is None or month is None:
+        return None
+    try:
+        return f"{int(year):04d}-{int(month):02d}"
+    except Exception:
+        return None
+
+
+def _format_currency_chf(amount: Optional[float]) -> str:
+    if amount is None:
+        return "n/a"
+    try:
+        return f"CHF {amount:,.0f}".replace(",", "'")
+    except Exception:
+        return f"CHF {amount}"
+
+
+def _format_rate_pct(rate: Optional[float]) -> str:
+    if rate is None:
+        return "n/a"
+    try:
+        return f"{float(rate) * 100:.2f}%"
+    except Exception:
+        return f"{rate}%"
+
+
+def _summarize_simulation_for_assistant(scenario_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        result = run_scenario_simulation(scenario_id, repo)
+    except Exception as exc:
+        print(f"[assistant] simulation summary failed: {exc}")
+        return None
+
+    total = result.get("total_wealth") or []
+    cash_flows = result.get("cash_flows") or []
+
+    start_value = total[0]["value"] if total else None
+    end_value = total[-1]["value"] if total else None
+    min_net = None
+    negative_months = 0
+    yearly_net: Dict[int, float] = {}
+
+    for entry in cash_flows:
+        net = entry.get("net") or 0.0
+        if min_net is None or net < min_net:
+            min_net = net
+        if net < 0:
+            negative_months += 1
+        try:
+            year = datetime.fromisoformat(entry["date"]).year
+            yearly_net[year] = yearly_net.get(year, 0.0) + net
+        except Exception:
+            continue
+
+    worst_years = sorted(yearly_net.items(), key=lambda kv: kv[1])[:3]
+    tax_total = sum((row.get("totalAll") or 0.0) for row in result.get("taxes") or [])
+
+    return {
+        "start_value": start_value,
+        "end_value": end_value,
+        "min_monthly_net": min_net,
+        "negative_months": negative_months,
+        "tax_total": tax_total,
+        "worst_years_by_net": worst_years,
+    }
+
+
+def _build_assistant_snapshot(scenario_ref, current_user, context_hint: Optional[Dict[str, Any]] = None):
+    """
+    Build a concise JSON snapshot of the active scenario for grounding assistant replies.
+    """
+    scenario_id = _resolve_scenario_id(scenario_ref, current_user, {}, None)
+    if not scenario_id:
+        return {"id": None, "text": None, "data": None}
+    try:
+        scenario = _ensure_scenario_access(scenario_id, current_user)
+    except HTTPException:
+        return {"id": None, "text": None, "data": None}
+
+    assets = repo.list_assets_for_scenario(scenario_id)
+    transactions = repo.list_transactions_for_scenario(scenario_id)
+    asset_lookup = {a["id"]: a for a in assets}
+
+    asset_rows = []
+    for asset in assets:
+        tx_count = len(
+            [
+                tx
+                for tx in transactions
+                if tx.get("asset_id") == asset["id"] or tx.get("counter_asset_id") == asset["id"]
+            ]
+        )
+        asset_rows.append(
+            {
+                "id": asset.get("id"),
+                "name": asset.get("name"),
+                "type": asset.get("asset_type"),
+                "initial_balance": asset.get("initial_balance"),
+                "annual_growth_rate": asset.get("annual_growth_rate"),
+                "start": _format_year_month(asset.get("start_year"), asset.get("start_month")),
+                "end": _format_year_month(asset.get("end_year"), asset.get("end_month")),
+                "transactions": tx_count,
+            }
+        )
+
+    sorted_tx = sorted(transactions, key=lambda t: abs(t.get("amount") or 0.0), reverse=True)
+    tx_rows = []
+    for tx in sorted_tx[:80]:
+        tx_rows.append(
+            {
+                "name": tx.get("name"),
+                "type": tx.get("type"),
+                "asset": asset_lookup.get(tx.get("asset_id"), {}).get("name"),
+                "counter_asset": asset_lookup.get(tx.get("counter_asset_id"), {}).get("name"),
+                "amount": tx.get("amount"),
+                "frequency": tx.get("frequency") or tx.get("type"),
+                "start": _format_year_month(tx.get("start_year"), tx.get("start_month")),
+                "end": _format_year_month(tx.get("end_year"), tx.get("end_month")),
+                "growth_rate": tx.get("annual_growth_rate"),
+                "interest_rate": tx.get("annual_interest_rate"),
+                "taxable": bool(tx.get("taxable")),
+            }
+        )
+
+    sim_summary = _summarize_simulation_for_assistant(scenario_id)
+    scenario_summary = {
+        "id": scenario.get("id"),
+        "name": scenario.get("name"),
+        "start": _format_year_month(scenario.get("start_year"), scenario.get("start_month")),
+        "end": _format_year_month(scenario.get("end_year"), scenario.get("end_month")),
+        "inflation_rate": scenario.get("inflation_rate"),
+        "tax_canton": scenario.get("tax_canton"),
+        "tax_account": asset_lookup.get(scenario.get("tax_account_id"), {}).get("name"),
+    }
+
+    # Compare with other scenarios of the same user (lightweight summaries only)
+    comparisons = []
+    try:
+        all_scenarios = repo.list_scenarios_for_user(current_user["id"])
+        other_scenarios = [s for s in all_scenarios if s.get("id") != scenario_id]
+        for other in other_scenarios[:5]:  # cap to avoid excessive load
+            comp_summary = _summarize_simulation_for_assistant(other.get("id"))
+            comparisons.append(
+                {
+                    "id": other.get("id"),
+                    "name": other.get("name"),
+                    "start": _format_year_month(other.get("start_year"), other.get("start_month")),
+                    "end": _format_year_month(other.get("end_year"), other.get("end_month")),
+                    "simulation_summary": comp_summary,
+                }
+            )
+    except Exception as exc:
+        print(f"[assistant] scenario comparison failed: {exc}")
+
+    context_data = {
+        "scenario": scenario_summary,
+        "assets": asset_rows,
+        "transactions_preview": tx_rows,
+        "simulation_summary": sim_summary,
+        "scenario_comparisons": comparisons,
+    }
+
+    summary_lines = [
+        f"Szenario: {scenario_summary.get('name') or 'ohne Namen'} ({scenario_summary.get('start')} -> {scenario_summary.get('end')})",
+        f"Inflation: {_format_rate_pct(scenario_summary.get('inflation_rate'))} · Steuern: {scenario_summary.get('tax_canton') or 'n/a'}",
+        f"Assets: {len(asset_rows)} · Transaktionen (Top 80): {len(tx_rows)}",
+    ]
+    if sim_summary:
+        summary_lines.append(
+            f"Simulation: Start { _format_currency_chf(sim_summary.get('start_value')) } -> Ende { _format_currency_chf(sim_summary.get('end_value')) } · Min. monatlicher Cashflow: { _format_currency_chf(sim_summary.get('min_monthly_net')) }"
+        )
+        summary_lines.append(f"Negative Monate: {sim_summary.get('negative_months')} · Steuern gesamt: {_format_currency_chf(sim_summary.get('tax_total'))}")
+    if comparisons:
+        summary_lines.append(f"Vergleich: {len(comparisons)} weitere Szenarien gefunden (Top 5 geladen).")
+
+    context_text = "\n".join(summary_lines) + "\nDetail (JSON):\n" + json.dumps(context_data, ensure_ascii=False)
+
+    return {"id": scenario_id, "text": context_text, "data": context_data}
 
 
 def _validate_actions(actions: List[Dict[str, Any]]) -> List[str]:
@@ -2398,6 +2551,10 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
     if not payload.messages:
         raise HTTPException(status_code=400, detail="messages required")
 
+    ctx = payload.context or {}
+    scenario_ref = ctx.get("scenario_id") or ctx.get("scenario_name")
+    snapshot = _build_assistant_snapshot(scenario_ref, current_user, ctx)
+
     client = get_openai_client()
     if not client:
         fallback_reply = (
@@ -2409,32 +2566,29 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
         return AssistantChatResponse(messages=new_messages, plan=None, reply=fallback_reply)
 
     system_prompt = (
-       "Du bist der Orchestrator (einziger Sprecher). Spezial-Agenten: Szenario, Konto, Immo, Hypo. "
-       "Zins-Agent: stellt sicher, dass mortgage_interest Transaktionen alle Pflichtfelder haben (Zahler, Hypothek, Zinssatz, Frequency, Start/Ende). Nach dem Anlegen einer Hypothek fragt der Orchestrator, ob der Zins-Agent direkt eine Zinstransaktion anlegen soll, und instruiert ihn bei Zustimmung mit den bekannten Feldern. "
-       "Strikte API-Kurzreferenz, keine Felder erfinden. Fehlende Pflichtfelder zuerst erfragen, dann zusammenfassen, dann ausführen. Aktionen als Warteschlange.\n"
-        "1) Kontext: nur aktueller Nutzer/Szenario. use_scenario für Wechsel, fehlendes Szenario neu anlegen. "
-        "   Wenn ein Immobilien-Asset (Haus/Immobilie) angelegt wird und keine Hypothek genannt ist, frage kurz, ob eine Hypothek mitfinanziert werden soll. "
-        "2) Pflichtfelder je Aktion (erst erfragen, dann planen): "
-         "   - use_scenario: scenario (Name/ID), sonst aktuelles. "
-         "   - create_scenario: name, start_year/month, end_year/month. "
-         "   - create_asset (Konto/Immo): scenario, name, annual_growth_rate (bei Konto als Verzinsung/Zins benennen; immer abfragen, nicht defaulten), initial_balance (default 0), asset_type (ableiten: Konto/Depot→bank_account, Haus/Immobilie→real_estate). "
-         "   - create_liability (Hypothek): scenario, name, amount, start; Zinssatz NICHT als Growth, sondern für mortgage_interest nutzen. "
-       "   - create_transaction: scenario, asset_id, name, amount, type, start_year/start_month (oder start_date). "
-         "     mortgage_interest Pflicht: asset_id (Zahler), mortgage_asset_id (Hypothek), annual_interest_rate/interest_rate/zinssatz, frequency, start_year/start_month. Betrag kann 0 sein (wird berechnet). "
-         "     Fehlt etwas: nachfragen, NICHT ausführen, NICHT auf regular fallbacken. Namen/Aliase im Szenario auflösen, bevor du fragst. "
-         "     Transfer/Umbuchung: double_entry=true, asset_id=Zahler, counter_asset_id=Empfänger, amount, start_date/start_year/start_month; tx_type=one_time oder regular. "
-         "   - create_interest_transaction ist eine Kurzform von create_transaction mit tx_type=mortgage_interest (Zahler, Hypothek, Zins, Frequency, Start/End). "
-         "   - Kombi Immo+Hypo+Zins: 1) Asset (real_estate) anlegen, 2) Hypothek anlegen (ohne Growth), 3) Zins-Transaktion (mortgage_interest) mit Zahler-Konto, mortgage_asset_id, Zinssatz, Frequency, Start/Ende. Reihenfolge einhalten; nach fehlenden Feldern fragen. "
-         "   - update_asset: scenario, asset_id (Name/ID/Alias), optionale Felder. "
-         "   - delete_*: scenario + Name/ID/Alias. "
-        "3) Wenn alles da ist: tabellarisch/kurz zusammenfassen (kein JSON), Zustimmung einholen; auto_apply erst nach Zustimmung. "
-        "4) JSON-Plan IMMER in ```json``` Schema: { \"auto_apply\": true|false, \"actions\": [ { \"type\": \"use_scenario|create_scenario|create_asset|update_asset|create_liability|create_transaction|update_transaction|delete_asset|delete_liability|delete_transaction\", "
-        "\"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", Felder wie name, amount, start_date, initial_balance, asset_type, interest_rate usw. } ] }. "
-        "Aliase ($alias) nutzen. Wenn noch Daten fehlen oder keine Zustimmung: nachfragen und auto_apply=false lassen. "
-        "Antworte kurz, kein 'ich kann nur Pläne erstellen'. "
+        "Du bist der Wealth Assistant (ein Sprecher, deutsch) für die Finanzsimulation. "
+        "Nutze den bereitgestellten Szenario-Snapshot, um Antworten zu verankern – inklusive Vergleichsdaten aus anderen Szenarien des Nutzers. Antworte knapp, arbeite faktenbasiert.\n"
+        "Aufgaben pro Antwort:\n"
+        "1) Status: 3-5 Bulletpoints zur Lage (Zeitraum, Vermögen Start->Ende falls vorhanden, Cashflow-Risiken, Schulden/Immo, Steuern/Inflation). Nenne, falls sinnvoll, Unterschiede zu anderen Szenarien (z.B. besserer Endwert, weniger negative Monate, geringere Steuerlast). "
+        "2) Optimierung: 3-5 konkrete Vorschläge aus dem Snapshot und den Vergleichsdaten ableiten. Als Tabelle mit Spalten Idee | Nutzen | Risiko/Annahme | Nächster Schritt. "
+        "3) Wenn der Nutzer Änderungen will oder zustimmt: baue einen Plan im ```json``` Schema {\"auto_apply\": bool, \"actions\": [{\"type\": \"use_scenario|create_scenario|create_asset|update_asset|create_liability|create_transaction|update_transaction|delete_asset|delete_liability|delete_transaction\", \"scenario\"|\"scenario_id\": \"...\", optional \"store_as\": \"alias\", weitere Felder}]} "
+        "Pflichtfelder: create_scenario (name, start_year, start_month, end_year, end_month); create_asset (name, annual_growth_rate, initial_balance, asset_type, start_year/start_month); create_liability (name, amount, start_date optional, asset_type=mortgage, initial_balance negativ); "
+        "create_transaction (asset_id oder Name, name, amount, type, start_year/start_month, frequency wenn wiederkehrend, annual_growth_rate wenn bekannt); mortgage_interest braucht zusätzlich mortgage_asset_id, annual_interest_rate, frequency, Start/Ende. "
+        "Keine Felder erfinden: fehlendes kurz erfragen, dann erst planen. "
+        "Auto-Apply nur bei expliziter Zustimmung (\"ok\", \"mach\") oder auto_apply=true im Plan, sonst auto_apply=false lassen. "
+        "Wiederhole den Snapshot nicht."
     )
 
     chat_messages = [{"role": "system", "content": system_prompt}]
+    if snapshot.get("text"):
+        chat_messages.append({"role": "system", "content": f"Aktueller Szenario-Snapshot:\n{snapshot['text']}"})
+    else:
+        chat_messages.append(
+            {
+                "role": "system",
+                "content": "Es liegt kein Szenario-Snapshot vor. Frage nach dem gewünschten Szenario (Name/ID) und lass auto_apply=false, bis ein Snapshot verfügbar ist.",
+            }
+        )
     for m in payload.messages:
         chat_messages.append({"role": m.role, "content": m.content})
 
@@ -2493,7 +2647,7 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
             return AssistantChatResponse(messages=updated_messages, plan=None, reply=assistant_reply)
 
         # Only auto-apply if explicitly requested
-        should_auto_apply = bool(plan.get("auto_apply") or (payload.context or {}).get("auto_apply"))
+        should_auto_apply = bool(plan.get("auto_apply") or ctx.get("auto_apply"))
         # Heuristic: if user just confirmed (ja/ok/ausführen) and plan has actions, auto-apply
         if not should_auto_apply and actions:
             last_user_msg = next((m for m in reversed(payload.messages) if m.role == "user"), None)
@@ -2506,8 +2660,7 @@ def assistant_chat(payload: AssistantChatRequest, current_user=Depends(get_curre
     if plan and isinstance(plan, dict) and isinstance(plan.get("actions"), list) and len(plan["actions"]) > 0 and should_auto_apply:
         try:
             # prefer context scenario if provided
-            ctx = payload.context or {}
-            initial_scenario_ref = ctx.get("scenario_id") or ctx.get("scenario_name")
+            initial_scenario_ref = snapshot.get("id") or ctx.get("scenario_id") or ctx.get("scenario_name")
             applied_results = _apply_plan(plan, current_user, initial_scenario_ref=initial_scenario_ref)
             print(f"[assistant] applied {len(applied_results)} actions")
         except HTTPException as exc:

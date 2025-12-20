@@ -4,7 +4,7 @@ import { sendAssistantMessage } from '../api';
 const initialBotMessage = {
     role: 'assistant',
     content:
-        'Hallo! Ich kann dir helfen, neue Assets, Hypotheken und Transaktionen einzupflegen. Beschreibe einfach, was passiert ist, z.B. “Haus für CHF 1’000’000 gekauft, 200k vom ZKB Konto, Rest Hypothek 2% Zinsen p.a.”',
+        'Hallo! Ich lese dein aktuelles Szenario (Assets, Transaktionen, Simulation) und mache Optimierungs-Vorschläge. Frage z.B. nach Cashflow-Risiken oder bitte mich, eine neue Buchung vorzubereiten.',
 };
 
 const AIAssistant = ({ currentScenarioId, accounts, scenarios, onDataChanged }) => {
@@ -55,8 +55,10 @@ const AIAssistant = ({ currentScenarioId, accounts, scenarios, onDataChanged }) 
                     content: resp?.reply || 'Ich habe deine Anfrage verstanden.',
                 });
             }
-            if (!resp?.plan) {
-                setStatusNote('Kein automatischer Plan erkannt – bitte mehr Details geben.');
+            if (resp?.plan) {
+                setStatusNote('Plan vorbereitet – antworte mit OK, wenn ich ihn ausführen soll.');
+            } else {
+                setStatusNote('');
             }
             if (typeof onDataChanged === 'function') {
                 await onDataChanged();
@@ -74,7 +76,7 @@ const AIAssistant = ({ currentScenarioId, accounts, scenarios, onDataChanged }) 
 
     const handleQuickStart = () => {
         setInput(
-            'Hauskauf: CHF 1’000’000, 200’000 vom ZKB Konto, Rest Hypothek, 2% Zinsen p.a., Start 11/2025.'
+            'Gib mir eine kurze Bestandsaufnahme des aktuellen Szenarios und zeig 3 Optimierungsideen mit konkreten nächsten Schritten.'
         );
     };
 
