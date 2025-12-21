@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     createStateTaxRateAdmin,
     deleteStateTaxRateAdmin,
@@ -23,6 +23,7 @@ function AdminStateTaxRates({ adminAuth, onUnauthorized }) {
     const [error, setError] = useState('');
     const [form, setForm] = useState(emptyForm);
     const [editingCell, setEditingCell] = useState(null);
+    const [sortConfig, setSortConfig] = useState({ key: 'canton', direction: 'asc' });
 
     const loadRows = useCallback(async () => {
         if (!adminAuth) return;
@@ -55,6 +56,34 @@ function AdminStateTaxRates({ adminAuth, onUnauthorized }) {
         const { name, value } = event.target;
         setForm((prev) => ({ ...prev, [name]: value }));
     };
+
+    const toggleSort = (key) => {
+        setSortConfig((prev) => {
+            if (prev.key === key) {
+                return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+            }
+            return { key, direction: 'asc' };
+        });
+    };
+
+    const sortedRows = useMemo(() => {
+        const sorted = [...rows];
+        const { key, direction } = sortConfig;
+        sorted.sort((a, b) => {
+            const va = a[key];
+            const vb = b[key];
+            if (va === vb) return 0;
+            if (va === null || va === undefined) return 1;
+            if (vb === null || vb === undefined) return -1;
+            if (typeof va === 'number' && typeof vb === 'number') {
+                return direction === 'asc' ? va - vb : vb - va;
+            }
+            return direction === 'asc'
+                ? String(va).localeCompare(String(vb))
+                : String(vb).localeCompare(String(va));
+        });
+        return sorted;
+    }, [rows, sortConfig]);
 
     const handleAddRow = async (event) => {
         event.preventDefault();
@@ -217,20 +246,28 @@ function AdminStateTaxRates({ adminAuth, onUnauthorized }) {
                 <table className="admin-table">
                     <thead>
                         <tr>
-                            <th>Kanton</th>
-                            <th>Staatssteuerfuss</th>
+                            <th>
+                                <button type="button" className="cell-button" onClick={() => toggleSort('canton')}>
+                                    Kanton
+                                </button>
+                            </th>
+                            <th>
+                                <button type="button" className="cell-button" onClick={() => toggleSort('rate')}>
+                                    Staatssteuerfuss
+                                </button>
+                            </th>
                             <th />
                         </tr>
                     </thead>
                     <tbody>
-                        {rows.length === 0 ? (
+                        {sortedRows.length === 0 ? (
                             <tr>
                                 <td colSpan={3} className="empty">
                                     {loading ? 'Lade Daten...' : 'Keine Einträge vorhanden.'}
                                 </td>
                             </tr>
                         ) : (
-                            rows.map((row) => (
+                            sortedRows.map((row) => (
                                 <tr key={row.id}>
                                     <td>{renderEditableCell(row, 'canton')}</td>
                                     <td>{renderEditableCell(row, 'rate', formatRate)}</td>

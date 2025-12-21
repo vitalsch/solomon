@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     createMunicipalTaxRateAdmin,
     deleteMunicipalTaxRateAdmin,
@@ -45,6 +45,7 @@ function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
     const [error, setError] = useState('');
     const [form, setForm] = useState(emptyForm);
     const [editingCell, setEditingCell] = useState(null);
+    const [sortConfig, setSortConfig] = useState({ key: 'municipality', direction: 'asc' });
 
     const loadRows = useCallback(async () => {
         if (!adminAuth) return;
@@ -131,6 +132,34 @@ function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
         const { value } = event.target;
         setEditingCell((prev) => (prev ? { ...prev, value } : prev));
     };
+
+    const toggleSort = (key) => {
+        setSortConfig((prev) => {
+            if (prev.key === key) {
+                return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+            }
+            return { key, direction: 'asc' };
+        });
+    };
+
+    const sortedRows = useMemo(() => {
+        const sorted = [...rows];
+        const { key, direction } = sortConfig;
+        sorted.sort((a, b) => {
+            const va = a[key];
+            const vb = b[key];
+            if (va === vb) return 0;
+            if (va === null || va === undefined) return 1;
+            if (vb === null || vb === undefined) return -1;
+            if (typeof va === 'number' && typeof vb === 'number') {
+                return direction === 'asc' ? va - vb : vb - va;
+            }
+            return direction === 'asc'
+                ? String(va).localeCompare(String(vb))
+                : String(vb).localeCompare(String(va));
+        });
+        return sorted;
+    }, [rows, sortConfig]);
 
     const cancelEditing = () => setEditingCell(null);
 
@@ -274,11 +303,35 @@ function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
                 <table className="admin-table">
                     <thead>
                         <tr>
-                            <th>Gemeinde</th>
-                            <th>Steuerfüsse ohne Kirche</th>
-                            <th>ref. Kirche</th>
-                            <th>kath. Kirche</th>
-                            <th>christ.-kath. Kirche</th>
+                            <th>
+                                <button type="button" className="cell-button" onClick={() => toggleSort('municipality')}>
+                                    Gemeinde
+                                </button>
+                            </th>
+                            <th>
+                                <button type="button" className="cell-button" onClick={() => toggleSort('base_rate')}>
+                                    Steuerfüsse ohne Kirche
+                                </button>
+                            </th>
+                            <th>
+                                <button type="button" className="cell-button" onClick={() => toggleSort('ref_rate')}>
+                                    ref. Kirche
+                                </button>
+                            </th>
+                            <th>
+                                <button type="button" className="cell-button" onClick={() => toggleSort('cath_rate')}>
+                                    kath. Kirche
+                                </button>
+                            </th>
+                            <th>
+                                <button
+                                    type="button"
+                                    className="cell-button"
+                                    onClick={() => toggleSort('christian_cath_rate')}
+                                >
+                                    christ.-kath. Kirche
+                                </button>
+                            </th>
                             <th />
                         </tr>
                     </thead>
@@ -290,7 +343,7 @@ function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
                                 </td>
                             </tr>
                         ) : (
-                            rows.map((row) => (
+                            sortedRows.map((row) => (
                                 <tr key={row.id}>
                                     <td>{renderEditableCell(row, 'municipality', null, 'Gemeinde')}</td>
                                     <td>{renderEditableCell(row, 'base_rate', formatRate)}</td>
