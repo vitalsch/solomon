@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     createMunicipalTaxRateAdmin,
     deleteMunicipalTaxRateAdmin,
+    importMunicipalTaxRatesAdmin,
     listMunicipalTaxRatesAdmin,
     updateMunicipalTaxRateAdmin,
 } from '../api';
@@ -37,6 +38,9 @@ const parseRate = (value) => {
     const parsed = Number.parseFloat(value);
     return Number.isNaN(parsed) ? null : parsed;
 };
+
+const JSON_HINT =
+    'JSON-Array: [{"municipality":"Winterthur","canton":"ZH","base_rate":119.5,"ref_rate":10.0,"cath_rate":12.0,"christian_cath_rate":null}]';
 
 function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
     const [rows, setRows] = useState([]);
@@ -107,6 +111,28 @@ function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
             setError(err?.message || 'Konnte Gemeinde nicht speichern.');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleImportRows = async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            if (!Array.isArray(data)) {
+                setError('JSON muss ein Array von Gemeindeeinträgen sein.');
+                return;
+            }
+            setSaving(true);
+            await importMunicipalTaxRatesAdmin(adminAuth, data);
+            await loadRows();
+            setError('');
+        } catch (err) {
+            setError(err?.message || 'Import fehlgeschlagen.');
+        } finally {
+            setSaving(false);
+            if (event.target) event.target.value = '';
         }
     };
 
@@ -298,6 +324,15 @@ function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
                     </button>
                 </div>
             </form>
+            <div className="json-upload-group">
+                <label className="json-upload">
+                    <input type="file" accept="application/json" onChange={handleImportRows} />
+                    <span>{saving ? 'Importiere…' : 'JSON importieren'}</span>
+                </label>
+                <span className="json-hint" title={JSON_HINT}>
+                    ?
+                </span>
+            </div>
 
             <div className="admin-table-wrapper">
                 <table className="admin-table">

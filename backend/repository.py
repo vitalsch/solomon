@@ -1029,6 +1029,29 @@ class WealthRepository:
         doc["_id"] = res.inserted_id
         return _serialize(doc)
 
+    def import_municipal_tax_rates(self, rows: List[Dict[str, Any]]) -> int:
+        docs = []
+        for row in rows or []:
+            municipality = row.get("municipality")
+            canton = row.get("canton") or row.get("canton_code") or ""
+            if not municipality or not canton:
+                continue
+            doc = {
+                "municipality": municipality,
+                "canton": canton,
+                "base_rate": _round_two_decimals(row.get("base_rate")),
+                "ref_rate": _round_two_decimals(row.get("ref_rate")),
+                "cath_rate": _round_two_decimals(row.get("cath_rate")),
+                "christian_cath_rate": _round_two_decimals(row.get("christian_cath_rate")),
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+            }
+            docs.append(doc)
+        if not docs:
+            return 0
+        res = self.db.municipal_tax_rates.insert_many(docs)
+        return len(res.inserted_ids)
+
     def update_municipal_tax_rate(self, entry_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         allowed_keys = {"municipality", "canton", "base_rate", "ref_rate", "cath_rate", "christian_cath_rate"}
         filtered: Dict[str, Any] = {}

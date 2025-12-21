@@ -545,6 +545,13 @@ class FederalTaxTableUpdate(BaseModel):
     child_deduction_per_child: Optional[float] = Field(None, ge=0)
 
 
+class MunicipalTaxRowsImport(BaseModel):
+    rows: List[Dict[str, Any]] = Field(
+        ...,
+        description="Liste von Gemeinden: municipality, canton, base_rate, ref_rate?, cath_rate?, christian_cath_rate?",
+    )
+
+
 class TariffRowsImport(BaseModel):
     rows: List[Dict[str, Any]] = Field(..., description="Liste von Zeilenobjekten (schwelle_chf, sockelbetrag_chf, je_100_chf, hinweis)")
 
@@ -1386,6 +1393,14 @@ def import_federal_tax_table_rows(table_id: str, payload: TariffRowsImport, admi
     if not updated:
         raise HTTPException(status_code=500, detail="Failed to import rows")
     return updated
+
+
+@app.post("/admin/municipal-tax-rates/import")
+def import_municipal_tax_rates(payload: MunicipalTaxRowsImport, admin=Depends(require_admin)):
+    if not payload.rows:
+        raise HTTPException(status_code=400, detail="No rows provided")
+    inserted = repo.import_municipal_tax_rates(payload.rows)
+    return {"inserted": inserted}
 
 
 @app.get("/admin/personal-taxes")

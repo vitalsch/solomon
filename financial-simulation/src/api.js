@@ -338,6 +338,12 @@ export const importFederalTaxTableRowsAdmin = (adminAuthHeader, tableId, rows) =
         body: JSON.stringify({ rows }),
     });
 
+export const importMunicipalTaxRatesAdmin = (adminAuthHeader, rows) =>
+    adminRequest('/admin/municipal-tax-rates/import', adminAuthHeader, {
+        method: 'POST',
+        body: JSON.stringify({ rows }),
+    });
+
 export const listPersonalTaxesAdmin = (adminAuthHeader) => adminRequest('/admin/personal-taxes', adminAuthHeader);
 
 export const createPersonalTaxAdmin = (adminAuthHeader, payload) =>
