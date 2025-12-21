@@ -5,7 +5,7 @@ Dieses Backend stellt REST Endpunkte bereit, um Nutzer, Szenarien, Assets und Tr
 ## API Kurzreferenz (für den AI Assistant)
 
 - Auth  
-  - `POST /auth/register` `{username, password, name?, email?}` → `{token, user}`  
+  - `POST /auth/register` `{username, password, name?, email?, phone}` → `{token, user}`  
   - `POST /auth/login` `{username, password}` → `{token, user}`  
   - `GET /me` → aktueller User; `DELETE /me` entfernt ihn (inkl. Daten)
 - Szenarien  
@@ -91,7 +91,18 @@ uvicorn backend.api:app --reload
 
 Der Server läuft anschließend auf `http://127.0.0.1:8000`. Die FastAPI Doku ist unter `http://127.0.0.1:8000/docs` erreichbar.
 
+### Telefonnummern & Codes
+
+Bei der Registrierung muss eine Telefonnummer im E.164-Format angegeben werden (z. B. `+41791234567`). Aktuell werden Bestätigungs- oder Reset-Codes nicht aktiv verschickt, sondern lediglich im Backend-Log (`[whatsapp] ...`) ausgegeben. Damit lässt sich der Flow lokal testen, ohne einen SMS/WhatsApp-Dienst einzubinden.
+
 > **Admin Zugriff aktivieren:** Setze `ADMIN_PASSWORD="<dein_geheimes_passwort>"` (optional `ADMIN_USERNAME`, Default `admin`), damit das Admin-UI und die `/admin/tax-tables` Endpunkte zugreifbar sind. Ohne Passwort bleiben diese Endpunkte deaktiviert.
+
+### Verschlüsselung sensibler Felder
+
+- `PII_ENCRYPTION_KEY`: Base64url-codierter 32-Byte Schlüssel für [Fernet](https://cryptography.io/en/latest/fernet/). Falls du lieber ein leicht zu merkendes Passwort hinterlegen möchtest, kannst du hier auch eine beliebige Zeichenkette setzen – sie wird automatisch gehasht und in einen gültigen Fernet-Key überführt. Ohne Variable fällt der Code auf einen (unsicheren) Default in Dev-Setups zurück.
+- `PII_HASH_SECRET`: Optionaler HMAC-Schlüssel für deterministische `email_token` / `phone_token` Werte. Standardmäßig wird `USERNAME_HASH_SECRET` wiederverwendet; ohne beide greift ein (ebenfalls unsicherer) Default, damit lokale Tests nicht abstürzen.
+- Alle neuen Nutzer speichern `name`, `email` und `phone` ausschließlich verschlüsselt im Feld `profile_encrypted`. Für Legacy-Datensätze werden die Klartext-Felder beim nächsten Zugriff automatisch verschlüsselt und aus dem Dokument entfernt.
+- Szenario-, Asset- und Transaktions-Endpunkte akzeptieren nur noch Requests mit einem gültigen `encrypted`-Blob (AES-GCM Ciphertext aus dem Vault). Ohne eingerichteten bzw. entsperrten Vault werden sämtliche Schreiboperationen mit `400 Vault ist erforderlich` abgewiesen.
 
 ### Alles-in-einem Skript
 
@@ -111,7 +122,7 @@ Das Skript führt `docker compose up -d mongo` aus, setzt Standard-Umgebungsvari
 
 | Ressource | Felder (Auszug) |
 |-----------|-----------------|
-| `users` | `name`, `email` |
+| `users` | `profile_encrypted` (Fernet JSON), `email_token`, `phone_token`, `vault`, `auth_token_hash` |
 | `scenarios` | `user_id`, `name`, `start_year`, `start_month`, `end_year`, `end_month`, `description` |
 | `assets` | `scenario_id`, `name`, `annual_growth_rate`, `initial_balance`, optionale Laufzeitfenster |
 | `transactions` | `scenario_id`, `asset_id`, `name`, `type` (`one_time`, `regular`, `mortgage_interest`), `amount`, `start_year`, `start_month`, optionale `end_year`, `end_month`, `frequency`, `annual_growth_rate`, optionale `mortgage_asset_id`, `annual_interest_rate`, `counter_asset_id` |
@@ -123,7 +134,7 @@ Das Skript führt `docker compose up -d mongo` aus, setzt Standard-Umgebungsvari
 ```bash
 curl -X POST http://localhost:8000/users \
   -H "Content-Type: application/json" \
-  -d '{"name":"Stella","email":"stella@example.com"}'
+  -d '{"name":"Stella","email":"stella@example.com","phone":"+41791234567"}'
 
 curl -X POST http://localhost:8000/scenarios \
   -H "Content-Type: application/json" \

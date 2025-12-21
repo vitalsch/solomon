@@ -1,27 +1,18 @@
 import React, { useState } from 'react';
-import {
-    loginUser,
-    registerUser,
-    requestEmailVerification,
-    confirmEmailVerification,
-    requestPasswordReset,
-    confirmPasswordReset,
-} from '../api';
+import { loginUser, registerUser, requestPasswordReset, confirmPasswordReset } from '../api';
 import '../App.css';
 
 const WelcomePage = ({ onAuthenticated }) => {
+    const [view, setView] = useState('auth');
     const [mode, setMode] = useState('login');
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [name, setName] = useState('');
-    const [email, setEmail] = useState('');
+    const [phone, setPhone] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
-    const [info, setInfo] = useState('');
-    const [verificationEmail, setVerificationEmail] = useState('');
-    const [verificationCode, setVerificationCode] = useState('');
     const [verifying, setVerifying] = useState(false);
-    const [resetEmail, setResetEmail] = useState('');
+    const [resetPhone, setResetPhone] = useState('');
     const [resetToken, setResetToken] = useState('');
     const [resetNewPassword, setResetNewPassword] = useState('');
     const [resetMessage, setResetMessage] = useState('');
@@ -29,24 +20,21 @@ const WelcomePage = ({ onAuthenticated }) => {
     const handleSubmit = async (event) => {
         event.preventDefault();
         setError('');
-        setInfo('');
-        if (!username || !password || (mode === 'register' && !email)) {
-            setError('Bitte Benutzername, Passwort und E-Mail ausfüllen.');
+        if (!username || !password || (mode === 'register' && !phone)) {
+            setError('Bitte Benutzername, Passwort und Telefonnummer ausfüllen.');
             return;
         }
         setLoading(true);
         try {
             const payload =
                 mode === 'register'
-                    ? { username, password, name: name || undefined, email }
+                    ? { username, password, name: name || undefined, phone }
                     : { username, password };
             const action = mode === 'register' ? registerUser : loginUser;
             const response = await action(payload);
-            if (mode === 'register') {
-                setInfo('Verifizierungscode wurde per E-Mail gesendet. Bitte Code eingeben und bestätigen.');
-                setVerificationEmail(email);
-            } else if (response?.token) {
-                onAuthenticated?.();
+            if (response?.token) {
+                const targetView = username === 'admin' ? 'admin' : 'simulation';
+                onAuthenticated?.(targetView);
             }
         } catch (err) {
             setError(err.message || 'Bitte erneut versuchen.');
@@ -55,55 +43,16 @@ const WelcomePage = ({ onAuthenticated }) => {
         }
     };
 
-    const handleVerificationSubmit = async (event) => {
-        event.preventDefault();
-        setError('');
-        setInfo('');
-        if (!verificationEmail || !verificationCode) {
-            setError('Bitte E-Mail und Verifizierungscode angeben.');
-            return;
-        }
-        setVerifying(true);
-        try {
-            const result = await confirmEmailVerification(verificationEmail, verificationCode);
-            if (result?.token) {
-                onAuthenticated?.();
-            }
-        } catch (err) {
-            setError(err.message || 'Verifizierung fehlgeschlagen.');
-        } finally {
-            setVerifying(false);
-        }
-    };
-
-    const handleResendVerification = async () => {
-        if (!verificationEmail) {
-            setError('Bitte zuerst eine E-Mail angeben.');
-            return;
-        }
-        setVerifying(true);
-        setError('');
-        setInfo('');
-        try {
-            await requestEmailVerification(verificationEmail);
-            setInfo('Neuer Verifizierungscode gesendet.');
-        } catch (err) {
-            setError(err.message || 'Code konnte nicht gesendet werden.');
-        } finally {
-            setVerifying(false);
-        }
-    };
-
     const handleResetRequest = async () => {
-        if (!resetEmail) {
-            setResetMessage('Bitte E-Mail für das Zurücksetzen angeben.');
+        if (!resetPhone) {
+            setResetMessage('Bitte Telefonnummer für das Zurücksetzen angeben.');
             return;
         }
         setVerifying(true);
         setResetMessage('');
         try {
-            await requestPasswordReset(resetEmail);
-            setResetMessage('Reset-Code wurde gesendet (siehe E-Mail).');
+            await requestPasswordReset(resetPhone);
+            setResetMessage('Reset-Code erstellt (sieh im Backend-Log nach).');
         } catch (err) {
             setResetMessage(err.message || 'Reset-Code konnte nicht gesendet werden.');
         } finally {
@@ -121,7 +70,7 @@ const WelcomePage = ({ onAuthenticated }) => {
         try {
             const result = await confirmPasswordReset(resetToken, resetNewPassword);
             if (result?.token) {
-                onAuthenticated?.();
+                onAuthenticated?.('simulation');
             } else {
                 setResetMessage('Zurücksetzen erfolgreich. Jetzt einloggen.');
             }
@@ -132,10 +81,72 @@ const WelcomePage = ({ onAuthenticated }) => {
         }
     };
 
+    const openResetView = () => {
+        setView('reset');
+        setResetMessage('');
+        setVerifying(false);
+    };
+
+    const backToAuth = () => {
+        setView('auth');
+        setMode('login');
+        setResetMessage('');
+        setVerifying(false);
+    };
+
     const copy =
         mode === 'login'
             ? 'Melde dich an, um deine Simulationen fortzusetzen.'
             : 'Registriere dich, um deine Finanzpläne zentral zu verwalten.';
+
+    if (view === 'reset') {
+        return (
+            <div className="welcome-shell">
+                <div className="welcome-card">
+                    <p className="eyebrow">Passwort zurücksetzen</p>
+                    <div className="welcome-form">
+                        <label className="stacked">
+                            <span>Telefonnummer</span>
+                            <input
+                                type="tel"
+                                value={resetPhone}
+                                onChange={(e) => setResetPhone(e.target.value)}
+                                placeholder="+4179..."
+                            />
+                        </label>
+                        <button type="button" className="secondary" onClick={handleResetRequest} disabled={verifying}>
+                            Reset-Code senden
+                        </button>
+                        <label className="stacked">
+                            <span>Reset-Code</span>
+                            <input
+                                type="text"
+                                value={resetToken}
+                                onChange={(e) => setResetToken(e.target.value)}
+                                placeholder="6-stelliger Code"
+                            />
+                        </label>
+                        <label className="stacked">
+                            <span>Neues Passwort</span>
+                            <input
+                                type="password"
+                                value={resetNewPassword}
+                                onChange={(e) => setResetNewPassword(e.target.value)}
+                                placeholder="Neues Passwort"
+                            />
+                        </label>
+                        <button type="button" onClick={handleResetConfirm} disabled={verifying}>
+                            Passwort setzen
+                        </button>
+                        {resetMessage && <p className="form-info">{resetMessage}</p>}
+                        <button type="button" className="secondary" onClick={backToAuth}>
+                            Zurück zum Login
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="welcome-shell">
@@ -161,7 +172,6 @@ const WelcomePage = ({ onAuthenticated }) => {
                         onClick={() => {
                             setMode('login');
                             setError('');
-                            setInfo('');
                         }}
                     >
                         Login
@@ -172,7 +182,6 @@ const WelcomePage = ({ onAuthenticated }) => {
                         onClick={() => {
                             setMode('register');
                             setError('');
-                            setInfo('');
                         }}
                     >
                         Registrieren
@@ -203,13 +212,12 @@ const WelcomePage = ({ onAuthenticated }) => {
                                 />
                             </label>
                             <label className="stacked">
-                                <span>E-Mail (Pflicht)</span>
+                                <span>Telefonnummer</span>
                                 <input
-                                    type="email"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    placeholder="name@email.com"
-                                    required
+                                    type="tel"
+                                    value={phone}
+                                    onChange={(e) => setPhone(e.target.value)}
+                                    placeholder="+41791234567"
                                 />
                             </label>
                         </>
@@ -224,84 +232,20 @@ const WelcomePage = ({ onAuthenticated }) => {
                         />
                     </label>
                     {error && <p className="form-error">{error}</p>}
-                    {info && <p className="form-info">{info}</p>}
                     <button type="submit" disabled={loading}>
                         {loading ? 'Wird geladen...' : mode === 'login' ? 'Einloggen' : 'Account erstellen'}
                     </button>
+                    {mode === 'login' && (
+                        <button
+                            type="button"
+                            className="secondary"
+                            style={{ background: 'none', border: 'none', color: '#2563eb' }}
+                            onClick={openResetView}
+                        >
+                            Passwort vergessen?
+                        </button>
+                    )}
                 </form>
-
-                <div className="welcome-inline">
-                    <div>
-                        <p className="eyebrow">E-Mail verifizieren</p>
-                        <form className="welcome-form" onSubmit={handleVerificationSubmit}>
-                            <label className="stacked">
-                                <span>E-Mail</span>
-                                <input
-                                    type="email"
-                                    value={verificationEmail}
-                                    onChange={(e) => setVerificationEmail(e.target.value)}
-                                    placeholder="deine@email.com"
-                                />
-                            </label>
-                            <label className="stacked">
-                                <span>Verifizierungscode</span>
-                                <input
-                                    type="text"
-                                    value={verificationCode}
-                                    onChange={(e) => setVerificationCode(e.target.value)}
-                                    placeholder="6-stelliger Code"
-                                />
-                            </label>
-                            <div className="inline-actions">
-                                <button type="button" className="secondary" onClick={handleResendVerification}>
-                                    Code senden
-                                </button>
-                                <button type="submit" disabled={verifying}>
-                                    Bestätigen
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                    <div>
-                        <p className="eyebrow">Passwort vergessen</p>
-                        <div className="welcome-form">
-                            <label className="stacked">
-                                <span>E-Mail</span>
-                                <input
-                                    type="email"
-                                    value={resetEmail}
-                                    onChange={(e) => setResetEmail(e.target.value)}
-                                    placeholder="deine@email.com"
-                                />
-                            </label>
-                            <button type="button" className="secondary" onClick={handleResetRequest} disabled={verifying}>
-                                Reset-Code senden
-                            </button>
-                            <label className="stacked">
-                                <span>Reset-Code</span>
-                                <input
-                                    type="text"
-                                    value={resetToken}
-                                    onChange={(e) => setResetToken(e.target.value)}
-                                    placeholder="6-stelliger Code"
-                                />
-                            </label>
-                            <label className="stacked">
-                                <span>Neues Passwort</span>
-                                <input
-                                    type="password"
-                                    value={resetNewPassword}
-                                    onChange={(e) => setResetNewPassword(e.target.value)}
-                                    placeholder="Neues Passwort"
-                                />
-                            </label>
-                            <button type="button" onClick={handleResetConfirm} disabled={verifying}>
-                                Passwort setzen
-                            </button>
-                            {resetMessage && <p className="form-info">{resetMessage}</p>}
-                        </div>
-                    </div>
-                </div>
 
                 <p className="welcome-footnote">
                     Moderne, minimalistische Oberfläche. Deine Daten werden erst nach dem Login geladen.

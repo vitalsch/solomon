@@ -5,11 +5,14 @@ import hashlib
 import hmac
 import secrets
 import os
+import re
+import json
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from bson import ObjectId
 from pymongo import ReturnDocument
+from cryptography.fernet import Fernet, InvalidToken
 
 from .database import get_database
 
@@ -42,6 +45,23 @@ def _normalize_email(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
     return value.strip().lower() or None
+
+
+def _normalize_phone(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    sanitized = re.sub(r"[^\d+]", "", raw)
+    if sanitized.startswith("00"):
+        sanitized = f"+{sanitized[2:]}"
+    if not sanitized.startswith("+"):
+        sanitized = f"+{sanitized.lstrip('+')}"
+    digits = "+" + re.sub(r"\D", "", sanitized)
+    if len(digits) < 8 or len(digits) > 16:
+        return None
+    return digits
 
 
 def _ensure_object_id(value: Any) -> ObjectId:
@@ -101,12 +121,18 @@ def _normalize_tariff_rows(rows: Optional[List[Dict[str, Any]]]) -> List[Dict[st
     return normalized
 
 
+PROFILE_ENCRYPTION_VERSION = "v1"
+
+
 class WealthRepository:
     """Data access layer for users, assets, transactions, and scenarios."""
 
     def __init__(self, db=None):
         self.db = db or get_database()
         self._username_secret = os.getenv("USERNAME_HASH_SECRET") or None
+        self._pii_cipher = self._init_pii_cipher()
+        token_secret = os.getenv("PII_HASH_SECRET") or self._username_secret
+        self._pii_hash_secret = token_secret or "please_set_PII_HASH_SECRET"
 
     def _tokenize_username(self, username: str) -> str:
         secret = self._username_secret
@@ -116,38 +142,175 @@ class WealthRepository:
         msg = username.strip().lower().encode("utf-8")
         return hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
 
+    def _init_pii_cipher(self) -> Fernet:
+        key = os.getenv("PII_ENCRYPTION_KEY")
+        candidates = []
+        if key:
+            candidates.append(key.encode("utf-8"))
+            # Also allow using arbitrary passphrases by deriving a Fernet key.
+            candidates.append(base64.urlsafe_b64encode(hashlib.sha256(key.encode("utf-8")).digest()))
+        else:
+            candidates.append(base64.urlsafe_b64encode(hashlib.sha256(b"default-pii-key").digest()))
+        last_error: Optional[Exception] = None
+        for candidate in candidates:
+            try:
+                return Fernet(candidate)
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                last_error = exc
+                continue
+        raise RuntimeError(f"Unable to initialize PII cipher: {last_error}")  # pragma: no cover
+
+    def _tokenize_contact_value(self, value: Optional[str], purpose: str) -> Optional[str]:
+        if not value:
+            return None
+        secret = self._pii_hash_secret
+        if not secret:
+            return None
+        payload = f"{purpose}:{value}".encode("utf-8")
+        return hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+    def _contact_lookup_filter(
+        self, normalized_value: Optional[str], token_field: str, legacy_field: str, purpose: str
+    ) -> Optional[Dict[str, Any]]:
+        if not normalized_value:
+            return None
+        clauses = [{legacy_field: normalized_value}]
+        token = self._tokenize_contact_value(normalized_value, purpose)
+        if token:
+            clauses.append({token_field: token})
+        return {"$or": clauses}
+
+    def _encrypt_profile_blob(self, profile: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        cipher = self._pii_cipher
+        if not cipher:
+            return None
+        cleaned = {k: v for k, v in profile.items() if v is not None}
+        if not cleaned:
+            return None
+        payload = json.dumps(cleaned, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        ciphertext = cipher.encrypt(payload).decode("utf-8")
+        return {"version": PROFILE_ENCRYPTION_VERSION, "alg": "fernet", "ciphertext": ciphertext}
+
+    def _decrypt_profile_blob(self, blob: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not blob or not isinstance(blob, dict):
+            return {}
+        cipher = self._pii_cipher
+        token = blob.get("ciphertext") or blob.get("token")
+        if not cipher or not token:
+            return {}
+        try:
+            decrypted = cipher.decrypt(token.encode("utf-8"))
+        except (InvalidToken, ValueError, TypeError):  # pragma: no cover - corruption/legacy data
+            return {}
+        try:
+            data = json.loads(decrypted.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):  # pragma: no cover - corruption
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _upsert_profile_blob_if_missing(self, document: Dict[str, Any]) -> None:
+        """Encrypt legacy plaintext fields lazily to cover pre-migration records."""
+        if not document or document.get("profile_encrypted"):
+            return
+        legacy_name = document.get("name")
+        legacy_email = _normalize_email(document.get("email"))
+        legacy_phone = _normalize_phone(document.get("phone"))
+        profile_blob = self._encrypt_profile_blob(
+            {"name": legacy_name, "email": legacy_email, "phone": legacy_phone}
+        )
+        if not profile_blob:
+            return
+        updates: Dict[str, Any] = {"profile_encrypted": profile_blob}
+        tokens: Dict[str, str] = {}
+        if legacy_email:
+            token = self._tokenize_contact_value(legacy_email, "email")
+            if token:
+                tokens["email_token"] = token
+        if legacy_phone:
+            token = self._tokenize_contact_value(legacy_phone, "phone")
+            if token:
+                tokens["phone_token"] = token
+        unset_payload = {k: "" for k in ("name", "email", "phone") if document.get(k) is not None}
+        updates.update(tokens)
+        document.update(updates)
+        for field in ("name", "email", "phone"):
+            if field in document:
+                document.pop(field, None)
+        ops: Dict[str, Any] = {"$set": updates}
+        if unset_payload:
+            ops["$unset"] = unset_payload
+        self.db.users.update_one({"_id": document["_id"]}, ops)
+
+    def _public_user(self, document: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not document:
+            return None
+        self._upsert_profile_blob_if_missing(document)
+        doc = _serialize_user(document)
+        if not doc:
+            return doc
+        encrypted_profile = doc.pop("profile_encrypted", None)
+        doc.pop("email_token", None)
+        doc.pop("phone_token", None)
+        profile_fields = self._decrypt_profile_blob(encrypted_profile)
+        for key, value in profile_fields.items():
+            if value is not None:
+                doc[key] = value
+        return doc
+
     # Users -----------------------------------------------------------------
-    def create_user(self, username: str, password: str, name: str | None, email: str) -> Dict[str, Any]:
+    def create_user(
+        self,
+        username: str,
+        password: str,
+        name: str | None,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+    ) -> Dict[str, Any]:
         username_token = self._tokenize_username(username)
         if self.db.users.find_one({"username_token": username_token}):
             raise ValueError("Username already exists")
         normalized_email = _normalize_email(email)
-        if not normalized_email:
-            raise ValueError("Email is required")
-        if self.db.users.find_one({"email": normalized_email}):
+        email_filter = self._contact_lookup_filter(normalized_email, "email_token", "email", "email")
+        if email_filter and self.db.users.find_one(email_filter):
             raise ValueError("Email already in use")
-        doc = {
+        normalized_phone = _normalize_phone(phone)
+        if not normalized_phone:
+            raise ValueError("Phone number is required")
+        phone_filter = self._contact_lookup_filter(normalized_phone, "phone_token", "phone", "phone")
+        if phone_filter and self.db.users.find_one(phone_filter):
+            raise ValueError("Phone number already in use")
+        profile_blob = self._encrypt_profile_blob(
+            {"name": name, "email": normalized_email, "phone": normalized_phone}
+        )
+        if not profile_blob:
+            raise ValueError("Failed to encrypt profile data")
+        doc: Dict[str, Any] = {
             "username_token": username_token,
             "password_hash": _hash_password(password),
-            "name": name,
-            "email": normalized_email,
-            "email_verified": False,
+            "profile_encrypted": profile_blob,
             "created_at": datetime.utcnow(),
         }
+        email_token = self._tokenize_contact_value(normalized_email, "email")
+        if email_token:
+            doc["email_token"] = email_token
+        phone_token = self._tokenize_contact_value(normalized_phone, "phone")
+        if phone_token:
+            doc["phone_token"] = phone_token
         result = self.db.users.insert_one(doc)
         doc["_id"] = result.inserted_id
-        return _serialize_user(doc)
+        return self._public_user(doc)
 
     def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         doc = self.db.users.find_one({"_id": _ensure_object_id(user_id)})
-        return _serialize_user(doc) if doc else None
+        return self._public_user(doc)
 
     def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         normalized = _normalize_email(email)
-        if not normalized:
+        query = self._contact_lookup_filter(normalized, "email_token", "email", "email")
+        if not normalized or not query:
             return None
-        doc = self.db.users.find_one({"email": normalized})
-        return _serialize_user(doc) if doc else None
+        doc = self.db.users.find_one(query)
+        return self._public_user(doc)
 
     def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         token = self._tokenize_username(username)
@@ -161,7 +324,7 @@ class WealthRepository:
                 )
                 doc["username_token"] = token
                 doc.pop("username", None)
-        return _serialize_user(doc) if doc else None
+        return self._public_user(doc)
 
     def get_user_with_secret_fields(self, username: str) -> Optional[Dict[str, Any]]:
         """Internal helper to retrieve user with password/token hashes."""
@@ -180,7 +343,12 @@ class WealthRepository:
 
     def list_users(self) -> List[Dict[str, Any]]:
         # Expose only sanitized data; callers should additionally scope to current user.
-        return [_serialize_user(doc) for doc in self.db.users.find()]
+        users: List[Dict[str, Any]] = []
+        for doc in self.db.users.find():
+            public = self._public_user(doc)
+            if public:
+                users.append(public)
+        return users
 
     def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         record = self.get_user_with_secret_fields(username)
@@ -207,7 +375,23 @@ class WealthRepository:
     def get_user_by_token(self, token: str) -> Optional[Dict[str, Any]]:
         token_hash = _hash_token(token)
         doc = self.db.users.find_one({"auth_token_hash": token_hash})
-        return _serialize_user(doc) if doc else None
+        return self._public_user(doc)
+
+    def change_password(self, user_id: str, current_password: str, new_password: str) -> Optional[Dict[str, Any]]:
+        if not current_password or not new_password:
+            return None
+        user = self.db.users.find_one({"_id": _ensure_object_id(user_id)})
+        if not user:
+            return None
+        password_hash = user.get("password_hash")
+        if not password_hash or not _verify_password(current_password, password_hash):
+            return None
+        updated = self.db.users.find_one_and_update(
+            {"_id": user["_id"]},
+            {"$set": {"password_hash": _hash_password(new_password)}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return self._public_user(updated) if updated else None
 
     def delete_user(self, user_id: str) -> bool:
         user_oid = _ensure_object_id(user_id)
@@ -230,41 +414,15 @@ class WealthRepository:
             return None
         return token
 
-    def start_email_verification(self, user_id: str) -> Optional[str]:
-        user_oid = _ensure_object_id(user_id)
-        return self._issue_timed_token("email_verification", {"_id": user_oid})
-
-    def confirm_email_verification(self, email: str, token: str) -> Optional[Dict[str, Any]]:
-        normalized = _normalize_email(email)
-        if not normalized or not token:
-            return None
-        token_hash = _hash_token(token)
-        now = datetime.utcnow()
-        user = self.db.users.find_one(
-            {
-                "email": normalized,
-                "email_verification_token_hash": token_hash,
-                "email_verification_expires_at": {"$gte": now},
-            }
-        )
-        if not user:
-            return None
-        updated = self.db.users.find_one_and_update(
-            {"_id": user["_id"]},
-            {
-                "$set": {"email_verified": True, "email_verified_at": now},
-                "$unset": {"email_verification_token_hash": "", "email_verification_expires_at": ""},
-            },
-            return_document=ReturnDocument.AFTER,
-        )
-        return _serialize_user(updated) if updated else None
-
-    def create_password_reset_request(self, email: str) -> Optional[str]:
-        normalized = _normalize_email(email)
+    def create_password_reset_request(self, phone: str) -> Optional[str]:
+        normalized = _normalize_phone(phone)
         if not normalized:
             return None
-        user = self.db.users.find_one({"email": normalized})
-        if not user or not user.get("email_verified"):
+        query = self._contact_lookup_filter(normalized, "phone_token", "phone", "phone")
+        if not query:
+            return None
+        user = self.db.users.find_one(query)
+        if not user:
             return None
         return self._issue_timed_token("password_reset", {"_id": user["_id"]}, ttl_hours=1)
 
@@ -289,7 +447,7 @@ class WealthRepository:
             },
             return_document=ReturnDocument.AFTER,
         )
-        return _serialize_user(updated) if updated else None
+        return self._public_user(updated) if updated else None
 
     # Vault (client-side encryption helpers) -------------------------------
     def get_vault(self, user_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[datetime]]:
@@ -566,6 +724,7 @@ class WealthRepository:
         end_month: Optional[int] = None,
         frequency: Optional[int] = None,
         annual_growth_rate: float = 0.0,
+        encrypted: Dict[str, Any] | None = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         link_id = str(ObjectId())
         base = {
@@ -581,6 +740,7 @@ class WealthRepository:
             "created_at": datetime.utcnow(),
             "double_entry": True,
             "link_id": link_id,
+            "encrypted": encrypted,
         }
         debit_doc = {
             **base,

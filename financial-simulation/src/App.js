@@ -6,7 +6,7 @@ import { getAuthToken, setAuthToken } from './api';
 import './App.css';
 
 function App() {
-    const [view, setView] = useState('simulation');
+    const [view, setView] = useState('welcome');
     const [isAuthenticated, setIsAuthenticated] = useState(Boolean(getAuthToken()));
     const [sessionKey, setSessionKey] = useState(0);
 
@@ -14,58 +14,55 @@ function App() {
         setIsAuthenticated(Boolean(getAuthToken()));
     }, []);
 
-    const handleAuthSuccess = () => {
+    const handleAuthSuccess = (targetView = 'simulation') => {
         setIsAuthenticated(true);
+        setView(targetView);
         setSessionKey((key) => key + 1);
     };
 
     const handleLogout = () => {
         setAuthToken(null);
         setIsAuthenticated(false);
-        setView('simulation');
+        setView('welcome');
         setSessionKey((key) => key + 1);
     };
 
-    if (!isAuthenticated) {
+    if (!isAuthenticated || view === 'welcome') {
         return <WelcomePage onAuthenticated={handleAuthSuccess} />;
     }
 
-    return (
-        <div className="App">
-            <div className="app-shell">
-                <header className="app-header">
-                    <div className="app-brand">
-                        <span>Personal Financial Planner</span>
-                    </div>
-                    <div className="view-switcher">
-                        <button
-                            type="button"
-                            className={view === 'simulation' ? 'active' : ''}
-                            onClick={() => setView('simulation')}
-                        >
-                            Simulation
+    if (view === 'admin') {
+        return (
+            <div className="App">
+                <div className="app-shell admin-shell">
+                    <header className="app-header">
+                        <div className="app-brand">
+                            <span>Personal Financial Planner</span>
+                        </div>
+                        <button type="button" className="ghost" onClick={handleLogout}>
+                            Logout
                         </button>
-                        <button
-                            type="button"
-                            className={view === 'admin' ? 'active' : ''}
-                            onClick={() => setView('admin')}
-                        >
-                            Admin
-                        </button>
-                    </div>
-                    <button type="button" className="ghost" onClick={handleLogout}>
-                        Logout
-                    </button>
-                </header>
-                <main>
-                    {view === 'simulation' ? (
-                        <Simulation key={`simulation-${sessionKey}`} />
-                    ) : (
+                    </header>
+                    <main>
                         <AdminPortal key={`admin-${sessionKey}`} />
-                    )}
-                </main>
+                    </main>
+                </div>
             </div>
-        </div>
+        );
+    }
+
+        return (
+            <div className="App">
+                <div className="experience-shell">
+                    <div className="experience-frame">
+                        <main className="experience-body">
+                            <div className="experience-card">
+                                <Simulation key={`simulation-${sessionKey}`} onLogout={handleLogout} />
+                            </div>
+                        </main>
+                    </div>
+                </div>
+            </div>
     );
 }
 
