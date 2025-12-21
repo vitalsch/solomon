@@ -22,6 +22,14 @@ const formatRate = (value) =>
         ? '—'
         : `${Number(value).toFixed(2)} %`;
 
+const normalizeRow = (entry) => ({
+    ...entry,
+    base_rate: entry.base_rate ?? 0,
+    ref_rate: entry.ref_rate ?? null,
+    cath_rate: entry.cath_rate ?? null,
+    christian_cath_rate: entry.christian_cath_rate ?? null,
+});
+
 const parseRate = (value) => {
     if (value === '' || value === null || value === undefined) {
         return null;
@@ -43,15 +51,7 @@ function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
         setLoading(true);
         try {
             const data = await listMunicipalTaxRatesAdmin(adminAuth, DEFAULT_CANTON);
-            setRows(
-                (data || []).map((entry) => ({
-                    ...entry,
-                    base_rate: entry.base_rate ?? 0,
-                    ref_rate: entry.ref_rate ?? null,
-                    cath_rate: entry.cath_rate ?? null,
-                    christian_cath_rate: entry.christian_cath_rate ?? null,
-                })),
-            );
+            setRows((data || []).map(normalizeRow));
             setError('');
         } catch (err) {
             const message = err?.message || 'Fehler beim Laden der Steuerfüsse.';
@@ -98,9 +98,10 @@ function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
                 cath_rate: parseRate(form.cath_rate),
                 christian_cath_rate: parseRate(form.christian_cath_rate),
             });
+            const created = await listMunicipalTaxRatesAdmin(adminAuth, DEFAULT_CANTON);
+            setRows((created || []).map(normalizeRow));
             setForm({ ...emptyForm });
             setError('');
-            loadRows();
         } catch (err) {
             setError(err?.message || 'Konnte Gemeinde nicht speichern.');
         } finally {
@@ -114,7 +115,7 @@ function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
         }
         try {
             await deleteMunicipalTaxRateAdmin(adminAuth, entryId);
-            loadRows();
+            setRows((prev) => prev.filter((row) => row.id !== entryId));
         } catch (err) {
             setError(err?.message || 'Konnte Eintrag nicht löschen.');
         }
@@ -152,10 +153,16 @@ function AdminMunicipalTaxes({ adminAuth, onUnauthorized }) {
             payload[field] = value;
         }
         try {
-            await updateMunicipalTaxRateAdmin(adminAuth, rowId, payload);
+            const updated = await updateMunicipalTaxRateAdmin(adminAuth, rowId, payload);
             setEditingCell(null);
             setError('');
-            await loadRows();
+            if (updated) {
+                setRows((prev) =>
+                    prev.map((row) => (row.id === rowId ? normalizeRow({ ...row, ...updated }) : row)),
+                );
+            } else {
+                await loadRows();
+            }
         } catch (err) {
             setError(err?.message || 'Wert konnte nicht gespeichert werden.');
         }

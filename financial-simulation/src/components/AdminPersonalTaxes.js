@@ -67,13 +67,19 @@ function AdminPersonalTaxes({ adminAuth, onUnauthorized }) {
         }
         try {
             setSaving(true);
-            await createPersonalTaxAdmin(adminAuth, {
+            const created = await createPersonalTaxAdmin(adminAuth, {
                 canton: form.canton.trim().toUpperCase(),
                 amount: amountValue,
             });
             setForm(emptyForm);
             setError('');
-            loadRows();
+            if (created) {
+                setRows((prev) =>
+                    [...prev, created].sort((a, b) => String(a.canton).localeCompare(String(b.canton))),
+                );
+            } else {
+                loadRows();
+            }
         } catch (err) {
             setError(err?.message || 'Konnte Personsteuer nicht speichern.');
         } finally {
@@ -115,10 +121,18 @@ function AdminPersonalTaxes({ adminAuth, onUnauthorized }) {
             }
         }
         try {
-            await updatePersonalTaxAdmin(adminAuth, rowId, payload);
+            const updated = await updatePersonalTaxAdmin(adminAuth, rowId, payload);
             setEditingCell(null);
             setError('');
-            loadRows();
+            if (updated) {
+                setRows((prev) =>
+                    prev
+                        .map((row) => (row.id === rowId ? { ...row, ...updated } : row))
+                        .sort((a, b) => String(a.canton).localeCompare(String(b.canton))),
+                );
+            } else {
+                loadRows();
+            }
         } catch (err) {
             setError(err?.message || 'Konnte Eintrag nicht aktualisieren.');
         }
@@ -140,7 +154,7 @@ function AdminPersonalTaxes({ adminAuth, onUnauthorized }) {
         }
         try {
             await deletePersonalTaxAdmin(adminAuth, row.id);
-            loadRows();
+            setRows((prev) => prev.filter((item) => item.id !== row.id));
         } catch (err) {
             setError(err?.message || 'Konnte Eintrag nicht löschen.');
         }

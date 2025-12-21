@@ -68,13 +68,19 @@ function AdminStateTaxRates({ adminAuth, onUnauthorized }) {
         }
         try {
             setSaving(true);
-            await createStateTaxRateAdmin(adminAuth, {
+            const created = await createStateTaxRateAdmin(adminAuth, {
                 canton: form.canton.trim().toUpperCase(),
                 rate: Number(form.rate),
             });
             setForm({ ...emptyForm });
             setError('');
-            loadRows();
+            if (created) {
+                setRows((prev) =>
+                    [...prev, created].sort((a, b) => String(a.canton).localeCompare(String(b.canton))),
+                );
+            } else {
+                loadRows();
+            }
         } catch (err) {
             setError(err?.message || 'Konnte Eintrag nicht speichern.');
         } finally {
@@ -105,10 +111,18 @@ function AdminStateTaxRates({ adminAuth, onUnauthorized }) {
                 ? { rate: value === '' ? null : Number(value) }
                 : { canton: value.trim().toUpperCase() };
         try {
-            await updateStateTaxRateAdmin(adminAuth, rowId, payload);
+            const updated = await updateStateTaxRateAdmin(adminAuth, rowId, payload);
             setEditingCell(null);
             setError('');
-            await loadRows();
+            if (updated) {
+                setRows((prev) =>
+                    prev
+                        .map((row) => (row.id === rowId ? { ...row, ...updated } : row))
+                        .sort((a, b) => String(a.canton).localeCompare(String(b.canton))),
+                );
+            } else {
+                await loadRows();
+            }
         } catch (err) {
             setError(err?.message || 'Wert konnte nicht gespeichert werden.');
         }
@@ -164,7 +178,7 @@ function AdminStateTaxRates({ adminAuth, onUnauthorized }) {
         }
         try {
             await deleteStateTaxRateAdmin(adminAuth, entryId);
-            loadRows();
+            setRows((prev) => prev.filter((row) => row.id !== entryId));
         } catch (err) {
             setError(err?.message || 'Konnte Eintrag nicht löschen.');
         }
