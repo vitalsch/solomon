@@ -61,6 +61,7 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
     const [importingId, setImportingId] = useState(null);
     const [editingValue, setEditingValue] = useState(null);
     const [editingTariffMeta, setEditingTariffMeta] = useState(null);
+    const [rowSortConfigs, setRowSortConfigs] = useState({});
 
     const isFederal = mode === 'federal';
     const emptyMessage = useMemo(
@@ -219,6 +220,38 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
 
     const startEditingValue = (tariffId, rowIndex, field, value) => {
         setEditingValue({ tariffId, rowIndex, field, value: value ?? '' });
+    };
+
+    const toggleRowSort = (tariffId, key) => {
+        setRowSortConfigs((prev) => {
+            const current = prev[tariffId] || { key: 'threshold', direction: 'asc' };
+            if (current.key === key) {
+                return {
+                    ...prev,
+                    [tariffId]: { key, direction: current.direction === 'asc' ? 'desc' : 'asc' },
+                };
+            }
+            return { ...prev, [tariffId]: { key, direction: 'asc' } };
+        });
+    };
+
+    const sortedRowsForTariff = (tariff) => {
+        const cfg = rowSortConfigs[tariff.id] || { key: 'threshold', direction: 'asc' };
+        const list = [...(tariff.rows || [])];
+        list.sort((a, b) => {
+            const va = a[cfg.key];
+            const vb = b[cfg.key];
+            if (va === vb) return 0;
+            if (va === null || va === undefined) return 1;
+            if (vb === null || vb === undefined) return -1;
+            if (typeof va === 'number' && typeof vb === 'number') {
+                return cfg.direction === 'asc' ? va - vb : vb - va;
+            }
+            return cfg.direction === 'asc'
+                ? String(va).localeCompare(String(vb))
+                : String(vb).localeCompare(String(va));
+        });
+        return list;
     };
 
     const handleEditingValueChange = (event) => {
@@ -521,11 +554,43 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
                             <div className="admin-table-wrapper">
                                 <table className="admin-table state-tariff-table">
                                     <thead>
-                                        <tr>
-                                            <th>Schwelle (CHF)</th>
-                                            <th>Sockelbetrag (CHF)</th>
-                                            <th>je 100 CHF (CHF)</th>
-                                            <th>Hinweis</th>
+                                            <tr>
+                                            <th>
+                                                <button
+                                                    type="button"
+                                                    className="cell-button"
+                                                    onClick={() => toggleRowSort(tariff.id, 'threshold')}
+                                                >
+                                                    Schwelle (CHF)
+                                                </button>
+                                            </th>
+                                            <th>
+                                                <button
+                                                    type="button"
+                                                    className="cell-button"
+                                                    onClick={() => toggleRowSort(tariff.id, 'base_amount')}
+                                                >
+                                                    Sockelbetrag (CHF)
+                                                </button>
+                                            </th>
+                                            <th>
+                                                <button
+                                                    type="button"
+                                                    className="cell-button"
+                                                    onClick={() => toggleRowSort(tariff.id, 'per_100_amount')}
+                                                >
+                                                    je 100 CHF (CHF)
+                                                </button>
+                                            </th>
+                                            <th>
+                                                <button
+                                                    type="button"
+                                                    className="cell-button"
+                                                    onClick={() => toggleRowSort(tariff.id, 'note')}
+                                                >
+                                                    Hinweis
+                                                </button>
+                                            </th>
                                             <th />
                                         </tr>
                                     </thead>
@@ -537,7 +602,7 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
                                                 </td>
                                             </tr>
                                         ) : (
-                                            tariff.rows.map((row, idx) => (
+                                            sortedRowsForTariff(tariff).map((row, idx) => (
                                                 <tr key={`${tariff.id}-row-${idx}`}>
                                                     <td>{renderRowCell(tariff, row, idx, 'threshold', { isNumeric: true })}</td>
                                                     <td>{renderRowCell(tariff, row, idx, 'base_amount', { isNumeric: true })}</td>
