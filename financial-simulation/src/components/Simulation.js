@@ -3632,12 +3632,7 @@ const Simulation = ({ onLogout }) => {
     const modalAsset = accounts.find((acc) => acc.id === transactionModalAssetId);
 
     const openScenariosFromHero = () => {
-        setShowScenarios(true);
-        requestAnimationFrame(() => {
-            if (scenarioSectionRef.current) {
-                scenarioSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-        });
+        openScenarioSection();
     };
 
     const openRangeModal = () => {
