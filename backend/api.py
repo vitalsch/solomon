@@ -951,13 +951,11 @@ def create_transaction(scenario_id: str, payload: TransactionCreate, current_use
     if payload.type == "mortgage_interest":
         if payload.double_entry:
             raise HTTPException(status_code=400, detail="double_entry not supported for mortgage_interest")
-        mortgage_asset = repo.get_asset(payload.mortgage_asset_id)
-        if not mortgage_asset:
-            raise HTTPException(status_code=404, detail="Mortgage asset not found")
-        if mortgage_asset["scenario_id"] != scenario["id"]:
-            raise HTTPException(status_code=400, detail="Mortgage asset not part of scenario")
-        if mortgage_asset.get("asset_type") != "mortgage":
-            raise HTTPException(status_code=400, detail="mortgage_asset_id must reference a mortgage asset")
+        interest_asset = repo.get_asset(payload.mortgage_asset_id)
+        if not interest_asset:
+            raise HTTPException(status_code=404, detail="Interest asset not found")
+        if interest_asset["scenario_id"] != scenario["id"]:
+            raise HTTPException(status_code=400, detail="Interest asset not part of scenario")
         annual_interest_rate = payload.annual_interest_rate
         if annual_interest_rate is None:
             annual_interest_rate = payload.annual_growth_rate

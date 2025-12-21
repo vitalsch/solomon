@@ -260,13 +260,18 @@ def _collect_yearly_tax(
         else:
             add_entry(taxable_map, start_year, 0 if category == "expense" else amount, amount if category == "expense" else 0)
 
-    # Hypothekarzinsen: hole effektive Zahlungen aus der Simulation und ziehe sie als Ausgaben ab
+    # Hypothekarzinsen: hole effektive Zahlungen/Einnahmen aus der Simulation und addiere sie mit Vorzeichen
     if taxable_mortgage_ids or taxable_mortgage_names:
         for entry in cash_flows:
             year = entry.get("date").year if entry.get("date") else None
             if not year:
                 continue
-            for detail in entry.get("expense_details") or []:
+            combined_details = []
+            if entry.get("expense_details"):
+                combined_details.extend(entry.get("expense_details"))
+            if entry.get("income_details"):
+                combined_details.extend(entry.get("income_details"))
+            for detail in combined_details:
                 if (detail.get("tx_type") or "").lower() != "mortgage_interest":
                     continue
                 tx_id = detail.get("transaction_id")
@@ -277,9 +282,12 @@ def _collect_yearly_tax(
                     pass
                 else:
                     continue
-                amount = abs(float(detail.get("amount") or 0.0))
-                if amount:
-                    add_entry(taxable_map, year, 0, amount)
+                amount_val = float(detail.get("amount") or 0.0)
+                if amount_val:
+                    if amount_val >= 0:
+                        add_entry(taxable_map, year, amount_val, 0)
+                    else:
+                        add_entry(taxable_map, year, 0, abs(amount_val))
 
     # Vermögen pro Jahr: letztes Total des Jahres
     wealth_per_year: Dict[int, float] = {}

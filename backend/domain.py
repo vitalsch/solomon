@@ -220,7 +220,7 @@ class MortgageInterestTransaction(Transaction):
                     break
         periodic_rate = periodic_rate * (self.frequency / 12)
         balance = self.mortgage_account.get_balance()
-        return abs(balance) * periodic_rate
+        return balance * periodic_rate
 
     def is_applicable(self, current_month: int, current_year: int) -> bool:
         starts_before_or_now = current_year > self.year or (
@@ -239,7 +239,7 @@ class MortgageInterestTransaction(Transaction):
         if months_since_start % self.frequency != 0:
             return False
 
-        self.amount = -self._periodic_interest()
+        self.amount = self._periodic_interest()
         return True
 
 
@@ -365,21 +365,29 @@ def simulate_account_balances_and_total_wealth(
                 ):
                     continue
                 interest_tx.pay_from_account.update_balance(interest_tx.amount)
-                monthly_expense += interest_tx.amount
-                expense_detail = {
+                amount = interest_tx.amount
+                detail = {
                     "name": interest_tx.name,
-                    "amount": interest_tx.amount,
+                    "amount": amount,
                     "account": interest_tx.pay_from_account.name,
                     "tx_type": getattr(interest_tx, "tx_type", None) or "mortgage_interest",
                 }
                 if getattr(interest_tx, "id", None):
-                    expense_detail["transaction_id"] = getattr(interest_tx, "id")
-                expense_details.append(expense_detail)
-                # Apply tax on mortgage interest if marked taxable
+                    detail["transaction_id"] = getattr(interest_tx, "id")
+
+                if amount >= 0:
+                    monthly_income += amount
+                    income_details.append(detail)
+                else:
+                    monthly_expense += amount
+                    expense_details.append(detail)
+
+                # Apply tax on interest if marked taxable
                 if getattr(interest_tx, "taxable", False):
-                    # Interest is a cost (negative); tax credit should be positive (reduces expense)
                     tax_rate = abs(getattr(interest_tx, "tax_rate", 0.0) or 0.0)
-                    tax_effect = abs(interest_tx.amount) * tax_rate  # positive credit
+                    tax_effect = abs(amount) * tax_rate
+                    # Interest income -> tax is a payment (negative); interest expense -> credit (positive)
+                    tax_effect = -tax_effect if amount >= 0 else tax_effect
                     target_account = effective_tax_account or interest_tx.pay_from_account
                     target_account.update_balance(tax_effect)
                     monthly_tax += tax_effect

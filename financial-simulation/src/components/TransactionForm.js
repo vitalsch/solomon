@@ -169,7 +169,7 @@ const TransactionForm = ({
             payload.double_entry = false;
             delete payload.counter_asset_id;
             if (!payload.mortgage_asset_id || !payload.annual_interest_rate || !payload.frequency) {
-                setError('Für Hypothekenzinsen bitte Zahler-Konto, Hypothek, Zinssatz und Frequenz angeben.');
+                setError('Für Zinszahlungen bitte Zahler-Konto, Asset, Zinssatz und Frequenz angeben.');
                 return;
             }
         } else if (type === 'one_time') {
@@ -299,7 +299,7 @@ const TransactionForm = ({
                         <option value="">Bitte wählen</option>
                         <option value="one_time">One-Time</option>
                         <option value="regular">Regular</option>
-                        <option value="mortgage_interest">Mortgage Interest</option>
+                        <option value="mortgage_interest">Interest</option>
                     </select>
                 </label>
                 {type !== 'mortgage_interest' && (
@@ -335,19 +335,17 @@ const TransactionForm = ({
                 {type === 'mortgage_interest' && (
                     <>
                         <label>
-                            <span>Mortgage Asset</span>
+                            <span>Asset</span>
                             <select
                                 value={mortgageAssetId}
                                 onChange={(e) => setMortgageAssetId(e.target.value)}
                             >
-                                <option value="">Select mortgage</option>
-                                {accounts
-                                    .filter((candidate) => candidate.asset_type === 'mortgage')
-                                    .map((candidate) => (
-                                        <option key={candidate.id} value={candidate.id}>
-                                            {candidate.name}
-                                        </option>
-                                    ))}
+                                <option value="">Select asset</option>
+                                {accounts.map((candidate) => (
+                                    <option key={candidate.id} value={candidate.id}>
+                                        {candidate.name}
+                                    </option>
+                                ))}
                             </select>
                         </label>
                         <label>

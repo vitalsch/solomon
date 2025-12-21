@@ -17,8 +17,6 @@ import AIAssistant from './AIAssistant';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-    registerUser,
-    loginUser,
     getCurrentUser,
     listScenarios,
     createScenario,
@@ -35,22 +33,19 @@ import {
     deleteScenario,
     simulateScenario,
     simulateScenarioStress,
-    listTaxProfiles,
     listStressProfiles,
     createStressProfile,
     updateStressProfile,
     deleteStressProfileApi,
     setAuthToken,
     getAuthToken,
-    importTaxProfiles,
     listTaxCantons,
     listStateTaxRates,
     listMunicipalTaxEntries,
     listStateTaxTariffsPublic,
     listFederalTaxTablesPublic,
+    changePassword,
 } from '../api';
-import { encryptJson, decryptJson } from '../vault';
-import VaultGate from './VaultGate';
 import '../TransactionsList.css';
 
 ChartJS.register(
@@ -76,15 +71,6 @@ const CONFESSION_FIELD_MAP = {
     ref: 'ref_rate',
     cath: 'cath_rate',
     christian_cath: 'christian_cath_rate',
-};
-
-const formatTaxProfileLabel = (profile) => {
-    if (!profile) return '';
-    const parts = [];
-    if (profile.location) parts.push(profile.location);
-    if (profile.church) parts.push(profile.church);
-    if (profile.marital_status) parts.push(profile.marital_status);
-    return `${profile.name}${parts.length ? ` — ${parts.join(' / ')}` : ''}`;
 };
 
 const parseIsoLabel = (label) => {
@@ -130,22 +116,58 @@ const parseNumericInput = (value) => {
     return Number.isFinite(num) ? num : NaN;
 };
 
-const Simulation = () => {
+const normalizeSignatureString = (value) => String(value || '').trim().toLowerCase();
+const normalizeSignatureNumber = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num.toFixed(6) : '0';
+};
+
+const buildAssetSignature = (asset = {}) => {
+    const { name = '', asset_type = '', annual_growth_rate = 0, initial_balance = 0 } = asset || {};
+    return [
+        normalizeSignatureString(name),
+        normalizeSignatureString(asset_type),
+        normalizeSignatureNumber(annual_growth_rate),
+        normalizeSignatureNumber(initial_balance),
+    ].join('|');
+};
+
+const buildTransactionSignature = (tx = {}) => {
+    const {
+        name = '',
+        type = '',
+        amount = 0,
+        frequency = '',
+        annual_growth_rate = '',
+        annual_interest_rate = '',
+        entry = '',
+        taxable = '',
+        taxable_amount = '',
+    } = tx || {};
+    return [
+        normalizeSignatureString(name),
+        normalizeSignatureString(type),
+        normalizeSignatureNumber(amount),
+        normalizeSignatureString(frequency),
+        normalizeSignatureString(annual_growth_rate),
+        normalizeSignatureString(annual_interest_rate),
+        normalizeSignatureString(entry),
+        taxable ? 't' : 'f',
+        normalizeSignatureString(taxable_amount),
+    ].join('|');
+};
+
+const Simulation = ({ onLogout }) => {
     const [users, setUsers] = useState([]);
     const [selectedUserId, setSelectedUserId] = useState('');
-    const [newUserName, setNewUserName] = useState('');
-    const [newUsername, setNewUsername] = useState('');
-    const [newUserPassword, setNewUserPassword] = useState('');
-    const [newUserEmail, setNewUserEmail] = useState('');
-    const [authInfo, setAuthInfo] = useState('');
+    const [currentPassword, setCurrentPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmNewPassword, setConfirmNewPassword] = useState('');
+    const [passwordMessage, setPasswordMessage] = useState('');
     const [scenarios, setScenarios] = useState([]);
     const [currentScenarioId, setCurrentScenarioId] = useState('');
     const [scenarioDetails, setScenarioDetails] = useState(null);
-    const [showScenarios, setShowScenarios] = useState(false);
-    const [showAccounts, setShowAccounts] = useState(true);
-    const [showTransactions, setShowTransactions] = useState(true);
-    const [showCashflow, setShowCashflow] = useState(true);
-    const [showTotals, setShowTotals] = useState(true);
+    const [activeSection, setActiveSection] = useState('scenarios');
     const [accounts, setAccounts] = useState([]);
     const [accountTransactions, setAccountTransactions] = useState({});
     const [newAccountName, setNewAccountName] = useState('');
@@ -160,10 +182,13 @@ const Simulation = () => {
     const [newScenarioEnd, setNewScenarioEnd] = useState('2044-09');
     const [inflationRate, setInflationRate] = useState('');
     const [taxAccountId, setTaxAccountId] = useState('');
-    const [taxProfiles, setTaxProfiles] = useState([]);
-    const [selectedTaxProfileId, setSelectedTaxProfileId] = useState('');
-    const [taxProfilesLoading, setTaxProfilesLoading] = useState(false);
-    const [taxImportError, setTaxImportError] = useState('');
+    const [libraryAssets, setLibraryAssets] = useState([]);
+    const [libraryTransactions, setLibraryTransactions] = useState([]);
+    const [libraryLoading, setLibraryLoading] = useState(false);
+    const [libraryError, setLibraryError] = useState('');
+    const [transactionDropTargetAssetId, setTransactionDropTargetAssetId] = useState('');
+    const [showLibraryInAccounts, setShowLibraryInAccounts] = useState(false);
+    const [showLibraryInTransactions, setShowLibraryInTransactions] = useState(false);
     const [taxCantons, setTaxCantons] = useState([]);
     const [stateTaxRates, setStateTaxRates] = useState([]);
     const [taxMunicipalities, setTaxMunicipalities] = useState([]);
@@ -193,9 +218,10 @@ const Simulation = () => {
     const [expandedYears, setExpandedYears] = useState([]);
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [scenarioCount, setScenarioCount] = useState(0);
-    const [vaultUnlocked, setVaultUnlocked] = useState(false);
-    const [vaultDek, setVaultDek] = useState(null);
+    const [scenarioNameEdit, setScenarioNameEdit] = useState('');
     const scenarioSectionRef = useRef(null);
+    const scenarioListRequestRef = useRef(0);
+    const scenarioDetailRequestRef = useRef(0);
     const scenarioMenuRef = useRef(null);
     const [isScenarioMenuOpen, setIsScenarioMenuOpen] = useState(false);
     const [isRangeModalOpen, setIsRangeModalOpen] = useState(false);
@@ -209,15 +235,13 @@ const Simulation = () => {
     const [rebaseError, setRebaseError] = useState('');
     const [isChartActionModalOpen, setIsChartActionModalOpen] = useState(false);
     const [chartActionTarget, setChartActionTarget] = useState(null);
+    const [cashflowRange, setCashflowRange] = useState({ start: 0, end: null });
     const [transactionDraft, setTransactionDraft] = useState(null);
-    const [encrypting, setEncrypting] = useState(false);
-    const [encryptMessage, setEncryptMessage] = useState('');
     const [stressOverrides, setStressOverrides] = useState({
         shocks: [
             { id: 'shock-1', assetType: 'portfolio', delta: '-20', start: '', end: '' },
         ],
     });
-    const [showTaxTable, setShowTaxTable] = useState(true);
     const [showNewProfileEditor, setShowNewProfileEditor] = useState(false);
     const [stressProfiles, setStressProfiles] = useState([]);
     const [profileName, setProfileName] = useState('');
@@ -226,31 +250,18 @@ const Simulation = () => {
     const [profileResults, setProfileResults] = useState({});
     const [profileSimulations, setProfileSimulations] = useState({});
 
-    const randomPlaceholder = () => `enc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-
-    const maybeEncryptRecord = async (record) => {
-        if (!vaultDek) {
+    const maybeEncryptRecord = useCallback(
+        async (record) => {
             return { sanitized: record, encrypted: null };
-        }
-        const encrypted = await encryptJson(vaultDek, record);
-        const sanitized = { ...record };
-        if (sanitized.name) sanitized.name = randomPlaceholder();
-        if (sanitized.description) sanitized.description = undefined;
-        return { sanitized, encrypted };
-    };
+        },
+        []
+    );
 
     const maybeDecryptRecord = useCallback(
         async (record) => {
-            if (!vaultDek || !record?.encrypted) return record;
-            try {
-                const decrypted = await decryptJson(vaultDek, record.encrypted);
-                return { ...record, ...decrypted };
-            } catch (err) {
-                console.warn('Decrypt failed', err);
-                return record;
-            }
+            return record;
         },
-        [vaultDek]
+        []
     );
 
     const decryptRecords = useCallback(
@@ -284,13 +295,7 @@ const Simulation = () => {
         () => users.find((user) => normalizeId(user.id) === normalizeId(selectedUserId)),
         [users, selectedUserId]
     );
-    const activeTaxProfile = useMemo(() => {
-        const normalized = normalizeId(selectedTaxProfileId);
-        if (normalized) {
-            return taxProfiles.find((profile) => normalizeId(profile.id) === normalized) || null;
-        }
-        return taxProfiles[0] || null;
-    }, [selectedTaxProfileId, taxProfiles]);
+    const activeTaxProfile = null;
     const activeStateIncomeTariff = useMemo(
         () =>
             stateIncomeTariffs.find((tariff) => normalizeId(tariff.id) === normalizeId(selectedStateIncomeTariffId)) ||
@@ -325,13 +330,14 @@ const Simulation = () => {
     );
     const scenarioRangeLabel = useMemo(() => formatScenarioRange(currentScenario), [currentScenario, formatScenarioRange]);
     const openScenarioSection = useCallback(() => {
-        setShowScenarios(true);
+        setActiveSection('scenarios');
         requestAnimationFrame(() => {
             if (scenarioSectionRef.current) {
                 scenarioSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
         });
     }, []);
+    const showTaxTable = activeSection === 'taxes';
 
     const groupedTransactions = useMemo(() => {
         const grouping = { ...accountTransactions };
@@ -343,13 +349,33 @@ const Simulation = () => {
         return grouping;
     }, [accounts, accountTransactions]);
 
-    const categorizeTransaction = useCallback((tx) => {
-        const rawAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount) || 0;
-        if (tx.type === 'mortgage_interest') return 'expense';
-        if (tx.entry === 'credit') return 'expense';
-        if (tx.entry === 'debit') return 'income';
-        return rawAmount < 0 ? 'expense' : 'income';
-    }, []);
+    const accountById = useMemo(() => {
+        const map = {};
+        accounts.forEach((acc) => {
+            map[acc.id] = acc;
+        });
+        return map;
+    }, [accounts]);
+
+    const categorizeTransaction = useCallback(
+        (tx) => {
+            const rawAmount = Number.isFinite(tx.amount) ? tx.amount : Number(tx.amount);
+            const normalizedAmount = Number.isFinite(rawAmount) ? rawAmount : 0;
+            if (tx.type === 'mortgage_interest') {
+                const linkedAsset = accountById[tx.mortgage_asset_id] || accountById[tx.asset_id];
+                const assetBalance = linkedAsset ? Number(linkedAsset.initial_balance) : NaN;
+                const assetSign = Number.isFinite(assetBalance) ? Math.sign(assetBalance) : null;
+                if (assetSign === -1) return 'expense';
+                if (assetSign === 0 || assetSign === 1) return 'income';
+                if (normalizedAmount < 0) return 'expense';
+                return 'income';
+            }
+            if (tx.entry === 'credit') return 'expense';
+            if (tx.entry === 'debit') return 'income';
+            return normalizedAmount < 0 ? 'expense' : 'income';
+        },
+        [accountById]
+    );
 
     const { allTransactions, incomeTransactions, expenseTransactions } = useMemo(() => {
         const flattened = Object.values(groupedTransactions || {}).flat();
@@ -374,6 +400,18 @@ const Simulation = () => {
         const expenses = sorted.filter((tx) => tx.category === 'expense');
         return { allTransactions: sorted, incomeTransactions: income, expenseTransactions: expenses };
     }, [groupedTransactions, categorizeTransaction]);
+
+    const findTransactionById = useCallback(
+        (id) => {
+            const key = normalizeId(id);
+            for (const txList of Object.values(accountTransactions || {})) {
+                const found = (txList || []).find((tx) => normalizeId(tx.id) === key);
+                if (found) return found;
+            }
+            return null;
+        },
+        [accountTransactions]
+    );
 
     const cashFlowData = useMemo(() => {
         if (!cashFlows || !cashFlows.length) return [];
@@ -480,6 +518,7 @@ const Simulation = () => {
 
     const fetchScenarioDetails = useCallback(
         async (scenarioId) => {
+            const requestId = ++scenarioDetailRequestRef.current;
             setLoading(true);
             setError(null);
             try {
@@ -490,7 +529,13 @@ const Simulation = () => {
                     decryptRecords(assets),
                     decryptRecords(transactions),
                 ]);
-                setScenarioDetails(decScenario || scenario);
+                if (requestId !== scenarioDetailRequestRef.current) return;
+                const finalScenario = decScenario || scenario;
+                setScenarioDetails(finalScenario);
+                // Keep scenario list in sync with decrypted details so headers/menus show plaintext.
+                setScenarios((prev) =>
+                    prev.map((s) => (normalizeId(s.id) === normalizeId(finalScenario.id) ? { ...s, ...finalScenario } : s))
+                );
                 const safeAssets = decAssets || assets;
                 setAccounts(safeAssets);
                 const grouped = safeAssets.reduce((acc, asset) => {
@@ -509,9 +554,12 @@ const Simulation = () => {
                 closeRebaseModal();
                 closeChartActionModal();
             } catch (err) {
+                if (requestId !== scenarioDetailRequestRef.current) return;
                 setError(err.message);
             } finally {
-                setLoading(false);
+                if (requestId === scenarioDetailRequestRef.current) {
+                    setLoading(false);
+                }
             }
         },
         [closeTransactionModal, closeRebaseModal, closeChartActionModal, decryptRecords, maybeDecryptRecord]
@@ -525,6 +573,7 @@ const Simulation = () => {
 
     useEffect(() => {
         if (scenarioDetails) {
+            setScenarioNameEdit(scenarioDetails.name || '');
             setInflationRate(
                 scenarioDetails.inflation_rate === null || scenarioDetails.inflation_rate === undefined
                     ? ''
@@ -541,6 +590,7 @@ const Simulation = () => {
             setSelectedConfessionPartner(scenarioDetails.tax_confession_partner || 'none');
             setSelectedMaritalStatus(scenarioDetails.tax_marital_status || 'ledig');
         } else {
+            setScenarioNameEdit('');
             setInflationRate('');
             setScenarioDescription('');
             setTaxAccountId('');
@@ -554,6 +604,17 @@ const Simulation = () => {
             setSelectedMaritalStatus('ledig');
         }
     }, [scenarioDetails]);
+
+    useEffect(() => {
+        if (accounts && accounts.length) {
+            setTransactionDropTargetAssetId((prev) => {
+                const exists = accounts.some((account) => normalizeId(account.id) === normalizeId(prev));
+                return exists ? prev : normalizeId(accounts[0].id);
+            });
+        } else {
+            setTransactionDropTargetAssetId('');
+        }
+    }, [accounts]);
 
     useEffect(() => {
         const validIds = new Set(scenarios.map((s) => normalizeId(s.id)));
@@ -585,7 +646,9 @@ const Simulation = () => {
 
     const loadScenariosForUser = useCallback(
         async (userIdentifier) => {
+            const requestId = ++scenarioListRequestRef.current;
             if (!userIdentifier) {
+                if (requestId !== scenarioListRequestRef.current) return;
                 setScenarios([]);
                 setScenarioCount(0);
                 setCurrentScenarioId('');
@@ -597,6 +660,7 @@ const Simulation = () => {
                 setCashFlows([]);
                 setChartRange({ start: 0, end: null });
                 closeTransactionModal();
+                setLoading(false);
                 return;
             }
             setLoading(true);
@@ -604,6 +668,7 @@ const Simulation = () => {
             try {
                 const userScenarios = await listScenarios();
                 const decScenarios = await decryptRecords(userScenarios);
+                if (requestId !== scenarioListRequestRef.current) return;
                 setScenarios(decScenarios);
                 setScenarioCount(decScenarios.length);
                 const firstScenario = normalizeId(decScenarios[0]?.id || '');
@@ -619,9 +684,12 @@ const Simulation = () => {
                     closeTransactionModal();
                 }
             } catch (err) {
+                if (requestId !== scenarioListRequestRef.current) return;
                 setError(err.message);
             } finally {
-                setLoading(false);
+                if (requestId === scenarioListRequestRef.current) {
+                    setLoading(false);
+                }
             }
         },
         [closeTransactionModal, decryptRecords]
@@ -656,33 +724,19 @@ const Simulation = () => {
         loadCurrentUser();
     }, [loadCurrentUser]);
 
-    const fetchTaxProfilesRemote = useCallback(async () => {
+    useEffect(() => {
         if (!selectedUserId) {
-            setTaxProfiles([]);
-            setSelectedTaxProfileId('');
             return;
         }
-        setTaxProfilesLoading(true);
-        setTaxImportError('');
-        try {
-            const profiles = (await listTaxProfiles()) || [];
-            setTaxProfiles(profiles);
-            setSelectedTaxProfileId((prev) => {
-                if (prev && profiles.some((profile) => normalizeId(profile.id) === normalizeId(prev))) {
-                    return prev;
-                }
-                return normalizeId(profiles[0]?.id || '');
-            });
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setTaxProfilesLoading(false);
-        }
-    }, [selectedUserId]);
+        loadScenariosForUser(selectedUserId);
+    }, [selectedUserId, loadScenariosForUser]);
 
     useEffect(() => {
-        fetchTaxProfilesRemote();
-    }, [fetchTaxProfilesRemote]);
+        if (!currentScenarioId) {
+            return;
+        }
+        fetchScenarioDetails(currentScenarioId);
+    }, [currentScenarioId, fetchScenarioDetails]);
 
     useEffect(() => {
         if (!selectedUserId) {
@@ -818,6 +872,161 @@ const Simulation = () => {
             setSelectedTaxCanton(selectedMunicipality.canton);
         }
     }, [selectedMunicipality, selectedTaxCanton]);
+
+    const loadUserLibrary = useCallback(async () => {
+        if (!selectedUserId) {
+            setLibraryAssets([]);
+            setLibraryTransactions([]);
+            return;
+        }
+        setLibraryLoading(true);
+        setLibraryError('');
+        try {
+            const assetMap = new Map();
+            const txMap = new Map();
+            for (const scenario of scenarios) {
+                const scenarioId = normalizeId(scenario.id);
+                if (!scenarioId) continue;
+                const [assetsRaw, txsRaw] = await Promise.all([listAssets(scenarioId), listTransactions(scenarioId)]);
+                const assets = await decryptRecords(assetsRaw);
+                const txs = await decryptRecords(txsRaw);
+                const assetNameMap = {};
+                (assets || []).forEach((asset) => {
+                    if (!asset) return;
+                    assetNameMap[normalizeId(asset.id)] = asset.name || '';
+                    const signature = buildAssetSignature(asset);
+                    const existing = assetMap.get(signature);
+                    const sourceName = scenario.name || '';
+                    if (existing) {
+                        const sources = new Set(existing.sourceScenarios || []);
+                        if (sourceName) sources.add(sourceName);
+                        assetMap.set(signature, {
+                            ...existing,
+                            occurrences: (existing.occurrences || 1) + 1,
+                            sourceScenarios: Array.from(sources),
+                        });
+                    } else {
+                        assetMap.set(signature, {
+                            ...asset,
+                            occurrences: 1,
+                            sourceScenarios: sourceName ? [sourceName] : [],
+                        });
+                    }
+                });
+                (txs || []).forEach((tx) => {
+                    if (!tx) return;
+                    if (tx.double_entry && tx.entry === 'credit') return;
+                    const signature = buildTransactionSignature(tx);
+                    const sourceScenario = scenario.name || '';
+                    const sourceAssetName = assetNameMap[normalizeId(tx.asset_id)] || '';
+                    const existing = txMap.get(signature);
+                    if (existing) {
+                        const scenariosSet = new Set(existing.sourceScenarios || []);
+                        if (sourceScenario) scenariosSet.add(sourceScenario);
+                        const assetNamesSet = new Set(existing.sourceAssetNames || []);
+                        if (sourceAssetName) assetNamesSet.add(sourceAssetName);
+                        txMap.set(signature, {
+                            ...existing,
+                            occurrences: (existing.occurrences || 1) + 1,
+                            sourceScenarios: Array.from(scenariosSet),
+                            sourceAssetNames: Array.from(assetNamesSet),
+                        });
+                        return;
+                    }
+                    txMap.set(signature, {
+                        ...tx,
+                        occurrences: 1,
+                        sourceScenarios: sourceScenario ? [sourceScenario] : [],
+                        sourceAssetNames: sourceAssetName ? [sourceAssetName] : [],
+                    });
+                });
+            }
+            setLibraryAssets(Array.from(assetMap.values()));
+            setLibraryTransactions(Array.from(txMap.values()));
+        } catch (err) {
+            setLibraryError(err.message || 'Bibliothek konnte nicht geladen werden.');
+        } finally {
+            setLibraryLoading(false);
+        }
+    }, [categorizeTransaction, decryptRecords, scenarios, selectedUserId]);
+
+    useEffect(() => {
+        loadUserLibrary();
+    }, [loadUserLibrary]);
+
+    const maybePropagateAssetUpdate = useCallback(
+        async (previousSignature, payload) => {
+            if (!previousSignature) return;
+            const matches = [];
+            for (const scenario of scenarios) {
+                if (normalizeId(scenario.id) === normalizeId(currentScenarioId)) continue;
+                const assetsRaw = await listAssets(scenario.id);
+                const assets = await decryptRecords(assetsRaw);
+                (assets || []).forEach((asset) => {
+                    if (buildAssetSignature(asset) === previousSignature) {
+                        matches.push({ assetId: asset.id });
+                    }
+                });
+            }
+            if (!matches.length) return;
+            const confirmAll = window.confirm(
+                `Änderung auch in ${matches.length} weiteren Szenario(n) anwenden?`
+            );
+            if (!confirmAll) return;
+            for (const match of matches) {
+                try {
+                    const { sanitized, encrypted } = await maybeEncryptRecord(payload);
+                    await updateAsset(match.assetId, { ...sanitized, encrypted });
+                } catch (_) {
+                    // ignore individual failures
+                }
+            }
+            loadUserLibrary().catch(() => {});
+        },
+        [currentScenarioId, decryptRecords, listAssets, loadUserLibrary, maybeEncryptRecord, scenarios]
+    );
+
+    const maybePropagateTransactionUpdate = useCallback(
+        async (previousSignature, payload) => {
+            if (!previousSignature) return;
+            const matches = [];
+            for (const scenario of scenarios) {
+                if (normalizeId(scenario.id) === normalizeId(currentScenarioId)) continue;
+                const txsRaw = await listTransactions(scenario.id);
+                const txs = await decryptRecords(txsRaw);
+                (txs || []).forEach((tx) => {
+                    if (tx.double_entry && tx.entry === 'credit') return;
+                    if (buildTransactionSignature(tx) === previousSignature) {
+                        matches.push(tx);
+                    }
+                });
+            }
+            if (!matches.length) return;
+            const confirmAll = window.confirm(
+                `Änderung auch in ${matches.length} weiteren Szenario(n) anwenden?`
+            );
+            if (!confirmAll) return;
+            for (const tx of matches) {
+                try {
+                    const basePayload = {
+                        ...payload,
+                        asset_id: tx.asset_id,
+                        counter_asset_id: tx.counter_asset_id || null,
+                        mortgage_asset_id:
+                            payload.type === 'mortgage_interest'
+                                ? tx.mortgage_asset_id || tx.asset_id
+                                : tx.mortgage_asset_id || null,
+                    };
+                    const { sanitized, encrypted } = await maybeEncryptRecord(basePayload);
+                    await updateTransaction(tx.id, { ...sanitized, encrypted });
+                } catch (_) {
+                    // ignore individual failures
+                }
+            }
+            loadUserLibrary().catch(() => {});
+        },
+        [currentScenarioId, decryptRecords, listTransactions, loadUserLibrary, maybeEncryptRecord, scenarios]
+    );
 
     const derivedTaxSettings = useMemo(() => {
         const normalizePercent = (value) => {
@@ -955,117 +1164,48 @@ const Simulation = () => {
         });
     }, [stressProfiles]);
 
-    const handleRegister = async () => {
-        if (!newUsername || !newUserPassword || !newUserEmail) {
-            setError('Bitte Benutzername, Passwort und E-Mail angeben.');
+    const handleChangePassword = async () => {
+        setError(null);
+        setPasswordMessage('');
+        if (!currentPassword || !newPassword || !confirmNewPassword) {
+            setError('Bitte alle Felder ausfüllen.');
             return;
         }
-        setAuthInfo('');
+        if (newPassword !== confirmNewPassword) {
+            setError('Neue Passwörter stimmen nicht überein.');
+            return;
+        }
         setLoading(true);
-        setError(null);
         try {
-            await registerUser({
-                username: newUsername,
-                password: newUserPassword,
-                name: newUserName,
-                email: newUserEmail,
-            });
-            setAuthToken(null);
-            setUsers([]);
-            setSelectedUserId('');
-            setVaultUnlocked(false);
-            setVaultDek(null);
-            setNewUsername('');
-            setNewUserPassword('');
-            setNewUserName('');
-            setNewUserEmail('');
-            setAuthInfo('Verifizierungscode gesendet. Bitte E-Mail prüfen und anschließend einloggen.');
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleLogin = async () => {
-        if (!newUsername || !newUserPassword) {
-            setError('Bitte Benutzername und Passwort angeben.');
-            return;
-        }
-        setAuthInfo('');
-        setLoading(true);
-        setError(null);
-        try {
-            const { user, token } = await loginUser({ username: newUsername, password: newUserPassword });
-            setAuthToken(token);
-            setUsers([user]);
-            setSelectedUserId(user.id);
-            setVaultUnlocked(false);
-            setVaultDek(null);
-            setNewUserPassword('');
-            await loadScenariosForUser(user.id);
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleVaultUnlocked = useCallback(
-        ({ dek }) => {
-            setVaultDek(dek);
-            setVaultUnlocked(true);
-        },
-        [setVaultDek]
-    );
-
-    const handleVaultLocked = useCallback(() => {
-        setVaultUnlocked(false);
-        setVaultDek(null);
-        setSelectedUserId('');
-        setUsers([]);
-        setAuthToken(null);
-    }, []);
-
-    const handleEncryptExisting = useCallback(async () => {
-        if (!vaultDek) {
-            setError('Bitte zuerst Vault entsperren.');
-            return;
-        }
-        if (!selectedUserId) {
-            setError('Kein Nutzer ausgewählt.');
-            return;
-        }
-        setEncrypting(true);
-        setEncryptMessage('Starte Verschlüsselung ...');
-        setError(null);
-        try {
-            for (const scenario of scenarios) {
-                setEncryptMessage(`Szenario verschlüsseln: ${scenario.name || scenario.id}`);
-                const fullScenario = await getScenario(scenario.id);
-                const scenarioBlob = await encryptJson(vaultDek, { ...fullScenario, encrypted: undefined });
-                await updateScenario(scenario.id, { encrypted: scenarioBlob });
-
-                const assetsInScenario = await listAssets(scenario.id);
-                for (const asset of assetsInScenario) {
-                    const assetBlob = await encryptJson(vaultDek, { ...asset, encrypted: undefined });
-                    await updateAsset(asset.id, { encrypted: assetBlob });
-                }
-
-                const txs = await listTransactions(scenario.id);
-                for (const tx of txs) {
-                    const txBlob = await encryptJson(vaultDek, { ...tx, encrypted: undefined });
-                    await updateTransaction(tx.id, { encrypted: txBlob });
-                }
+            const result = await changePassword(currentPassword, newPassword);
+            if (result?.user) {
+                const mergedUser = { ...selectedUser, ...result.user };
+                setUsers([mergedUser]);
+                setSelectedUserId(mergedUser.id);
+                await loadScenariosForUser(mergedUser.id);
+                setPasswordMessage('Passwort aktualisiert.');
+                setCurrentPassword('');
+                setNewPassword('');
+                setConfirmNewPassword('');
             }
-            setEncryptMessage('Verschlüsselung abgeschlossen.');
         } catch (err) {
-            setEncryptMessage('');
-            setError(err.message || 'Verschlüsselung fehlgeschlagen');
+            // Backend liefert 400 für falsches aktuelles Passwort oder Validierungsfehler.
+            let message = err.message || 'Passwort konnte nicht geändert werden.';
+            try {
+                const parsed = JSON.parse(err.message || '');
+                if (parsed?.detail) {
+                    message = parsed.detail;
+                } else if (Array.isArray(parsed)) {
+                    message = parsed.map((entry) => entry?.msg || '').filter(Boolean).join(' | ') || message;
+                }
+            } catch (_) {
+                // ignore parse issues
+            }
+            setError(message);
         } finally {
-            setEncrypting(false);
+            setLoading(false);
         }
-    }, [vaultDek, selectedUserId, scenarios, setError]);
+    };
 
     const parseMonthValue = (value) => {
         if (!value) return null;
@@ -1083,10 +1223,6 @@ const Simulation = () => {
 
     const handleAddAccount = async () => {
         if (!currentScenarioId || !newAccountName) {
-            return;
-        }
-        if (!vaultDek) {
-            setError('Bitte zuerst Vault entsperren, bevor neue Assets erstellt werden.');
             return;
         }
         setLoading(true);
@@ -1113,6 +1249,7 @@ const Simulation = () => {
             const decrypted = await maybeDecryptRecord(account);
             setAccounts((prev) => [...prev, decrypted || account]);
             setAccountTransactions((prev) => ({ ...prev, [account.id]: [] }));
+            loadUserLibrary().catch(() => {});
             setNewAccountName('');
             setNewAccountGrowthRate('');
             setNewAccountInitialBalance('');
@@ -1131,10 +1268,8 @@ const Simulation = () => {
     };
 
     const handleUpdateAccount = async (accountId, payload) => {
-        if (!vaultDek) {
-            setError('Bitte zuerst Vault entsperren, bevor Assets geändert werden.');
-            return;
-        }
+        const existing = accounts.find((account) => normalizeId(account.id) === normalizeId(accountId));
+        const previousSignature = existing ? buildAssetSignature(existing) : null;
         setLoading(true);
         setError(null);
         try {
@@ -1142,6 +1277,10 @@ const Simulation = () => {
             const updated = await updateAsset(accountId, { ...sanitized, encrypted });
             const dec = await maybeDecryptRecord(updated);
             setAccounts((prev) => prev.map((account) => (account.id === accountId ? dec || updated : account)));
+            loadUserLibrary().catch(() => {});
+            if (previousSignature) {
+                await maybePropagateAssetUpdate(previousSignature, payload);
+            }
             if (currentScenarioId) {
                 await handleSimulate();
             }
@@ -1163,6 +1302,7 @@ const Simulation = () => {
                 delete updated[accountId];
                 return updated;
             });
+            loadUserLibrary().catch(() => {});
             if (currentScenarioId) {
                 await handleSimulate();
             }
@@ -1175,10 +1315,6 @@ const Simulation = () => {
 
     const handleAddTransaction = async (payload) => {
         if (!currentScenarioId) {
-            return;
-        }
-        if (!vaultDek) {
-            setError('Bitte zuerst Vault entsperren, bevor Transaktionen erstellt werden.');
             return;
         }
         setLoading(true);
@@ -1207,6 +1343,7 @@ const Simulation = () => {
                 }
                 return updated;
             });
+            loadUserLibrary().catch(() => {});
             if (currentScenarioId) {
                 await handleSimulate();
             }
@@ -1219,10 +1356,8 @@ const Simulation = () => {
     };
 
     const handleUpdateTransaction = async (transactionId, payload) => {
-        if (!vaultDek) {
-            setError('Bitte zuerst Vault entsperren, bevor Transaktionen geändert werden.');
-            return;
-        }
+        const previousTx = findTransactionById(transactionId);
+        const previousSignature = previousTx ? buildTransactionSignature(previousTx) : null;
         setLoading(true);
         setError(null);
         try {
@@ -1233,6 +1368,10 @@ const Simulation = () => {
             }
             if (currentScenarioId) {
                 await handleSimulate();
+            }
+            loadUserLibrary().catch(() => {});
+            if (previousSignature) {
+                await maybePropagateTransactionUpdate(previousSignature, payload);
             }
             closeTransactionModal();
         } catch (err) {
@@ -1258,6 +1397,7 @@ const Simulation = () => {
             if (currentScenarioId) {
                 await handleSimulate();
             }
+            loadUserLibrary().catch(() => {});
             closeTransactionModal();
         } catch (err) {
             setError(err.message);
@@ -1271,6 +1411,40 @@ const Simulation = () => {
             return handleUpdateTransaction(transactionId, payload);
         }
         return handleAddTransaction(payload);
+    };
+
+    const buildAssetPayloadFromTemplate = (asset = {}) => {
+        const payload = {
+            name: asset.name || '',
+            asset_type: asset.asset_type || 'generic',
+            annual_growth_rate: Number(asset.annual_growth_rate) || 0,
+            initial_balance: Number(asset.initial_balance) || 0,
+        };
+        if (asset.start_year) payload.start_year = asset.start_year;
+        if (asset.start_month) payload.start_month = asset.start_month;
+        if (asset.end_year) payload.end_year = asset.end_year;
+        if (asset.end_month) payload.end_month = asset.end_month;
+        return payload;
+    };
+
+    const buildTransactionPayloadFromTemplate = (tx = {}) => {
+        const payload = {
+            name: tx.name || '',
+            amount: tx.amount || 0,
+            type: tx.type || 'regular',
+            entry: tx.entry,
+            start_year: tx.start_year,
+            start_month: tx.start_month,
+            end_year: tx.end_year,
+            end_month: tx.end_month,
+            frequency: tx.frequency,
+            annual_growth_rate: tx.annual_growth_rate,
+            annual_interest_rate: tx.annual_interest_rate,
+            double_entry: false,
+            taxable: tx.taxable,
+            taxable_amount: tx.taxable_amount,
+        };
+        return payload;
     };
 
     const copyScenarioData = async (sourceScenarioId, targetScenarioId) => {
@@ -1321,6 +1495,8 @@ const Simulation = () => {
                 mortgage_asset_id: mappedMortgageAssetId,
                 annual_interest_rate: transaction.annual_interest_rate,
                 double_entry: transaction.double_entry,
+                taxable: transaction.taxable,
+                taxable_amount: transaction.taxable_amount,
             });
             await createTransaction(targetScenarioId, { ...sanitized, encrypted });
         }
@@ -1329,10 +1505,6 @@ const Simulation = () => {
     const handleAddScenario = async () => {
         if (!selectedUserId || !newScenarioName) {
             setError('Bitte zuerst Benutzer und Szenario Namen angeben.');
-            return;
-        }
-        if (!vaultDek) {
-            setError('Bitte zuerst Vault entsperren, bevor Szenarien erstellt werden.');
             return;
         }
         const [startYear, startMonth] = newScenarioStart.split('-').map(Number);
@@ -1402,33 +1574,13 @@ const Simulation = () => {
                 delete next[cacheKey(selectedUserId, scenarioKey)];
                 return next;
             });
+            loadUserLibrary().catch(() => {});
         } catch (err) {
             setError(err.message);
         } finally {
             setLoading(false);
         }
     };
-
-    const handleImportTaxProfiles = useCallback(
-        async (file) => {
-            if (!file) return;
-            setTaxImportError('');
-            try {
-                const text = await file.text();
-                const parsed = JSON.parse(text);
-                const profiles = Array.isArray(parsed) ? parsed : parsed.profiles || [];
-                if (!Array.isArray(profiles) || !profiles.length) {
-                    setTaxImportError('Keine Profile in der Datei gefunden.');
-                    return;
-                }
-                await importTaxProfiles(profiles);
-                await fetchTaxProfilesRemote();
-            } catch (err) {
-                setTaxImportError(err.message || 'Import fehlgeschlagen. Bitte gültiges JSON hochladen.');
-            }
-        },
-        [fetchTaxProfilesRemote]
-    );
 
     const parsePercentInput = useCallback((value) => {
         const num = Number(value);
@@ -1569,7 +1721,8 @@ const Simulation = () => {
             return scenarioDetails;
         }
         const payload = buildScenarioSettingsPayload();
-        const updated = await updateScenario(currentScenarioId, payload);
+        const { sanitized, encrypted } = await maybeEncryptRecord(payload);
+        const updated = await updateScenario(currentScenarioId, { ...sanitized, encrypted });
         setScenarioDetails(updated);
         setSimulationCache((prev) => {
             const next = { ...prev };
@@ -1584,7 +1737,35 @@ const Simulation = () => {
         selectedUserId,
         scenarioDetails,
         setSimulationCache,
+        maybeEncryptRecord,
+        setError,
     ]);
+
+    const handleRenameScenario = useCallback(async () => {
+        const name = scenarioNameEdit.trim();
+        if (!currentScenarioId) {
+            setError('Bitte zuerst ein Szenario auswählen.');
+            return;
+        }
+        if (!name) {
+            setError('Name darf nicht leer sein.');
+            return;
+        }
+        setLoading(true);
+        setError(null);
+        try {
+            const { sanitized, encrypted } = await maybeEncryptRecord({ name });
+            const updated = await updateScenario(currentScenarioId, { ...sanitized, encrypted });
+            setScenarioDetails((prev) => ({ ...(prev || {}), ...(updated || {}), name }));
+            setScenarios((prev) =>
+                prev.map((s) => (normalizeId(s.id) === normalizeId(currentScenarioId) ? { ...s, name } : s))
+            );
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    }, [currentScenarioId, scenarioNameEdit, maybeEncryptRecord, setError]);
 
     const runSimulation = useCallback(
         async (scenarioId) => {
@@ -1604,6 +1785,10 @@ const Simulation = () => {
             }
             const labels = result.total_wealth.map((point) => point.date);
             setChartRange({ start: 0, end: labels.length ? labels.length - 1 : null });
+            const cashflowYears = Array.from(
+                new Set((result.cash_flows || []).map((entry) => new Date(entry.date).getFullYear()))
+            ).sort((a, b) => a - b);
+            setCashflowRange({ start: 0, end: cashflowYears.length ? cashflowYears.length - 1 : null });
             return result;
         },
         [selectedUserId, selectedScenarios]
@@ -1651,6 +1836,246 @@ const Simulation = () => {
             setLoading(false);
         }
     }, [currentScenarioId, saveScenarioSettings, runSimulation]);
+
+    const handleImportAssetFromLibrary = useCallback(
+        async (assetTemplate) => {
+            if (!currentScenarioId) {
+                setError('Bitte zuerst ein Szenario auswählen.');
+                return;
+            }
+            setLoading(true);
+            setError(null);
+            try {
+                const basePayload = buildAssetPayloadFromTemplate(assetTemplate);
+                const { sanitized, encrypted } = await maybeEncryptRecord(basePayload);
+                const asset = await createAsset(currentScenarioId, { ...sanitized, encrypted });
+                const decrypted = await maybeDecryptRecord(asset);
+                const finalAsset = decrypted || asset;
+                setAccounts((prev) => [...prev, finalAsset]);
+                setAccountTransactions((prev) => ({ ...prev, [finalAsset.id]: [] }));
+                await handleSimulate();
+                loadUserLibrary().catch(() => {});
+            } catch (err) {
+                setError(err.message);
+            } finally {
+                setLoading(false);
+            }
+        },
+        [currentScenarioId, handleSimulate, loadUserLibrary, maybeDecryptRecord, maybeEncryptRecord]
+    );
+
+    const handleImportTransactionFromLibrary = useCallback(
+        async (txTemplate) => {
+            if (!currentScenarioId) {
+                setError('Bitte zuerst ein Szenario auswählen.');
+                return;
+            }
+            const targetAssetId =
+                transactionDropTargetAssetId || (accounts.length ? normalizeId(accounts[0].id) : '');
+            if (!targetAssetId) {
+                setError('Bitte zuerst ein Ziel-Asset im aktuellen Szenario anlegen.');
+                return;
+            }
+            setLoading(true);
+            setError(null);
+            try {
+                const basePayload = {
+                    ...buildTransactionPayloadFromTemplate(txTemplate),
+                    asset_id: targetAssetId,
+                    counter_asset_id: null,
+                    mortgage_asset_id:
+                        txTemplate.type === 'mortgage_interest'
+                            ? txTemplate.mortgage_asset_id || targetAssetId
+                            : null,
+                };
+                const { sanitized, encrypted } = await maybeEncryptRecord(basePayload);
+                const transaction = await createTransaction(currentScenarioId, { ...sanitized, encrypted });
+                const decTx = await maybeDecryptRecord(transaction);
+                const finalTx = decTx || transaction;
+                setAccountTransactions((prev) => {
+                    const updated = { ...prev };
+                    const existing = updated[targetAssetId] || [];
+                    updated[targetAssetId] = [...existing, finalTx];
+                    return updated;
+                });
+                await handleSimulate();
+                loadUserLibrary().catch(() => {});
+            } catch (err) {
+                setError(err.message);
+            } finally {
+                setLoading(false);
+            }
+        },
+        [
+            accounts.length,
+            currentScenarioId,
+            handleSimulate,
+            loadUserLibrary,
+            maybeDecryptRecord,
+            maybeEncryptRecord,
+            transactionDropTargetAssetId,
+        ]
+    );
+
+    const handleLibraryDragStart = (item, kind) => (event) => {
+        try {
+            event.dataTransfer.setData('application/json', JSON.stringify({ kind, item }));
+            event.dataTransfer.effectAllowed = 'copy';
+        } catch (_) {
+            // ignore drag errors
+        }
+    };
+
+    const handleLibraryDrop = useCallback(
+        (event, kind) => {
+            event.preventDefault();
+            let data = null;
+            try {
+                const raw = event.dataTransfer.getData('application/json');
+                data = raw ? JSON.parse(raw) : null;
+            } catch (_) {
+                data = null;
+            }
+            const item = data?.item || data?.payload || data;
+            if (!item) return;
+            if (data?.kind !== kind) return;
+            if (kind === 'asset') {
+                handleImportAssetFromLibrary(item);
+            } else if (kind === 'transaction') {
+                handleImportTransactionFromLibrary(item);
+            }
+        },
+        [handleImportAssetFromLibrary, handleImportTransactionFromLibrary]
+    );
+
+    const allowLibraryDrop = (event) => {
+        event.preventDefault();
+        if (event?.dataTransfer) {
+            event.dataTransfer.dropEffect = 'copy';
+        }
+    };
+
+    const renderLibrarySidebar = (options = {}) => {
+        const { showAssets = true, showTransactions = true, compactTransactions = false } = options;
+        return (
+            <aside className="library-sidebar">
+                <div className="library-sidebar-header">
+                    <div>
+                        <p className="eyebrow">Bibliothek</p>
+                        <h4>Wiederverwendbar</h4>
+                    </div>
+                    <button type="button" className="secondary small" onClick={() => loadUserLibrary()} disabled={libraryLoading}>
+                        {libraryLoading ? 'Aktualisiere …' : 'Aktualisieren'}
+                    </button>
+                </div>
+                {libraryError && <div className="error">{libraryError}</div>}
+                {showAssets && (
+                    <div className="library-section">
+                        <p className="eyebrow">Assets & Liabilities</p>
+                        {libraryLoading ? (
+                            <p className="muted small">Lade Bibliothek …</p>
+                        ) : libraryAssets.length === 0 ? (
+                            <p className="placeholder">Noch keine Assets/Liabilities erfasst.</p>
+                        ) : (
+                            <div className="library-list">
+                                {libraryAssets.map((asset) => (
+                                    <div
+                                        key={`library-asset-${buildAssetSignature(asset)}`}
+                                        className="pill clickable library-pill"
+                                        draggable
+                                        onDragStart={handleLibraryDragStart(buildAssetPayloadFromTemplate(asset), 'asset')}
+                                    >
+                                        <div>
+                                            <strong>{asset.name || 'Ohne Namen'}</strong>
+                                            <div className="muted small">
+                                                {(asset.asset_type || 'Asset').toUpperCase()} · {formatCurrency(asset.initial_balance || 0)}
+                                            </div>
+                                        </div>
+                                        {(asset.sourceScenarios?.length || 0) > 0 && (
+                                            <span className="muted small">
+                                                aus {asset.sourceScenarios[0]}
+                                                {(asset.occurrences || 1) > 1
+                                                    ? ` (+${(asset.occurrences || 1) - 1} weitere)`
+                                                    : ''}
+                                            </span>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        <div className="library-dropzone" onDragOver={allowLibraryDrop} onDrop={(e) => handleLibraryDrop(e, 'asset')}>
+                            <strong>Asset/Liability hier ablegen</strong>
+                            <div className="muted small">Erstellt eine Kopie im aktuellen Szenario.</div>
+                        </div>
+                    </div>
+                )}
+                {showTransactions && (
+                    <div className="library-section">
+                        <div className="library-section-header">
+                            <p className="eyebrow">Einnahmen & Ausgaben</p>
+                            <div className="stacked tight">
+                                <span className="muted small">Ziel-Asset</span>
+                                <select
+                                    value={transactionDropTargetAssetId}
+                                    onChange={(e) => setTransactionDropTargetAssetId(e.target.value)}
+                                    disabled={!accounts.length}
+                                >
+                                    {!accounts.length && <option value="">Kein Asset vorhanden</option>}
+                                    {accounts.map((asset) => (
+                                        <option key={`drop-target-${asset.id}`} value={asset.id}>
+                                            {asset.name || asset.id}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        {libraryLoading ? (
+                            <p className="muted small">Lade Bibliothek …</p>
+                        ) : libraryTransactions.length === 0 ? (
+                            <p className="placeholder">Noch keine Transaktionen erfasst.</p>
+                        ) : (
+                            <div className={`library-list ${compactTransactions ? 'compact' : ''}`}>
+                                {libraryTransactions.map((tx) => {
+                                    const category = categorizeTransaction(tx);
+                                    const amountLabel = formatCurrency(tx.amount || 0);
+                                    const sourceScenario =
+                                        (tx.sourceScenarios && tx.sourceScenarios[0]) || tx.sourceScenario || '';
+                                    const sourceAsset =
+                                        (tx.sourceAssetNames && tx.sourceAssetNames[0]) || tx.sourceAssetName || '';
+                                    return (
+                                        <div
+                                            key={`library-tx-${buildTransactionSignature(tx)}`}
+                                            className="pill clickable library-pill"
+                                            draggable
+                                            onDragStart={handleLibraryDragStart(buildTransactionPayloadFromTemplate(tx), 'transaction')}
+                                        >
+                                            <div>
+                                                <strong>{tx.name || 'Transaktion'}</strong>
+                                                <div className="muted small">
+                                                    {category === 'expense' ? 'Ausgabe' : 'Einnahme'} · {amountLabel}
+                                                    {sourceAsset ? ` · ${sourceAsset}` : ''}
+                                                </div>
+                                            </div>
+                                            {sourceScenario && <span className="muted small">aus {sourceScenario}</span>}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                        <div
+                            className="library-dropzone"
+                            onDragOver={allowLibraryDrop}
+                            onDrop={(e) => handleLibraryDrop(e, 'transaction')}
+                        >
+                            <strong>Transaktion hier ablegen</strong>
+                            <div className="muted small">Wird als Kopie im gewählten Asset angelegt.</div>
+                        </div>
+                    </div>
+                )}
+            </aside>
+        );
+    };
+
 
     const autoSimAttemptRef = useRef({});
 
@@ -1958,6 +2383,7 @@ const Simulation = () => {
                 backgroundColor: `${color}33`, // add alpha
                 fill: true,
                 stack: 'assets',
+                hidden: true, // zunächst nur Total anzeigen
             };
         });
 
@@ -2009,6 +2435,30 @@ const Simulation = () => {
 
         return { labels, datasets: [...areaDatasets, totalLine, ...comparisonDatasets], fullLabels };
     }, [currentScenarioId, selectedScenarios, simulationCache, scenarios, chartRange, selectedUserId]);
+
+    const assetEndTotals = useMemo(() => {
+        if (!assetChartData?.labels?.length) return {};
+        const endLabel = assetChartData.labels[assetChartData.labels.length - 1];
+        const normalizeLabel = (label) => {
+            const date = new Date(label);
+            return Number.isNaN(date.getTime()) ? label : date.toISOString().slice(0, 10);
+        };
+        const endKey = normalizeLabel(endLabel);
+        const scenarioIds = new Set([normalizeId(currentScenarioId), ...selectedScenarios].filter(Boolean));
+        const totals = {};
+        scenarioIds.forEach((id) => {
+            const sim = simulationCache[cacheKey(selectedUserId, id)];
+            if (!sim?.total_wealth) return;
+            const valueByDate = sim.total_wealth.reduce((acc, point) => {
+                acc[normalizeLabel(point.date)] = point.value;
+                return acc;
+            }, {});
+            if (endKey in valueByDate) {
+                totals[id] = valueByDate[endKey];
+            }
+        });
+        return totals;
+    }, [assetChartData, selectedScenarios, simulationCache, selectedUserId, currentScenarioId]);
 
     const annualLabel = useCallback((tx) => {
         if (tx.type === 'mortgage_interest') {
@@ -2400,6 +2850,35 @@ const Simulation = () => {
         [taxableIncomeMap]
     );
 
+    const buildCashflowPerYear = useCallback((simulation) => {
+        const flows = simulation?.cash_flows || [];
+        const map = new Map();
+        flows.forEach((entry) => {
+            const year = new Date(entry.date).getFullYear();
+            if (!map.has(year)) {
+                map.set(year, { year, income: 0, expenses: 0, taxes: 0, net: 0 });
+            }
+            const agg = map.get(year);
+            const taxes = entry.taxes || 0;
+            const income = entry.income || 0;
+            const expenses = entry.expenses || 0;
+            const net = entry.net ?? income + expenses + taxes;
+            agg.income += income;
+            agg.expenses += expenses;
+            agg.taxes += taxes;
+            agg.net += net;
+        });
+        return Array.from(map.values()).sort((a, b) => a.year - b.year);
+    }, []);
+
+    const buildTaxMapFromSimulation = useCallback((simulation) => {
+        const map = new Map();
+        (simulation?.taxes || []).forEach((row) => {
+            map.set(row.year, { ...row, totalAll: row.totalAll ?? (row.taxTotal || 0) + (row.federalTax || 0) });
+        });
+        return map;
+    }, []);
+
     const comparisonCashflowChart = useMemo(() => {
         const buildYearlyFromSimulation = (simulation) => {
             const flows = simulation?.cash_flows || [];
@@ -2515,6 +2994,148 @@ const Simulation = () => {
         profileSimulations,
         stressProfiles,
     ]);
+
+    const baseCashflowChart = useMemo(() => {
+        if (!yearlyCashFlow.length) return null;
+        const labels = yearlyCashFlow.map((entry) => entry.year);
+        const total = Math.max(labels.length - 1, 0);
+        const endIdx = cashflowRange.end === null ? total : Math.max(0, Math.min(cashflowRange.end, total));
+        const startIdx = Math.min(Math.max(cashflowRange.start, 0), endIdx);
+        const labelMap = new Map(yearlyCashFlow.map((entry) => [entry.year, entry]));
+        const rangeLabels = labels.slice(startIdx, endIdx + 1);
+        const datasetData = rangeLabels.map((year) => {
+            const entry = labelMap.get(year);
+            if (!entry) return null;
+            const taxPayment = getTaxPaymentForYear(year);
+            const baseNet = entry.income + entry.expenses + (entry.taxes || 0);
+            return usesBackendTaxes ? baseNet : baseNet + taxPayment;
+        });
+        const totalNet = rangeLabels.reduce((totalSum, year, idx) => {
+            const value = datasetData[idx];
+            return totalSum + (Number.isFinite(value) ? value : 0);
+        }, 0);
+        return {
+            chart: {
+                labels: rangeLabels,
+                datasets: [
+                    {
+                        label: 'Netto',
+                        data: datasetData,
+                        borderColor: '#22d3ee',
+                        backgroundColor: 'rgba(34, 211, 238, 0.2)',
+                        tension: 0.25,
+                        fill: true,
+                        pointRadius: 0,
+                    },
+                ],
+            },
+            totals: { [normalizeId(currentScenarioId)]: totalNet },
+            labels,
+            range: { start: startIdx, end: endIdx },
+        };
+    }, [yearlyCashFlow, getTaxPaymentForYear, usesBackendTaxes, cashflowRange, currentScenarioId]);
+
+    const cashflowScenarioChart = useMemo(() => {
+        const baseKey = normalizeId(currentScenarioId);
+        const series = [];
+        const years = new Set();
+
+        const addScenarioSeries = (scenarioId, simulation, color, dashed = false, fill = false) => {
+            if (!simulation) return;
+            const yearly = buildCashflowPerYear(simulation);
+            if (!yearly.length) return;
+            const taxMap = buildTaxMapFromSimulation(simulation);
+            const usesBackend = Boolean(simulation?.taxes && simulation.taxes.length);
+            const dataMap = new Map(
+                yearly.map((e) => {
+                    const taxPayment = getTaxPaymentForYear(e.year, taxMap);
+                    const baseNet = e.income + e.expenses + (e.taxes || 0);
+                    const net = usesBackend ? baseNet : baseNet + taxPayment;
+                    years.add(e.year);
+                    return [e.year, net];
+                })
+            );
+            series.push({
+                scenarioId,
+                dataMap,
+                color,
+                dashed,
+                fill,
+            });
+        };
+
+        addScenarioSeries(
+            baseKey,
+            currentSimulation,
+            '#22d3ee',
+            false,
+            true
+        );
+
+        selectedScenarios
+            .filter((id) => normalizeId(id) !== baseKey)
+            .forEach((scenarioId, idx) => {
+                const sim = simulationCache[cacheKey(selectedUserId, scenarioId)];
+                const color = colorFromIndex(idx + 1);
+                addScenarioSeries(normalizeId(scenarioId), sim, color, true, false);
+            });
+
+        if (!years.size || series.length === 0) return null;
+        const labels = Array.from(years).sort((a, b) => a - b);
+        const totalIdx = Math.max(labels.length - 1, 0);
+        const endIdx = cashflowRange.end === null ? totalIdx : Math.max(0, Math.min(cashflowRange.end, totalIdx));
+        const startIdx = Math.min(Math.max(cashflowRange.start, 0), endIdx);
+        const rangeLabels = labels.slice(startIdx, endIdx + 1);
+
+        const datasets = series.map((s, idx) => {
+            const name = scenarios.find((sc) => normalizeId(sc.id) === normalizeId(s.scenarioId))?.name || s.scenarioId;
+            const baseColor = idx === 0 ? '#22d3ee' : s.color;
+            return {
+                label: `${name} · Netto`,
+                data: rangeLabels.map((year) => s.dataMap.get(year) ?? null),
+                borderColor: baseColor,
+                backgroundColor: s.fill ? 'rgba(34, 211, 238, 0.2)' : `${baseColor}33`,
+                tension: 0.25,
+                fill: s.fill,
+                spanGaps: true,
+                pointRadius: 0,
+                borderWidth: s.fill ? 3 : 2,
+                borderDash: s.dashed ? [6, 4] : undefined,
+            };
+        });
+
+        const totals = series.reduce((acc, s) => {
+            const sum = rangeLabels.reduce((total, year) => {
+                const value = s.dataMap.get(year);
+                return total + (Number.isFinite(value) ? value : 0);
+            }, 0);
+            acc[normalizeId(s.scenarioId)] = sum;
+            return acc;
+        }, {});
+
+        return { chart: { labels: rangeLabels, datasets }, totals, labels, range: { start: startIdx, end: endIdx } };
+    }, [
+        buildCashflowPerYear,
+        buildTaxMapFromSimulation,
+        currentScenarioId,
+        currentSimulation,
+        getTaxPaymentForYear,
+        selectedScenarios,
+        simulationCache,
+        scenarios,
+        selectedUserId,
+        cashflowRange,
+    ]);
+
+    const cashflowBundle = useMemo(
+        () => cashflowScenarioChart || baseCashflowChart,
+        [cashflowScenarioChart, baseCashflowChart]
+    );
+
+    const cashflowChartData = cashflowBundle?.chart || null;
+    const cashflowTotals = cashflowBundle?.totals || {};
+    const cashflowLabels = cashflowBundle?.labels || [];
+    const cashflowRangeMeta = cashflowBundle?.range || { start: 0, end: 0 };
 
     const handleDownloadPdf = useCallback(async () => {
         // Always refresh simulation before exporting to ensure current data
@@ -2637,11 +3258,11 @@ const Simulation = () => {
 
         addSectionTitle('Überblick');
         addTable(
-            ['Benutzer', 'E-Mail', 'Szenario', 'Zeitraum', 'Assets', 'Transaktionen'],
+            ['Benutzer', 'Telefon', 'Szenario', 'Zeitraum', 'Assets', 'Transaktionen'],
             [
                 [
                     selectedUser?.name || '–',
-                    selectedUser?.email || '–',
+                    selectedUser?.phone || '–',
                     currentScenario?.name || '–',
                     formatScenarioRange(currentScenario) || '–',
                     accounts.length,
@@ -2708,7 +3329,7 @@ const Simulation = () => {
             allTransactions.map((tx) => [
                 tx.name,
                 tx.category === 'expense' ? 'Ausgabe' : 'Einnahme',
-                tx.type === 'mortgage_interest' ? 'Hypothekenzins' : tx.type === 'regular' ? 'Regelmäßig' : 'Einmalig',
+                tx.type === 'mortgage_interest' ? 'Zins' : tx.type === 'regular' ? 'Regelmäßig' : 'Einmalig',
                 accountNameMap[tx.asset_id] || tx.asset_id || '–',
                 tx.counter_asset_id ? accountNameMap[tx.counter_asset_id] || tx.counter_asset_id : '–',
                 formatCurrency(tx.amount || 0),
@@ -2955,7 +3576,7 @@ const Simulation = () => {
                   : Number(tx.taxable_amount) || grossAmount)
             : 0;
         const taxEffect = tx.taxable ? taxableAmount * taxRate : 0;
-        const netAmount = tx.type === 'mortgage_interest' ? 0 : grossAmount - taxEffect;
+        const netAmount = grossAmount - taxEffect;
         const isExpense = tx.category === 'expense';
 
         return (
@@ -2970,7 +3591,7 @@ const Simulation = () => {
                         {tx.type === 'regular'
                             ? 'Regular'
                             : tx.type === 'mortgage_interest'
-                            ? 'Mortgage Interest'
+                            ? 'Interest'
                             : 'One-time'}{' '}
                         · {tx.start_month}/{tx.start_year}
                         {tx.end_month && tx.end_year ? ` - ${tx.end_month}/${tx.end_year}` : ''}
@@ -3045,12 +3666,13 @@ const Simulation = () => {
         setLoading(true);
         setError(null);
         try {
-            const updated = await updateScenario(currentScenarioId, {
+            const { sanitized, encrypted } = await maybeEncryptRecord({
                 start_year: startParts.year,
                 start_month: startParts.month,
                 end_year: endParts.year,
                 end_month: endParts.month,
             });
+            const updated = await updateScenario(currentScenarioId, { ...sanitized, encrypted });
             setScenarioDetails(updated);
             setScenarios((prev) => prev.map((s) => (normalizeId(s.id) === normalizeId(updated.id) ? updated : s)));
             setIsRangeModalOpen(false);
@@ -3065,9 +3687,13 @@ const Simulation = () => {
                         const matchPrev =
                             account.end_year === previousEndYear && account.end_month === previousEndMonth;
                         if (matchPrev) {
-                            const refreshed = await updateAsset(account.id, {
+                            const { sanitized: assetSanitized, encrypted: assetEncrypted } = await maybeEncryptRecord({
                                 end_year: endParts.year,
                                 end_month: endParts.month,
+                            });
+                            const refreshed = await updateAsset(account.id, {
+                                ...assetSanitized,
+                                encrypted: assetEncrypted,
                             });
                             return refreshed;
                         }
@@ -3102,114 +3728,134 @@ const Simulation = () => {
         return () => document.removeEventListener('mousedown', onClickOutside);
     }, []);
 
-    useEffect(() => {
-        if (!showScenarios) return undefined;
-        const handleClick = (e) => {
-            if (scenarioSectionRef.current && !scenarioSectionRef.current.contains(e.target)) {
-                setShowScenarios(false);
-            }
-        };
-        document.addEventListener('mousedown', handleClick);
-        return () => document.removeEventListener('mousedown', handleClick);
-    }, [showScenarios]);
-
     return (
         <>
-            {selectedUserId && !vaultUnlocked && (
-                <VaultGate
-                    key={selectedUserId}
-                    user={selectedUser}
-                    onUnlocked={handleVaultUnlocked}
-                    onLocked={handleVaultLocked}
-                />
-            )}
             <div className="simulation">
-                <div className="market-hero">
-                    <button
-                        className="user-burger"
-                        onClick={() => setIsSidebarOpen((prev) => !prev)}
-                        aria-expanded={isSidebarOpen}
-                        aria-controls="user-sidebar"
-                        title="Benutzer verwalten"
-                    >
-                        ☰
-                    </button>
-                    <div className="hero-main">
-                        <div>
-                            <p className="eyebrow">Financials Overview</p>
-                            <h1>Portfolio Simulation</h1>
-                            <div className="hero-meta">
-                                <div className={`pill ${vaultDek ? 'success' : 'warning'}`}>
-                                    Vault {vaultDek ? 'entsperrt' : 'gesperrt'}
-                                </div>
-                                <div className="scenario-pill-menu" ref={scenarioMenuRef}>
-                                    <button
-                                        type="button"
-                                        className="pill clickable"
-                                        onClick={() => setIsScenarioMenuOpen((prev) => !prev)}
-                                    >
-                                        Szenario: {currentScenario?.name || 'Kein Szenario'}
-                                    </button>
-                                    {isScenarioMenuOpen && (
-                                        <div className="scenario-dropdown">
-                                            {scenarios.map((scenario) => (
-                                                <button
-                                                    key={`menu-${scenario.id}`}
-                                                    type="button"
-                                                    className="scenario-dropdown-item"
-                                                    onClick={() => handleSelectScenarioFromMenu(scenario.id)}
-                                                >
-                                                    <div className="scenario-dropdown-title">{scenario.name}</div>
-                                                    <div className="scenario-dropdown-sub">
-                                                        {formatScenarioRange(scenario) || 'Zeitraum offen'}
-                                                    </div>
-                                                </button>
-                                            ))}
-                                            <div className="scenario-dropdown-divider" />
-                                            <button
-                                                type="button"
-                                                className="scenario-dropdown-item manage"
-                                                onClick={() => {
-                                                    setIsScenarioMenuOpen(false);
-                                                    openScenariosFromHero();
-                                                }}
-                                            >
-                                                Szenarien verwalten
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                                <button type="button" className="pill clickable" onClick={openRangeModal}>
-                                    {scenarioRangeLabel || 'Zeitraum offen'}
+                <div className="simulation-header">
+                    <div className="market-hero simulation-hero">
+                        <div className="simulation-header-row">
+                            <div className="simulation-header-left">
+                                <button
+                                    className="user-burger"
+                                    onClick={() => setIsSidebarOpen((prev) => !prev)}
+                                    aria-expanded={isSidebarOpen}
+                                    aria-controls="user-sidebar"
+                                    title="Benutzer verwalten"
+                                >
+                                    ☰
                                 </button>
-                                <span className="pill muted">{scenarios.length} Szenarien</span>
                             </div>
-                            <div className="hero-meta">
-                                <span className="pill muted">Assets: {accounts.length}</span>
-                                <span className="pill muted">Transaktionen: {allTransactions.length}</span>
-                            </div>
-                            <div className="hero-subline">
-                                {currentScenario?.description || 'Beschreibung hinzufügen, um das Szenario schneller wiederzuerkennen.'}
+                            <div className="simulation-header-actions">
+                                <button onClick={openScenarioSection}>Szenario verwalten</button>
+                                <button className="secondary" onClick={() => handleSimulate()} disabled={!currentScenarioId}>
+                                    Simulation starten
+                                </button>
+                                <button className="secondary" onClick={handleDownloadPdf} disabled={!selectedUserId || !currentScenarioId}>
+                                    PDF herunterladen
+                                </button>
+                                <button type="button" className="ghost" onClick={() => onLogout?.()}>
+                                    Logout
+                                </button>
                             </div>
                         </div>
-                        <div className="hero-actions">
-                            <button onClick={openScenarioSection}>Szenario verwalten</button>
-                            <button className="secondary" onClick={() => handleSimulate()} disabled={!currentScenarioId}>
-                                Simulation starten
-                            </button>
-                            <button className="secondary" onClick={handleDownloadPdf} disabled={!selectedUserId || !currentScenarioId}>
-                                PDF herunterladen
-                            </button>
+                        <div className="simulation-header-expanded">
+                            <div className="hero-main">
+                                <div>
+                                    <p className="eyebrow">Financials Overview</p>
+                                    <h1>Portfolio Simulation</h1>
+                                    <div className="hero-meta">
+                                        <div className="scenario-pill-menu" ref={scenarioMenuRef}>
+                                            <button
+                                                type="button"
+                                                className="pill clickable"
+                                                onClick={() => setIsScenarioMenuOpen((prev) => !prev)}
+                                            >
+                                                Szenario: {currentScenario?.name || 'Kein Szenario'}
+                                            </button>
+                                            {isScenarioMenuOpen && (
+                                                <div className="scenario-dropdown">
+                                                    {scenarios.map((scenario) => (
+                                                        <button
+                                                            key={`menu-${scenario.id}`}
+                                                            type="button"
+                                                            className="scenario-dropdown-item"
+                                                            onClick={() => handleSelectScenarioFromMenu(scenario.id)}
+                                                        >
+                                                            <div className="scenario-dropdown-title">{scenario.name}</div>
+                                                            <div className="scenario-dropdown-sub">
+                                                                {formatScenarioRange(scenario) || 'Zeitraum offen'}
+                                                            </div>
+                                                        </button>
+                                                    ))}
+                                                    <div className="scenario-dropdown-divider" />
+                                                    <button
+                                                        type="button"
+                                                        className="scenario-dropdown-item manage"
+                                                        onClick={() => {
+                                                            setIsScenarioMenuOpen(false);
+                                                            openScenariosFromHero();
+                                                        }}
+                                                    >
+                                                        Szenarien verwalten
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <button type="button" className="pill clickable" onClick={openRangeModal}>
+                                            {scenarioRangeLabel || 'Zeitraum offen'}
+                                        </button>
+                                        <span className="pill muted">{scenarios.length} Szenarien</span>
+                                    </div>
+                                    <div className="hero-meta">
+                                        <span className="pill muted">Assets: {accounts.length}</span>
+                                        <span className="pill muted">Transaktionen: {allTransactions.length}</span>
+                                    </div>
+                                    <div className="hero-subline">
+                                        {currentScenario?.description || 'Beschreibung hinzufügen, um das Szenario schneller wiederzuerkennen.'}
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
 
+                <div className="section-tabs">
+                    {[
+                        { key: 'scenarios', label: 'Szenarien' },
+                        { key: 'accounts', label: `Accounts (${accounts.length})` },
+                        { key: 'transactions', label: `Transaktionen (${allTransactions.length})` },
+                        { key: 'cashflow', label: 'Cashflow' },
+                        { key: 'totals', label: 'Assets' },
+                        { key: 'risk', label: 'Risiko' },
+                        { key: 'taxes', label: 'Steuern' },
+                    ].map((tab) => (
+                        <button
+                            key={tab.key}
+                            type="button"
+                            className={activeSection === tab.key ? 'active' : ''}
+                            onClick={() => setActiveSection(tab.key)}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+
                 <div className="simulation-layout">
                     <div className="simulation-main">
-                        {error && <p className="error">{error}</p>}
+                        {error && (
+                            <p className="error">
+                                {(() => {
+                                    if (typeof error === 'string') return error;
+                                    if (Array.isArray(error)) {
+                                        return error.map((e) => e?.msg || e?.detail || '').filter(Boolean).join(' | ');
+                                    }
+                                    return error?.detail || error?.message || JSON.stringify(error);
+                                })()}
+                            </p>
+                        )}
                         {loading && <p>Loading...</p>}
 
-                        {showScenarios && (
+                        {activeSection === 'scenarios' && (
                             <div className="panel" ref={scenarioSectionRef}>
                                 <div className="panel-header">
                                     <div>
@@ -3243,16 +3889,6 @@ const Simulation = () => {
                                                     onChange={(e) => setNewScenarioName(e.target.value)}
                                                 />
                                             </label>
-                                        <label className="stacked">
-                                            <span>Inflation p.a.</span>
-                                            <input
-                                                type="number"
-                                                placeholder="z.B. 0.02 für 2%"
-                                                value={inflationRate}
-                                                onChange={(e) => setInflationRate(e.target.value)}
-                                                step="0.0001"
-                                            />
-                                        </label>
                                         <label className="stacked">
                                             <span>Beschreibung</span>
                                             <textarea
@@ -3319,6 +3955,27 @@ const Simulation = () => {
                                                 ))}
                                             </select>
                                         </label>
+                                        <div className="scenario-form-grid">
+                                            <label className="stacked">
+                                                <span>Neuer Name</span>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Szenario umbenennen"
+                                                    value={scenarioNameEdit}
+                                                    onChange={(e) => setScenarioNameEdit(e.target.value)}
+                                                />
+                                            </label>
+                                            <div className="stacked">
+                                                <span>&nbsp;</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleRenameScenario}
+                                                    disabled={!currentScenarioId || !scenarioNameEdit.trim()}
+                                                >
+                                                    Umbenennen
+                                                </button>
+                                            </div>
+                                        </div>
 
                                         <div className="scenario-actions">
                                             <button onClick={handleSimulate} disabled={!currentScenarioId}>
@@ -3493,52 +4150,12 @@ const Simulation = () => {
                                                     </div>
                                                 )}
                                                 <label className="stacked">
-                                                    <span>Inflation p.a.</span>
-                                                    <input
-                                                        type="number"
-                                                        value={inflationRate}
-                                                        onChange={(e) => setInflationRate(e.target.value)}
-                                                        step="0.0001"
-                                                    />
-                                                </label>
-                                                <label className="stacked">
                                                     <span>Beschreibung</span>
                                                     <textarea
                                                         rows={3}
                                                         value={scenarioDescription}
                                                         onChange={(e) => setScenarioDescription(e.target.value)}
                                                     />
-                                                </label>
-                                                <label className="stacked">
-                                                    <span>Steuerprofil</span>
-                                                    <select
-                                                        onChange={(e) => setSelectedTaxProfileId(e.target.value)}
-                                                        value={selectedTaxProfileId}
-                                                    >
-                                                        {taxProfiles.map((profile) => (
-                                                            <option key={profile.id} value={profile.id}>
-                                                                {formatTaxProfileLabel(profile)}
-                                                            </option>
-                                                        ))}
-                                                        {!taxProfiles.length && <option value="">Standard</option>}
-                                                    </select>
-                                                    {taxProfilesLoading && <span className="muted">Lade Profile …</span>}
-                                                    <div className="import-tax-profile">
-                                                        <input
-                                                            type="file"
-                                                            accept="application/json"
-                                                            onChange={(e) => handleImportTaxProfiles(e.target.files?.[0])}
-                                                        />
-                                                        <small className="muted">JSON mit Profilen hochladen (Array oder {`{ profiles: [...] }`}).</small>
-                                                        {taxImportError && <div className="error">{taxImportError}</div>}
-                                                    </div>
-                                                    {activeTaxProfile && (
-                                                        <div className="muted small">
-                                                            {activeTaxProfile.location && <div>Ort: {activeTaxProfile.location}</div>}
-                                                            {activeTaxProfile.church && <div>Kirche: {activeTaxProfile.church}</div>}
-                                                            {activeTaxProfile.marital_status && <div>Zivilstand: {activeTaxProfile.marital_status}</div>}
-                                                        </div>
-                                                    )}
                                                 </label>
                                                 <label className="stacked">
                                                     <span>Steuerkonto (Belastung)</span>
@@ -3563,143 +4180,413 @@ const Simulation = () => {
                                         </button>
                                     </div>
                                     </div>
+
+                                    <div className="scenario-card scenario-library-card">
+                                        <div className="scenario-card-header">
+                                            <div>
+                                                <p className="eyebrow">Bibliothek</p>
+                                                <h4>Assets & Cashflows wiederverwenden</h4>
+                                            </div>
+                                            <div className="scenario-pill">
+                                                <span>Quelle</span>
+                                                <strong>Alle Szenarien</strong>
+                                            </div>
+                                        </div>
+                                        <div className="scenario-actions">
+                                            <div className="muted small">Per Drag & Drop ins aktive Szenario ziehen.</div>
+                                            <button
+                                                type="button"
+                                                onClick={() => loadUserLibrary()}
+                                                disabled={libraryLoading || !selectedUserId}
+                                            >
+                                                {libraryLoading ? 'Aktualisiere …' : 'Aktualisieren'}
+                                            </button>
+                                        </div>
+                                        {libraryError && <div className="error">{libraryError}</div>}
+                                        <div className="scenario-form-grid library-grid">
+                                            <div className="stacked">
+                                                <span className="eyebrow">Assets & Liabilities</span>
+                                                {libraryLoading ? (
+                                                    <p className="muted">Lade Bibliothek …</p>
+                                                ) : libraryAssets.length === 0 ? (
+                                                    <p className="placeholder">Noch keine Assets/Liabilities erfasst.</p>
+                                                ) : (
+                                                    <div className="library-list">
+                                                        {libraryAssets.map((asset) => (
+                                                            <div
+                                                                key={`library-asset-${buildAssetSignature(asset)}`}
+                                                                className="pill clickable library-pill"
+                                                                draggable
+                                                                onDragStart={handleLibraryDragStart(
+                                                                    buildAssetPayloadFromTemplate(asset),
+                                                                    'asset'
+                                                                )}
+                                                            >
+                                                                <div>
+                                                                    <strong>{asset.name || 'Ohne Namen'}</strong>
+                                                                    <div className="muted small">
+                                                                        {(asset.asset_type || 'Asset').toUpperCase()} ·{' '}
+                                                                        {formatCurrency(asset.initial_balance || 0)}
+                                                                    </div>
+                                                                </div>
+                                                                {asset.sourceScenario && (
+                                                                    <span className="muted small">aus {asset.sourceScenario}</span>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                <div
+                                                    className="library-dropzone"
+                                                    onDragOver={allowLibraryDrop}
+                                                    onDrop={(e) => handleLibraryDrop(e, 'asset')}
+                                                    style={{
+                                                        border: '1px dashed #d0d7de',
+                                                        padding: '12px',
+                                                        borderRadius: '8px',
+                                                        background: '#f8fafc',
+                                                    }}
+                                                >
+                                                    <strong>Asset/Liability hier ablegen</strong>
+                                                    <div className="muted small">Erstellt eine Kopie im aktuellen Szenario.</div>
+                                                </div>
+                                            </div>
+                                            <div className="stacked">
+                                                <span className="eyebrow">Einnahmen & Ausgaben</span>
+                                                {libraryLoading ? (
+                                                    <p className="muted">Lade Bibliothek …</p>
+                                                ) : libraryTransactions.length === 0 ? (
+                                                    <p className="placeholder">Noch keine Transaktionen erfasst.</p>
+                                                ) : (
+                                                    <div className="library-list">
+                                                        {libraryTransactions.map((tx) => {
+                                                            const category = categorizeTransaction(tx);
+                                                            const amountLabel = formatCurrency(tx.amount || 0);
+                                                            const sourceScenario =
+                                                                (tx.sourceScenarios && tx.sourceScenarios[0]) ||
+                                                                tx.sourceScenario ||
+                                                                '';
+                                                            const sourceAsset =
+                                                                (tx.sourceAssetNames && tx.sourceAssetNames[0]) ||
+                                                                tx.sourceAssetName ||
+                                                                '';
+                                                            return (
+                                                                <div
+                                                                    key={`library-tx-${buildTransactionSignature(tx)}`}
+                                                                    className="pill clickable library-pill"
+                                                                    draggable
+                                                                    onDragStart={handleLibraryDragStart(
+                                                                        buildTransactionPayloadFromTemplate(tx),
+                                                                        'transaction'
+                                                                    )}
+                                                                >
+                                                                    <div>
+                                                                        <strong>{tx.name || 'Transaktion'}</strong>
+                                                                        <div className="muted small">
+                                                                            {category === 'expense' ? 'Ausgabe' : 'Einnahme'} · {amountLabel}
+                                                                            {sourceAsset ? ` · ${sourceAsset}` : ''}
+                                                                        </div>
+                                                                    </div>
+                                                                    {(tx.occurrences || 1) > 1 || sourceScenario ? (
+                                                                        <span className="muted small">
+                                                                            {sourceScenario ? `aus ${sourceScenario}` : ''}
+                                                                            {(tx.occurrences || 1) > 1
+                                                                                ? `${sourceScenario ? ' ' : ''}(+${(tx.occurrences || 1) - 1} weitere)`
+                                                                                : ''}
+                                                                        </span>
+                                                                    ) : null}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                                <div className="stacked">
+                                                    <span className="muted small">Ziel-Asset für Drops</span>
+                                                    <select
+                                                        value={transactionDropTargetAssetId}
+                                                        onChange={(e) => setTransactionDropTargetAssetId(e.target.value)}
+                                                        disabled={!accounts.length}
+                                                    >
+                                                        {!accounts.length && <option value="">Kein Asset vorhanden</option>}
+                                                        {accounts.map((asset) => (
+                                                            <option key={`drop-target-${asset.id}`} value={asset.id}>
+                                                                {asset.name || asset.id}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                <div
+                                                    className="library-dropzone"
+                                                    onDragOver={allowLibraryDrop}
+                                                    onDrop={(e) => handleLibraryDrop(e, 'transaction')}
+                                                    style={{
+                                                        border: '1px dashed #d0d7de',
+                                                        padding: '12px',
+                                                        borderRadius: '8px',
+                                                        background: '#f8fafc',
+                                                    }}
+                                                >
+                                                    <strong>Transaktion hier ablegen</strong>
+                                                    <div className="muted small">Wird als Kopie im gewählten Asset angelegt.</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         )}
-                        <div className="panel">
-                            <div className="panel-header">
-                                <div>
-                                    <p className="eyebrow">Accounts</p>
-                                    <h3>Vermögen & Schulden</h3>
+                        {activeSection === 'accounts' && (
+                            <div className="panel split-panel">
+                                <div className="panel-header">
+                                    <div>
+                                        <p className="eyebrow">Accounts</p>
+                                        <h3>Vermögen & Schulden</h3>
+                                    </div>
+                                    <div className="panel-actions">
+                                        <button
+                                            className="secondary"
+                                            type="button"
+                                            onClick={() => setShowLibraryInAccounts((prev) => !prev)}
+                                        >
+                                            {showLibraryInAccounts ? 'Bibliothek ausblenden' : 'Bibliothek einblenden'}
+                                        </button>
+                                        <button onClick={openAssetModal} disabled={!currentScenarioId}>
+                                            Neues Asset
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="panel-actions">
-                                    <button className="secondary" onClick={() => setShowAccounts((v) => !v)}>
-                                        {showAccounts ? 'Einklappen' : 'Ausklappen'}
-                                    </button>
-                                    <button onClick={openAssetModal} disabled={!currentScenarioId}>
-                                        Neues Asset
-                                    </button>
-                                </div>
-                            </div>
-                            {showAccounts && (
-                                <div className="accounts-grid">
-                                    {accounts.map((account) => (
-                                        <Account
-                                            key={account.id}
-                                            account={account}
-                                            transactions={groupedTransactions[account.id] || []}
-                                            accountNameMap={accountNameMap}
-                                            updateAccount={handleUpdateAccount}
-                                            deleteAccount={handleDeleteAccount}
-                                            onEditTransaction={(transaction) => openTransactionModal(account, transaction)}
-                                        />
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="panel">
-                            <div className="panel-header">
-                                <div>
-                                    <p className="eyebrow">Transaktionen</p>
-                                    <h3>Cashflows</h3>
-                                </div>
-                                <div className="panel-actions">
-                                    <button className="secondary" onClick={() => setShowTransactions((v) => !v)}>
-                                        {showTransactions ? 'Einklappen' : 'Ausklappen'}
-                                    </button>
-                                    <button
-                                        onClick={() => openTransactionModal(null, null)}
-                                        disabled={!currentScenarioId || accounts.length === 0}
-                                    >
-                                        Neue Transaktion
-                                    </button>
-                                </div>
-                            </div>
-                            {showTransactions && (
-                                <div className="panel-body">
-                                    {allTransactions.length === 0 ? (
-                                        <p className="placeholder">Keine Transaktionen.</p>
-                                    ) : (
-                                        <div className="transaction-groups">
-                                            <div className="transaction-group income-group">
-                                                <div className="transaction-group-header">
-                                                    <h4>Einnahmen</h4>
-                                                    <span className="pill muted">{incomeTransactions.length}</span>
-                                                </div>
-                                                {incomeTransactions.length === 0 ? (
-                                                    <p className="placeholder">Keine Einnahmen erfasst.</p>
-                                                ) : (
-                                                    <ul className="transaction-list">
-                                                        {incomeTransactions.map((tx) => renderTransactionItem(tx))}
-                                                    </ul>
-                                                )}
-                                            </div>
-                                            <div className="transaction-group expense-group">
-                                                <div className="transaction-group-header">
-                                                    <h4>Ausgaben</h4>
-                                                    <span className="pill muted">{expenseTransactions.length}</span>
-                                                </div>
-                                                {expenseTransactions.length === 0 ? (
-                                                    <p className="placeholder">Keine Ausgaben erfasst.</p>
-                                                ) : (
-                                                    <ul className="transaction-list">
-                                                        {expenseTransactions.map((tx) => renderTransactionItem(tx))}
-                                                    </ul>
-                                                )}
-                                            </div>
+                                <div className="split-layout">
+                                    <div className="split-main">
+                                        <div
+                                            className="accounts-grid"
+                                            onDragOver={allowLibraryDrop}
+                                            onDrop={(e) => handleLibraryDrop(e, 'asset')}
+                                        >
+                                            {accounts.map((account) => (
+                                                <Account
+                                                    key={account.id}
+                                                    account={account}
+                                                    transactions={groupedTransactions[account.id] || []}
+                                                    accountNameMap={accountNameMap}
+                                                    updateAccount={handleUpdateAccount}
+                                                    deleteAccount={handleDeleteAccount}
+                                                    onEditTransaction={(transaction) => openTransactionModal(account, transaction)}
+                                                />
+                                            ))}
                                         </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="panel">
-                            <div className="panel-header">
-                                <div>
-                                    <p className="eyebrow">Cashflow</p>
-                                    <h3>Zusammenfassung</h3>
-                                </div>
-                                <div className="panel-actions">
-                                    <button className="secondary" onClick={() => setShowCashflow((v) => !v)}>
-                                        {showCashflow ? 'Einklappen' : 'Ausklappen'}
-                                    </button>
+                                    </div>
+                                    {showLibraryInAccounts &&
+                                        renderLibrarySidebar({ showAssets: true, showTransactions: false })}
                                 </div>
                             </div>
-                            {showCashflow && (
+                        )}
+
+                        {activeSection === 'transactions' && (
+                            <div className="panel split-panel">
+                                <div className="panel-header">
+                                    <div>
+                                        <p className="eyebrow">Transaktionen</p>
+                                        <h3>Cashflows</h3>
+                                    </div>
+                                    <div className="panel-actions">
+                                        <button
+                                            className="secondary"
+                                            type="button"
+                                            onClick={() => setShowLibraryInTransactions((prev) => !prev)}
+                                        >
+                                            {showLibraryInTransactions ? 'Bibliothek ausblenden' : 'Bibliothek einblenden'}
+                                        </button>
+                                        <button
+                                            onClick={() => openTransactionModal(null, null)}
+                                            disabled={!currentScenarioId || accounts.length === 0}
+                                        >
+                                            Neue Transaktion
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="split-layout">
+                                    <div className="split-main">
+                                        <div
+                                            className="panel-body"
+                                            onDragOver={allowLibraryDrop}
+                                            onDrop={(e) => handleLibraryDrop(e, 'transaction')}
+                                        >
+                                            {allTransactions.length === 0 ? (
+                                                <p className="placeholder">Keine Transaktionen.</p>
+                                            ) : (
+                                                <div className="transaction-groups">
+                                                    <div className="transaction-group income-group">
+                                                        <div className="transaction-group-header">
+                                                            <h4>Einnahmen</h4>
+                                                            <span className="pill muted">{incomeTransactions.length}</span>
+                                                        </div>
+                                                        {incomeTransactions.length === 0 ? (
+                                                            <p className="placeholder">Keine Einnahmen erfasst.</p>
+                                                        ) : (
+                                                            <ul className="transaction-list">
+                                                                {incomeTransactions.map((tx) => renderTransactionItem(tx))}
+                                                            </ul>
+                                                        )}
+                                                    </div>
+                                                    <div className="transaction-group expense-group">
+                                                        <div className="transaction-group-header">
+                                                            <h4>Ausgaben</h4>
+                                                            <span className="pill muted">{expenseTransactions.length}</span>
+                                                        </div>
+                                                        {expenseTransactions.length === 0 ? (
+                                                            <p className="placeholder">Keine Ausgaben erfasst.</p>
+                                                        ) : (
+                                                            <ul className="transaction-list">
+                                                                {expenseTransactions.map((tx) => renderTransactionItem(tx))}
+                                                            </ul>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    {showLibraryInTransactions &&
+                                        renderLibrarySidebar({ showAssets: false, showTransactions: true, compactTransactions: true })}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeSection === 'cashflow' && (
+                            <div className="panel">
+                                <div className="panel-header">
+                                    <div>
+                                        <p className="eyebrow">Cashflow</p>
+                                        <h3>Zusammenfassung</h3>
+                                    </div>
+                                </div>
                                 <>
-                                    {yearlyCashFlow.length === 0 ? (
+                                    {!cashflowChartData || !cashflowChartData.labels?.length ? (
                                         <div className="panel-body">
                                             <p className="placeholder">Noch keine Cashflows berechnet.</p>
                                         </div>
                                     ) : (
                                         <>
                                             <div className="panel-body">
+                                                {scenarios.length === 0 ? (
+                                                    <p className="placeholder">Keine Szenarien vorhanden.</p>
+                                                ) : (
+                                                    <div className="scenario-comparison-grid">
+                                                        {scenarios.map((scenario) => {
+                                                            const scenarioKey = normalizeId(scenario.id);
+                                                            const checked = selectedScenarios.includes(scenarioKey);
+                                                            const rangeLabel = formatScenarioRange(scenario);
+                                                            const scenarioTotal = cashflowTotals[scenarioKey];
+                                                            return (
+                                                                <label
+                                                                    key={scenario.id}
+                                                                    className={`scenario-compare-card ${checked ? 'active' : ''}`}
+                                                                >
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        value={scenario.id}
+                                                                        checked={checked}
+                                                                        onChange={handleSelectScenario}
+                                                                    />
+                                                                    <div>
+                                                                        <div className="scenario-compare-header">
+                                                                            <span className="scenario-name">{scenario.name}</span>
+                                                                            {scenarioKey === normalizeId(currentScenarioId) && (
+                                                                                <span className="badge muted">aktiv</span>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="scenario-compare-meta">
+                                                                            {rangeLabel || 'Zeitraum noch nicht gesetzt'}
+                                                                        </div>
+                                                                        {checked && scenarioTotal !== undefined && (
+                                                                            <div className="scenario-compare-meta">
+                                                                                Summe Cashflow: {formatCurrency(scenarioTotal)}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </label>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                                {cashflowLabels.length > 0 && (
+                                                    <div className="range-controls dual-range">
+                                                        <label>Zeitraum</label>
+                                                        <div className="range-slider">
+                                                            <input
+                                                                type="range"
+                                                                min={0}
+                                                                max={Math.max(cashflowLabels.length - 1, 0)}
+                                                                value={Math.min(
+                                                                    cashflowRangeMeta.start,
+                                                                    Math.max(cashflowLabels.length - 1, 0)
+                                                                )}
+                                                                onChange={(e) => {
+                                                                    const total = Math.max(cashflowLabels.length - 1, 0);
+                                                                    const newStart = Math.max(0, Math.min(Number(e.target.value), total));
+                                                                    setCashflowRange((prev) => {
+                                                                        const currentEnd =
+                                                                            prev.end === null ? total : Math.max(0, Math.min(prev.end, total));
+                                                                        return {
+                                                                            start: Math.min(newStart, currentEnd),
+                                                                            end: currentEnd < newStart ? newStart : currentEnd,
+                                                                        };
+                                                                    });
+                                                                }}
+                                                            />
+                                                            <input
+                                                                type="range"
+                                                                min={0}
+                                                                max={Math.max(cashflowLabels.length - 1, 0)}
+                                                                value={
+                                                                    cashflowRangeMeta.end === null
+                                                                        ? Math.max(cashflowLabels.length - 1, 0)
+                                                                        : Math.min(
+                                                                              cashflowRangeMeta.end,
+                                                                              Math.max(cashflowLabels.length - 1, 0)
+                                                                          )
+                                                                }
+                                                                onChange={(e) => {
+                                                                    const total = Math.max(cashflowLabels.length - 1, 0);
+                                                                    const newEnd = Math.max(0, Math.min(Number(e.target.value), total));
+                                                                    setCashflowRange((prev) => ({
+                                                                        start: Math.min(prev.start, newEnd),
+                                                                        end: Math.max(newEnd, prev.start),
+                                                                    }));
+                                                                }}
+                                                            />
+                                                        </div>
+                                                        <div className="range-labels">
+                                                            <span>
+                                                                {cashflowLabels[
+                                                                    Math.min(
+                                                                        cashflowRangeMeta.start,
+                                                                        Math.max(cashflowLabels.length - 1, 0)
+                                                                    )
+                                                                ] || '–'}
+                                                            </span>
+                                                            <span>
+                                                                {cashflowLabels[
+                                                                    cashflowRangeMeta.end === null
+                                                                        ? Math.max(cashflowLabels.length - 1, 0)
+                                                                        : Math.min(
+                                                                              cashflowRangeMeta.end,
+                                                                              Math.max(cashflowLabels.length - 1, 0)
+                                                                          )
+                                                                ] || '–'}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="panel-body">
                                                 <div className="chart-wrapper">
                                                     <Line
-                                                        data={{
-                                                            labels: yearlyCashFlow.map((entry) => entry.year),
-                                                                datasets: [
-                                                                    {
-                                                                        label: 'Netto',
-                                                                        data: yearlyCashFlow.map((entry) => {
-                                                                        const taxPayment = getTaxPaymentForYear(entry.year);
-                                                                        const baseNet = entry.income + entry.expenses + (entry.taxes || 0);
-                                                                        const netWithTaxes = usesBackendTaxes ? baseNet : baseNet + taxPayment;
-                                                                        return netWithTaxes;
-                                                                    }),
-                                                                    borderColor: '#22d3ee',
-                                                                    backgroundColor: 'rgba(34, 211, 238, 0.2)',
-                                                                    tension: 0.25,
-                                                                    fill: true,
-                                                                },
-                                                            ],
-                                                        }}
+                                                        data={cashflowChartData}
                                                         options={{
                                                             responsive: true,
                                                             maintainAspectRatio: false,
                                                             plugins: {
-                                                                legend: { display: false },
+                                                                legend: { position: 'top' },
                                                                 tooltip: {
                                                                     callbacks: {
                                                                         label: (ctx) =>
@@ -3711,9 +4598,9 @@ const Simulation = () => {
                                                                 },
                                                             },
                                                             scales: {
-                                                                x: { stacked: true },
+                                                                x: { stacked: false },
                                                                 y: {
-                                                                    stacked: true,
+                                                                    stacked: false,
                                                                     ticks: {
                                                                         callback: (value) =>
                                                                             value.toLocaleString('de-CH', {
@@ -4051,100 +4938,90 @@ const Simulation = () => {
                                         </>
                                     )}
                                 </>
-                            )}
-                        </div>
-
-                        <div className="panel">
-                            <div className="panel-header">
-                                <div>
-                                    <p className="eyebrow">Steuern</p>
-                                    <h3>Steuertabelle</h3>
-                                </div>
-                                <div className="panel-actions">
-                                    <button
-                                        className="secondary"
-                                        onClick={() => setShowTaxTable((v) => !v)}
-                                    >
-                                        {showTaxTable ? 'Einklappen' : 'Ausklappen'}
-                                    </button>
-                                    <button
-                                        className="secondary"
-                                        onClick={() => {
-                                            taxTableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                            setShowTaxTable(true);
-                                        }}
-                                    >
-                                        Zur Tabelle
-                                    </button>
-                                </div>
                             </div>
-                            {showTaxTable && (
-                                <div className="panel-body table-wrapper" ref={taxTableRef}>
-                                    {taxableIncomeByYear.length === 0 ? (
-                                        <p className="placeholder">Keine Steuerdaten vorhanden. Bitte Simulation ausführen.</p>
-                                    ) : (
-                                        <table className="table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Jahr</th>
-                                                    <th>Einfache Steuer</th>
-                                                    <th>Einkommensteuer</th>
-                                                    <th>Vermögenssteuer</th>
-                                                    <th>Personalsteuer</th>
-                                                    <th>Direkte Bundessteuer</th>
-                                                    <th>Total</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {taxableIncomeByYear.map((row) => (
-                                                    <tr key={`tax-table-${row.year}`}>
-                                                        <td>{row.year}</td>
-                                                        <td>{formatCurrency(row.baseTax || 0)}</td>
-                                                        <td>{formatCurrency(row.incomeTax || 0)}</td>
-                                                        <td>
-                                                            {row.wealthTax !== null && row.wealthTax !== undefined
-                                                                ? formatCurrency(row.wealthTax)
-                                                                : '–'}
-                                                        </td>
-                                                        <td>{formatCurrency(row.personalTax || 0)}</td>
-                                                        <td>{formatCurrency(row.federalTax || 0)}</td>
-                                                        <td>
-                                                            {formatCurrency(
-                                                                (row.totalAll || (row.taxTotal || 0) + (row.federalTax || 0)) || 0
-                                                            )}
-                                                        </td>
+                        )}
+
+                        {activeSection === 'taxes' && (
+                            <div className="panel">
+                                <div className="panel-header">
+                                    <div>
+                                        <p className="eyebrow">Steuern</p>
+                                        <h3>Steuertabelle</h3>
+                                    </div>
+                                    <div className="panel-actions">
+                                        <button
+                                            className="secondary"
+                                            onClick={() => {
+                                                taxTableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                            }}
+                                        >
+                                            Zur Tabelle
+                                        </button>
+                                    </div>
+                                </div>
+                                {showTaxTable && (
+                                    <div className="panel-body table-wrapper" ref={taxTableRef}>
+                                        {taxableIncomeByYear.length === 0 ? (
+                                            <p className="placeholder">Keine Steuerdaten vorhanden. Bitte Simulation ausführen.</p>
+                                        ) : (
+                                            <table className="table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Jahr</th>
+                                                        <th>Einfache Steuer</th>
+                                                        <th>Einkommensteuer</th>
+                                                        <th>Vermögenssteuer</th>
+                                                        <th>Personalsteuer</th>
+                                                        <th>Direkte Bundessteuer</th>
+                                                        <th>Total</th>
                                                     </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="panel">
-                            <div className="panel-header">
-                                <div>
-                                    <p className="eyebrow">Assets</p>
-                                    <h3>Asset Balances & Totals</h3>
-                                </div>
-                                <div className="panel-actions">
-                                    <button className="secondary" onClick={() => setShowTotals((v) => !v)}>
-                                        {showTotals ? 'Einklappen' : 'Ausklappen'}
-                                    </button>
-                                </div>
+                                                </thead>
+                                                <tbody>
+                                                    {taxableIncomeByYear.map((row) => (
+                                                        <tr key={`tax-table-${row.year}`}>
+                                                            <td>{row.year}</td>
+                                                            <td>{formatCurrency(row.baseTax || 0)}</td>
+                                                            <td>{formatCurrency(row.incomeTax || 0)}</td>
+                                                            <td>
+                                                                {row.wealthTax !== null && row.wealthTax !== undefined
+                                                                    ? formatCurrency(row.wealthTax)
+                                                                    : '–'}
+                                                            </td>
+                                                            <td>{formatCurrency(row.personalTax || 0)}</td>
+                                                            <td>{formatCurrency(row.federalTax || 0)}</td>
+                                                            <td>
+                                                                {formatCurrency(
+                                                                    (row.totalAll || (row.taxTotal || 0) + (row.federalTax || 0)) || 0
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        )}
+                                    </div>
+                                )}
                             </div>
-                            {showTotals && (
+                        )}
+
+                        {activeSection === 'totals' && (
+                            <div className="panel">
+                                <div className="panel-header">
+                                    <div>
+                                        <p className="eyebrow">Assets</p>
+                                        <h3>Asset Balances & Totals</h3>
+                                    </div>
+                                </div>
                                 <div className="panel-body">
                                     {scenarios.length === 0 ? (
                                         <p className="placeholder">Keine Szenarien vorhanden.</p>
                                     ) : (
                                         <div className="scenario-comparison-grid">
-                                            {scenarios.map((scenario) => {
-                                                const scenarioKey = normalizeId(scenario.id);
-                                                const checked = selectedScenarios.includes(scenarioKey);
-                                                const rangeLabel = formatScenarioRange(scenario);
-                                                return (
+                                                        {scenarios.map((scenario) => {
+                                                            const scenarioKey = normalizeId(scenario.id);
+                                                            const checked = selectedScenarios.includes(scenarioKey);
+                                                            const rangeLabel = formatScenarioRange(scenario);
+                                                            return (
                                                     <label
                                                         key={scenario.id}
                                                         className={`scenario-compare-card ${checked ? 'active' : ''}`}
@@ -4155,21 +5032,26 @@ const Simulation = () => {
                                                             checked={checked}
                                                             onChange={handleSelectScenario}
                                                         />
-                                                        <div>
-                                                            <div className="scenario-compare-header">
-                                                                <span className="scenario-name">{scenario.name}</span>
-                                                                {scenarioKey === normalizeId(currentScenarioId) && (
-                                                                    <span className="badge muted">aktiv</span>
-                                                                )}
-                                                            </div>
-                                                            <div className="scenario-compare-meta">
-                                                                {rangeLabel || 'Zeitraum noch nicht gesetzt'}
-                                                            </div>
-                                                        </div>
-                                                    </label>
-                                                );
-                                            })}
-                                        </div>
+                                                                    <div>
+                                                                        <div className="scenario-compare-header">
+                                                                            <span className="scenario-name">{scenario.name}</span>
+                                                                            {scenarioKey === normalizeId(currentScenarioId) && (
+                                                                                <span className="badge muted">aktiv</span>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="scenario-compare-meta">
+                                                                            {rangeLabel || 'Zeitraum noch nicht gesetzt'}
+                                                                        </div>
+                                                                        {checked && assetEndTotals[scenarioKey] !== undefined && (
+                                                                            <div className="scenario-compare-meta">
+                                                                                Endwert: {formatCurrency(assetEndTotals[scenarioKey])}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </label>
+                                                            );
+                                                        })}
+                                                    </div>
                                     )}
 
                                     <div className="range-controls dual-range">
@@ -4255,548 +5137,550 @@ const Simulation = () => {
                                         }}
                                     />
                                 </div>
-                            )}
-                        </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 
-                <div className="panel">
-                    <div className="panel-header">
-                        <div>
-                            <p className="eyebrow">Risiko</p>
-                            <h3>Stress & Sensitivität</h3>
-                        </div>
-                        <div className="panel-actions">
-                            <span className="pill muted">{stressResult ? 'Stress simuliert' : 'Basis'}</span>
-                        </div>
-                    </div>
-                    <div className="panel-body">
-                        <div className="profile-list-block">
-                            <div className="muted small" style={{ marginBottom: '0.5rem' }}>
-                                Profile anklicken, um sie parallel in den Stress-/Sensitivitäts-Charts zu zeigen (Mehrfachauswahl möglich).
+                {activeSection === 'risk' && (
+                    <div className="panel">
+                        <div className="panel-header">
+                            <div>
+                                <p className="eyebrow">Risiko</p>
+                                <h3>Stress & Sensitivität</h3>
                             </div>
-                            <div className="profile-list">
-                                {(stressProfiles || []).map((p) => {
-                                    const isSelected = selectedProfileIds.some(
-                                        (id) => normalizeId(id) === normalizeId(p.id)
-                                    );
-                                    const isOwner = isProfileOwner(p, selectedUserId);
-                                    const visibilityLabel = p.is_public ? 'Öffentlich' : 'Privat';
-                                    return (
-                                        <div className="profile-item" key={p.id}>
-                                            <div className="profile-header" onClick={() => handleToggleProfile(p)}>
-                                                <div>
-                                                    <strong>{p.name}</strong>
-                                                    {p.description ? <div className="muted small">{p.description}</div> : null}
-                                                    <div className="muted small">
-                                                        {isSelected ? 'Im Chart aktiviert' : 'Zum Anzeigen in Charts anklicken'} ·{' '}
-                                                        {isOwner ? 'Eigenes Profil' : 'Nur Leseberechtigung'}
-                                                    </div>
-                                                </div>
-                                                <div className="profile-actions">
-                                                    {isSelected ? <span className="pill success">Aktiv</span> : null}
-                                                    <span className={`badge ${p.is_public ? 'success' : 'muted'}`}>
-                                                        {visibilityLabel}
-                                                    </span>
-                                                    {isOwner && (
-                                                        <>
-                                                            <button
-                                                                className="secondary"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    handleEditProfile(p);
-                                                                }}
-                                                            >
-                                                                Bearbeiten
-                                                            </button>
-                                                            <button
-                                                                className="secondary danger"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    handleDeleteProfile(p.id);
-                                                                }}
-                                                            >
-                                                                Löschen
-                                                            </button>
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            {openProfileIds.some((id) => normalizeId(id) === normalizeId(p.id)) && (
-                                                <div className="profile-body">
-                                                    {profileLoadingId === p.id ? (
-                                                        <div className="muted small">Berechne...</div>
-                                                    ) : (
-                                                        <div className="profile-summary">
-                                                            <div>
-                                                                <span className="label">Endwert Basis</span>
-                                                                <strong>
-                                                                    {baseSummary?.endValue !== null && baseSummary?.endValue !== undefined
-                                                                        ? formatCurrency(baseSummary.endValue)
-                                                                        : '–'}
-                                                                </strong>
-                                                            </div>
-                                                            <div>
-                                                                <span className="label">Endwert Stress</span>
-                                                                <strong>
-                                                                    {profileResults[p.id]?.endValue !== undefined && profileResults[p.id]?.endValue !== null
-                                                                        ? formatCurrency(profileResults[p.id].endValue)
-                                                                        : '–'}
-                                                                </strong>
-                                                            </div>
-                                                            <div>
-                                                                <span className="label">Delta Vermögen</span>
-                                                                <strong>
-                                                                    {profileResults[p.id]?.endValue !== undefined &&
-                                                                    profileResults[p.id]?.endValue !== null &&
-                                                                    baseSummary?.endValue !== undefined &&
-                                                                    baseSummary?.endValue !== null
-                                                                        ? formatCurrency(profileResults[p.id].endValue - baseSummary.endValue)
-                                                                        : '–'}
-                                                                </strong>
-                                                            </div>
-                                                            <div>
-                                                                <span className="label">Netto Cashflow (Stress)</span>
-                                                                <strong>
-                                                                    {profileResults[p.id]?.net !== undefined && profileResults[p.id]?.net !== null
-                                                                        ? formatCurrency(profileResults[p.id].net)
-                                                                        : '–'}
-                                                                </strong>
-                                                            </div>
-                                                            <div>
-                                                                <span className="label">Delta vs Basis</span>
-                                                                <strong>
-                                                                    {profileResults[p.id]?.net !== undefined &&
-                                                                    profileResults[p.id]?.net !== null &&
-                                                                    baseSummary?.net !== undefined &&
-                                                                    baseSummary?.net !== null
-                                                                        ? formatCurrency(profileResults[p.id].net - baseSummary.net)
-                                                                        : '–'}
-                                                                </strong>
-                                                            </div>
+                            <div className="panel-actions">
+                                <span className="pill muted">{stressResult ? 'Stress simuliert' : 'Basis'}</span>
+                            </div>
+                        </div>
+                        <div className="panel-body">
+                            <div className="profile-list-block">
+                                <div className="muted small" style={{ marginBottom: '0.5rem' }}>
+                                    Profile anklicken, um sie parallel in den Stress-/Sensitivitäts-Charts zu zeigen (Mehrfachauswahl möglich).
+                                </div>
+                                <div className="profile-list">
+                                    {(stressProfiles || []).map((p) => {
+                                        const isSelected = selectedProfileIds.some(
+                                            (id) => normalizeId(id) === normalizeId(p.id)
+                                        );
+                                        const isOwner = isProfileOwner(p, selectedUserId);
+                                        const visibilityLabel = p.is_public ? 'Öffentlich' : 'Privat';
+                                        return (
+                                            <div className="profile-item" key={p.id}>
+                                                <div className="profile-header" onClick={() => handleToggleProfile(p)}>
+                                                    <div>
+                                                        <strong>{p.name}</strong>
+                                                        {p.description ? <div className="muted small">{p.description}</div> : null}
+                                                        <div className="muted small">
+                                                            {isSelected ? 'Im Chart aktiviert' : 'Zum Anzeigen in Charts anklicken'} ·{' '}
+                                                            {isOwner ? 'Eigenes Profil' : 'Nur Leseberechtigung'}
                                                         </div>
-                                                    )}
-                                                    {editingProfileId === p.id && (
-                                                        <div className="profile-edit">
-                                                            <div className="profile-form inline">
-                                                                <input
-                                                                    type="text"
-                                                                    placeholder="Profilname"
-                                                                    value={editingProfileName}
-                                                                    onChange={(e) => setEditingProfileName(e.target.value)}
-                                                                />
-                                                                <input
-                                                                    type="text"
-                                                                    placeholder="Beschreibung (optional)"
-                                                                    value={editingProfileDescription}
-                                                                    onChange={(e) => setEditingProfileDescription(e.target.value)}
-                                                                />
-                                                            </div>
-                                                            <div className="profile-visibility-toggle">
-                                                                <label style={{ display: 'flex', alignItems: 'center' }}>
-                                                                    <input
-                                                                        type="checkbox"
-                                                                        checked={editingProfileIsPublic}
-                                                                        onChange={(e) =>
-                                                                            setEditingProfileIsPublic(e.target.checked)
-                                                                        }
-                                                                    />
-                                                                    <span style={{ marginLeft: '0.5rem' }}>
-                                                                        Profil öffentlich teilen
-                                                                    </span>
-                                                                </label>
-                                                                <div className="muted small">
-                                                                    Öffentliche Profile sind für alle Nutzer sichtbar.
-                                                                </div>
-                                                            </div>
-                                                            <div className="risk-grid single">
-                                                                {(editingProfileOverrides.shocks || []).map((shock, idx) => (
-                                                                    <div className="risk-row" key={shock.id}>
-                                                                        <label className="stacked">
-                                                                            <span>Risiko {idx + 1} Typ</span>
-                                                                            <select
-                                                                                value={shock.assetType}
-                                                                                onChange={(e) =>
-                                                                                    setEditingProfileOverrides((prev) => ({
-                                                                                        ...prev,
-                                                                                        shocks: prev.shocks.map((s) =>
-                                                                                            s.id === shock.id ? { ...s, assetType: e.target.value } : s
-                                                                                        ),
-                                                                                    }))
-                                                                                }
-                                                                            >
-                                                                                <option value="portfolio">Portfolio</option>
-                                                                                <option value="real_estate">Immobilie</option>
-                                                                                <option value="mortgage_interest">Zins (Hypothek)</option>
-                                                                                <option value="income_tax">Einkommensteuer</option>
-                                                                                <option value="inflation">Inflation</option>
-                                                                            </select>
-                                                                        </label>
-                                                                        <label className="stacked">
-                                                                            <span>Δ (%)</span>
-                                                                            <input
-                                                                                type="number"
-                                                                                step="0.1"
-                                                                                value={shock.delta}
-                                                                                onChange={(e) =>
-                                                                                    setEditingProfileOverrides((prev) => ({
-                                                                                        ...prev,
-                                                                                        shocks: prev.shocks.map((s) =>
-                                                                                            s.id === shock.id ? { ...s, delta: e.target.value } : s
-                                                                                        ),
-                                                                                    }))
-                                                                                }
-                                                                            />
-                                                                        </label>
-                                                                        <label className="stacked">
-                                                                            <span>Start</span>
-                                                                            <input
-                                                                                type="month"
-                                                                                value={shock.start}
-                                                                                onChange={(e) =>
-                                                                                    setEditingProfileOverrides((prev) => ({
-                                                                                        ...prev,
-                                                                                        shocks: prev.shocks.map((s) =>
-                                                                                            s.id === shock.id ? { ...s, start: e.target.value } : s
-                                                                                        ),
-                                                                                    }))
-                                                                                }
-                                                                            />
-                                                                        </label>
-                                                                        <label className="stacked">
-                                                                            <span>Ende</span>
-                                                                            <input
-                                                                                type="month"
-                                                                                value={shock.end}
-                                                                                onChange={(e) =>
-                                                                                    setEditingProfileOverrides((prev) => ({
-                                                                                        ...prev,
-                                                                                        shocks: prev.shocks.map((s) =>
-                                                                                            s.id === shock.id ? { ...s, end: e.target.value } : s
-                                                                                        ),
-                                                                                    }))
-                                                                                }
-                                                                            />
-                                                                        </label>
-                                                                        <div className="risk-row-actions">
-                                                                            <button
-                                                                                className="secondary danger"
-                                                                                type="button"
-                                                                                onClick={() =>
-                                                                                    setEditingProfileOverrides((prev) => ({
-                                                                                        ...prev,
-                                                                                        shocks: (prev.shocks || []).filter((s) => s.id !== shock.id),
-                                                                                    }))
-                                                                                }
-                                                                            >
-                                                                                Löschen
-                                                                            </button>
-                                                                        </div>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                            <div className="risk-buttons">
+                                                    </div>
+                                                    <div className="profile-actions">
+                                                        {isSelected ? <span className="pill success">Aktiv</span> : null}
+                                                        <span className={`badge ${p.is_public ? 'success' : 'muted'}`}>
+                                                            {visibilityLabel}
+                                                        </span>
+                                                        {isOwner && (
+                                                            <>
                                                                 <button
                                                                     className="secondary"
-                                                                    onClick={() =>
-                                                                        setEditingProfileOverrides((prev) => ({
-                                                                            ...prev,
-                                                                            shocks: [
-                                                                                ...(prev.shocks || []),
-                                                                                {
-                                                                                    id: `edit-${(prev.shocks || []).length + 1}-${Date.now()}`,
-                                                                                    assetType: 'portfolio',
-                                                                                    delta: '0',
-                                                                                    start: '',
-                                                                                    end: '',
-                                                                                },
-                                                                            ],
-                                                                        }))
-                                                                    }
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleEditProfile(p);
+                                                                    }}
                                                                 >
-                                                                    Neues Risiko
-                                                                </button>
-                                                                <button className="secondary" onClick={handleSaveProfileEdits}>
-                                                                    Änderungen speichern
+                                                                    Bearbeiten
                                                                 </button>
                                                                 <button
                                                                     className="secondary danger"
-                                                                    onClick={() => {
-                                                                        setEditingProfileId('');
-                                                                        setEditingProfileName('');
-                                                                        setEditingProfileDescription('');
-                                                                        setEditingProfileOverrides({ shocks: [] });
-                                                                        setEditingProfileIsPublic(false);
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        handleDeleteProfile(p.id);
                                                                     }}
                                                                 >
-                                                                    Abbrechen
+                                                                    Löschen
                                                                 </button>
-                                                            </div>
-                                                        </div>
-                                                    )}
+                                                            </>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                            )}
+                                                {openProfileIds.some((id) => normalizeId(id) === normalizeId(p.id)) && (
+                                                    <div className="profile-body">
+                                                        {profileLoadingId === p.id ? (
+                                                            <div className="muted small">Berechne...</div>
+                                                        ) : (
+                                                            <div className="profile-summary">
+                                                                <div>
+                                                                    <span className="label">Endwert Basis</span>
+                                                                    <strong>
+                                                                        {baseSummary?.endValue !== null && baseSummary?.endValue !== undefined
+                                                                            ? formatCurrency(baseSummary.endValue)
+                                                                            : '–'}
+                                                                    </strong>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="label">Endwert Stress</span>
+                                                                    <strong>
+                                                                        {profileResults[p.id]?.endValue !== undefined && profileResults[p.id]?.endValue !== null
+                                                                            ? formatCurrency(profileResults[p.id].endValue)
+                                                                            : '–'}
+                                                                    </strong>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="label">Delta Vermögen</span>
+                                                                    <strong>
+                                                                        {profileResults[p.id]?.endValue !== undefined &&
+                                                                        profileResults[p.id]?.endValue !== null &&
+                                                                        baseSummary?.endValue !== undefined &&
+                                                                        baseSummary?.endValue !== null
+                                                                            ? formatCurrency(profileResults[p.id].endValue - baseSummary.endValue)
+                                                                            : '–'}
+                                                                    </strong>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="label">Netto Cashflow (Stress)</span>
+                                                                    <strong>
+                                                                        {profileResults[p.id]?.net !== undefined && profileResults[p.id]?.net !== null
+                                                                            ? formatCurrency(profileResults[p.id].net)
+                                                                            : '–'}
+                                                                    </strong>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="label">Delta vs Basis</span>
+                                                                    <strong>
+                                                                        {profileResults[p.id]?.net !== undefined &&
+                                                                        profileResults[p.id]?.net !== null &&
+                                                                        baseSummary?.net !== undefined &&
+                                                                        baseSummary?.net !== null
+                                                                            ? formatCurrency(profileResults[p.id].net - baseSummary.net)
+                                                                            : '–'}
+                                                                    </strong>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                        {editingProfileId === p.id && (
+                                                            <div className="profile-edit">
+                                                                <div className="profile-form inline">
+                                                                    <input
+                                                                        type="text"
+                                                                        placeholder="Profilname"
+                                                                        value={editingProfileName}
+                                                                        onChange={(e) => setEditingProfileName(e.target.value)}
+                                                                    />
+                                                                    <input
+                                                                        type="text"
+                                                                        placeholder="Beschreibung (optional)"
+                                                                        value={editingProfileDescription}
+                                                                        onChange={(e) => setEditingProfileDescription(e.target.value)}
+                                                                    />
+                                                                </div>
+                                                                <div className="profile-visibility-toggle">
+                                                                    <label style={{ display: 'flex', alignItems: 'center' }}>
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={editingProfileIsPublic}
+                                                                            onChange={(e) =>
+                                                                                setEditingProfileIsPublic(e.target.checked)
+                                                                            }
+                                                                        />
+                                                                        <span style={{ marginLeft: '0.5rem' }}>
+                                                                            Profil öffentlich teilen
+                                                                        </span>
+                                                                    </label>
+                                                                    <div className="muted small">
+                                                                        Öffentliche Profile sind für alle Nutzer sichtbar.
+                                                                    </div>
+                                                                </div>
+                                                                <div className="risk-grid single">
+                                                                    {(editingProfileOverrides.shocks || []).map((shock, idx) => (
+                                                                        <div className="risk-row" key={shock.id}>
+                                                                            <label className="stacked">
+                                                                                <span>Risiko {idx + 1} Typ</span>
+                                                                                <select
+                                                                                    value={shock.assetType}
+                                                                                    onChange={(e) =>
+                                                                                        setEditingProfileOverrides((prev) => ({
+                                                                                            ...prev,
+                                                                                            shocks: prev.shocks.map((s) =>
+                                                                                                s.id === shock.id ? { ...s, assetType: e.target.value } : s
+                                                                                            ),
+                                                                                        }))
+                                                                                    }
+                                                                                >
+                                                                                    <option value="portfolio">Portfolio</option>
+                                                                                    <option value="real_estate">Immobilie</option>
+                                                                                    <option value="mortgage_interest">Zins</option>
+                                                                                    <option value="income_tax">Einkommensteuer</option>
+                                                                                    <option value="inflation">Inflation</option>
+                                                                                </select>
+                                                                            </label>
+                                                                            <label className="stacked">
+                                                                                <span>Δ (%)</span>
+                                                                                <input
+                                                                                    type="number"
+                                                                                    step="0.1"
+                                                                                    value={shock.delta}
+                                                                                    onChange={(e) =>
+                                                                                        setEditingProfileOverrides((prev) => ({
+                                                                                            ...prev,
+                                                                                            shocks: prev.shocks.map((s) =>
+                                                                                                s.id === shock.id ? { ...s, delta: e.target.value } : s
+                                                                                            ),
+                                                                                        }))
+                                                                                    }
+                                                                                />
+                                                                            </label>
+                                                                            <label className="stacked">
+                                                                                <span>Start</span>
+                                                                                <input
+                                                                                    type="month"
+                                                                                    value={shock.start}
+                                                                                    onChange={(e) =>
+                                                                                        setEditingProfileOverrides((prev) => ({
+                                                                                            ...prev,
+                                                                                            shocks: prev.shocks.map((s) =>
+                                                                                                s.id === shock.id ? { ...s, start: e.target.value } : s
+                                                                                            ),
+                                                                                        }))
+                                                                                    }
+                                                                                />
+                                                                            </label>
+                                                                            <label className="stacked">
+                                                                                <span>Ende</span>
+                                                                                <input
+                                                                                    type="month"
+                                                                                    value={shock.end}
+                                                                                    onChange={(e) =>
+                                                                                        setEditingProfileOverrides((prev) => ({
+                                                                                            ...prev,
+                                                                                            shocks: prev.shocks.map((s) =>
+                                                                                                s.id === shock.id ? { ...s, end: e.target.value } : s
+                                                                                            ),
+                                                                                        }))
+                                                                                    }
+                                                                                />
+                                                                            </label>
+                                                                            <div className="risk-row-actions">
+                                                                                <button
+                                                                                    className="secondary danger"
+                                                                                    type="button"
+                                                                                    onClick={() =>
+                                                                                        setEditingProfileOverrides((prev) => ({
+                                                                                            ...prev,
+                                                                                            shocks: (prev.shocks || []).filter((s) => s.id !== shock.id),
+                                                                                        }))
+                                                                                    }
+                                                                                >
+                                                                                    Löschen
+                                                                                </button>
+                                                                            </div>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                                <div className="risk-buttons">
+                                                                    <button
+                                                                        className="secondary"
+                                                                        onClick={() =>
+                                                                            setEditingProfileOverrides((prev) => ({
+                                                                                ...prev,
+                                                                                shocks: [
+                                                                                    ...(prev.shocks || []),
+                                                                                    {
+                                                                                        id: `edit-${(prev.shocks || []).length + 1}-${Date.now()}`,
+                                                                                        assetType: 'portfolio',
+                                                                                        delta: '0',
+                                                                                        start: '',
+                                                                                        end: '',
+                                                                                    },
+                                                                                ],
+                                                                            }))
+                                                                        }
+                                                                    >
+                                                                        Neues Risiko
+                                                                    </button>
+                                                                    <button className="secondary" onClick={handleSaveProfileEdits}>
+                                                                        Änderungen speichern
+                                                                    </button>
+                                                                    <button
+                                                                        className="secondary danger"
+                                                                        onClick={() => {
+                                                                            setEditingProfileId('');
+                                                                            setEditingProfileName('');
+                                                                            setEditingProfileDescription('');
+                                                                            setEditingProfileOverrides({ shocks: [] });
+                                                                            setEditingProfileIsPublic(false);
+                                                                        }}
+                                                                    >
+                                                                        Abbrechen
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                    {(!stressProfiles || stressProfiles.length === 0) && (
+                                        <div className="muted small">Noch keine Profile gespeichert.</div>
+                                    )}
+                                </div>
+                            </div>
+                            {!showNewProfileEditor ? (
+                                <div className="risk-new-toggle">
+                                    <button className="secondary" onClick={() => setShowNewProfileEditor(true)}>
+                                        Neues Profil erstellen
+                                    </button>
+                                </div>
+                            ) : (
+                            <>
+                            <div className="risk-grid single">
+                                {(stressOverrides.shocks || []).map((shock, idx) => (
+                                    <div className="risk-row" key={shock.id}>
+                                        <label className="stacked">
+                                            <span>Risiko {idx + 1} Typ</span>
+                                            <select
+                                                value={shock.assetType}
+                                                onChange={(e) =>
+                                                    setStressOverrides((prev) => ({
+                                                        ...prev,
+                                                        shocks: prev.shocks.map((s) =>
+                                                            s.id === shock.id ? { ...s, assetType: e.target.value } : s
+                                                        ),
+                                                    }))
+                                                }
+                                            >
+                                                <option value="portfolio">Portfolio</option>
+                                                <option value="real_estate">Immobilie</option>
+                                                <option value="mortgage_interest">Zins</option>
+                                                <option value="income_tax">Einkommensteuer</option>
+                                                <option value="inflation">Inflation</option>
+                                            </select>
+                                        </label>
+                                        <label className="stacked">
+                                            <span>Δ (%)</span>
+                                            <input
+                                                type="number"
+                                                step="0.1"
+                                                value={shock.delta}
+                                                onChange={(e) =>
+                                                    setStressOverrides((prev) => ({
+                                                        ...prev,
+                                                        shocks: prev.shocks.map((s) =>
+                                                            s.id === shock.id ? { ...s, delta: e.target.value } : s
+                                                        ),
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                        <label className="stacked">
+                                            <span>Start</span>
+                                            <input
+                                                type="month"
+                                                value={shock.start}
+                                                onChange={(e) =>
+                                                    setStressOverrides((prev) => ({
+                                                        ...prev,
+                                                        shocks: prev.shocks.map((s) =>
+                                                            s.id === shock.id ? { ...s, start: e.target.value } : s
+                                                        ),
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                        <label className="stacked">
+                                            <span>Ende</span>
+                                            <input
+                                                type="month"
+                                                value={shock.end}
+                                                onChange={(e) =>
+                                                    setStressOverrides((prev) => ({
+                                                        ...prev,
+                                                        shocks: prev.shocks.map((s) =>
+                                                            s.id === shock.id ? { ...s, end: e.target.value } : s
+                                                        ),
+                                                    }))
+                                                }
+                                            />
+                                        </label>
+                                        <div className="risk-row-actions">
+                                            <button
+                                                className="secondary danger"
+                                                type="button"
+                                                onClick={() =>
+                                                    setStressOverrides((prev) => ({
+                                                        ...prev,
+                                                        shocks: (prev.shocks || []).filter((s) => s.id !== shock.id),
+                                                    }))
+                                                }
+                                            >
+                                                Löschen
+                                            </button>
                                         </div>
-                                    );
-                                })}
-                                {(!stressProfiles || stressProfiles.length === 0) && (
-                                    <div className="muted small">Noch keine Profile gespeichert.</div>
-                                )}
+                                    </div>
+                                ))}
                             </div>
-                        </div>
-                        {!showNewProfileEditor ? (
-                            <div className="risk-new-toggle">
-                                <button className="secondary" onClick={() => setShowNewProfileEditor(true)}>
-                                    Neues Profil erstellen
-                                </button>
+                            <div className="risk-actions">
+                                <div className="muted small">
+                                    Angaben in % (z.B. 2 = +2 %-Punkte, -20 = -20 %-Punkte). Der Wert wird additiv zur aktuellen Wachstumsrate der gewählten Asset-Klasse angewendet.
+                                </div>
+                                <div className="risk-buttons">
+                                    <button
+                                        className="secondary"
+                                        onClick={() =>
+                                            setStressOverrides((prev) => ({
+                                                ...prev,
+                                                shocks: [
+                                                    ...(prev.shocks || []),
+                                                    {
+                                                        id: `shock-${(prev.shocks || []).length + 1}-${Date.now()}`,
+                                                        assetType: 'portfolio',
+                                                        delta: '0',
+                                                        start: '',
+                                                        end: '',
+                                                    },
+                                                ],
+                                            }))
+                                        }
+                                    >
+                                        Neues Risiko
+                                    </button>
+                                    <button
+                                        className="secondary danger"
+                                        onClick={() =>
+                                            setStressOverrides((prev) => ({
+                                                ...prev,
+                                                shocks: (prev.shocks || []).slice(0, -1),
+                                            }))
+                                        }
+                                        disabled={!stressOverrides.shocks || stressOverrides.shocks.length === 0}
+                                    >
+                                        Letztes Risiko löschen
+                                    </button>
+                                    <button className="secondary" onClick={handleStressSimulate} disabled={!currentScenarioId || stressLoading}>
+                                        {stressLoading ? 'Berechne...' : 'Stress simulieren'}
+                                    </button>
+                                </div>
                             </div>
-                        ) : (
-                        <>
-                        <div className="risk-grid single">
-                            {(stressOverrides.shocks || []).map((shock, idx) => (
-                                <div className="risk-row" key={shock.id}>
-                                    <label className="stacked">
-                                        <span>Risiko {idx + 1} Typ</span>
-                                        <select
-                                            value={shock.assetType}
-                                            onChange={(e) =>
-                                                setStressOverrides((prev) => ({
-                                                    ...prev,
-                                                    shocks: prev.shocks.map((s) =>
-                                                        s.id === shock.id ? { ...s, assetType: e.target.value } : s
-                                                    ),
-                                                }))
-                                            }
-                                        >
-                                            <option value="portfolio">Portfolio</option>
-                                            <option value="real_estate">Immobilie</option>
-                                            <option value="mortgage_interest">Zins (Hypothek)</option>
-                                            <option value="income_tax">Einkommensteuer</option>
-                                            <option value="inflation">Inflation</option>
-                                        </select>
-                                    </label>
-                                    <label className="stacked">
-                                        <span>Δ (%)</span>
+                            <div className="risk-profiles">
+                                <div className="profile-form">
+                                    <input
+                                        type="text"
+                                        placeholder="Profilname"
+                                        value={profileName}
+                                        onChange={(e) => setProfileName(e.target.value)}
+                                    />
+                                    <input
+                                        type="text"
+                                        placeholder="Beschreibung (optional)"
+                                        value={profileDescription}
+                                        onChange={(e) => setProfileDescription(e.target.value)}
+                                    />
+                                    <label style={{ display: 'flex', alignItems: 'center' }}>
                                         <input
-                                            type="number"
-                                            step="0.1"
-                                            value={shock.delta}
-                                            onChange={(e) =>
-                                                setStressOverrides((prev) => ({
-                                                    ...prev,
-                                                    shocks: prev.shocks.map((s) =>
-                                                        s.id === shock.id ? { ...s, delta: e.target.value } : s
-                                                    ),
-                                                }))
-                                            }
+                                            type="checkbox"
+                                            checked={profileIsPublic}
+                                            onChange={(e) => setProfileIsPublic(e.target.checked)}
                                         />
+                                        <span style={{ marginLeft: '0.5rem' }}>Profil öffentlich teilen</span>
                                     </label>
-                                    <label className="stacked">
-                                        <span>Start</span>
-                                        <input
-                                            type="month"
-                                            value={shock.start}
-                                            onChange={(e) =>
-                                                setStressOverrides((prev) => ({
-                                                    ...prev,
-                                                    shocks: prev.shocks.map((s) =>
-                                                        s.id === shock.id ? { ...s, start: e.target.value } : s
-                                                    ),
-                                                }))
-                                            }
-                                        />
-                                    </label>
-                                    <label className="stacked">
-                                        <span>Ende</span>
-                                        <input
-                                            type="month"
-                                            value={shock.end}
-                                            onChange={(e) =>
-                                                setStressOverrides((prev) => ({
-                                                    ...prev,
-                                                    shocks: prev.shocks.map((s) =>
-                                                        s.id === shock.id ? { ...s, end: e.target.value } : s
-                                                    ),
-                                                }))
-                                            }
-                                        />
-                                    </label>
-                                    <div className="risk-row-actions">
-                                        <button
-                                            className="secondary danger"
-                                            type="button"
-                                            onClick={() =>
-                                                setStressOverrides((prev) => ({
-                                                    ...prev,
-                                                    shocks: (prev.shocks || []).filter((s) => s.id !== shock.id),
-                                                }))
-                                            }
-                                        >
-                                            Löschen
+                                    <div className="muted small" style={{ marginBottom: '0.5rem' }}>
+                                        Öffentliche Profile sind für alle Nutzer sichtbar, private nur für dich.
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                        <button className="secondary" onClick={handleSaveProfile} disabled={!profileName.trim()}>
+                                            Speichern
+                                        </button>
+                                        <button className="secondary danger" onClick={handleCancelNewProfile}>
+                                            Abbrechen
                                         </button>
                                     </div>
                                 </div>
-                            ))}
-                        </div>
-                        <div className="risk-actions">
-                            <div className="muted small">
-                                Angaben in % (z.B. 2 = +2 %-Punkte, -20 = -20 %-Punkte). Der Wert wird additiv zur aktuellen Wachstumsrate der gewählten Asset-Klasse angewendet.
                             </div>
-                            <div className="risk-buttons">
-                                <button
-                                    className="secondary"
-                                    onClick={() =>
-                                        setStressOverrides((prev) => ({
-                                            ...prev,
-                                            shocks: [
-                                                ...(prev.shocks || []),
-                                                {
-                                                    id: `shock-${(prev.shocks || []).length + 1}-${Date.now()}`,
-                                                    assetType: 'portfolio',
-                                                    delta: '0',
-                                                    start: '',
-                                                    end: '',
-                                                },
-                                            ],
-                                        }))
-                                    }
-                                >
-                                    Neues Risiko
-                                </button>
-                                <button
-                                    className="secondary danger"
-                                    onClick={() =>
-                                        setStressOverrides((prev) => ({
-                                            ...prev,
-                                            shocks: (prev.shocks || []).slice(0, -1),
-                                        }))
-                                    }
-                                    disabled={!stressOverrides.shocks || stressOverrides.shocks.length === 0}
-                                >
-                                    Letztes Risiko löschen
-                                </button>
-                                <button className="secondary" onClick={handleStressSimulate} disabled={!currentScenarioId || stressLoading}>
-                                    {stressLoading ? 'Berechne...' : 'Stress simulieren'}
-                                </button>
-                            </div>
-                        </div>
-                        <div className="risk-profiles">
-                            <div className="profile-form">
-                                <input
-                                    type="text"
-                                    placeholder="Profilname"
-                                    value={profileName}
-                                    onChange={(e) => setProfileName(e.target.value)}
-                                />
-                                <input
-                                    type="text"
-                                    placeholder="Beschreibung (optional)"
-                                    value={profileDescription}
-                                    onChange={(e) => setProfileDescription(e.target.value)}
-                                />
-                                <label style={{ display: 'flex', alignItems: 'center' }}>
-                                    <input
-                                        type="checkbox"
-                                        checked={profileIsPublic}
-                                        onChange={(e) => setProfileIsPublic(e.target.checked)}
-                                    />
-                                    <span style={{ marginLeft: '0.5rem' }}>Profil öffentlich teilen</span>
-                                </label>
-                                <div className="muted small" style={{ marginBottom: '0.5rem' }}>
-                                    Öffentliche Profile sind für alle Nutzer sichtbar, private nur für dich.
+                            <div className="risk-summary">
+                                <div className="summary-card">
+                                    <span className="label">Endwert Basis</span>
+                                    <strong>
+                                        {baseSummary?.endValue !== null && baseSummary?.endValue !== undefined
+                                            ? formatCurrency(baseSummary.endValue)
+                                            : '–'}
+                                    </strong>
                                 </div>
-                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                    <button className="secondary" onClick={handleSaveProfile} disabled={!profileName.trim()}>
-                                        Speichern
-                                    </button>
-                                    <button className="secondary danger" onClick={handleCancelNewProfile}>
-                                        Abbrechen
-                                    </button>
+                                <div className="summary-card">
+                                    <span className="label">Endwert Stress</span>
+                                    <strong>
+                                        {stressSummary?.endValue !== null && stressSummary?.endValue !== undefined
+                                            ? formatCurrency(stressSummary.endValue)
+                                            : '–'}
+                                    </strong>
+                                </div>
+                                <div className="summary-card">
+                                    <span className="label">Delta Vermögen</span>
+                                    <strong>
+                                        {baseSummary?.endValue !== null &&
+                                        baseSummary?.endValue !== undefined &&
+                                        stressSummary?.endValue !== null &&
+                                        stressSummary?.endValue !== undefined
+                                            ? formatCurrency(stressSummary.endValue - baseSummary.endValue)
+                                            : '–'}
+                                    </strong>
+                                </div>
+                                <div className="summary-card">
+                                    <span className="label">Netto Cashflow (Stress)</span>
+                                    <strong>{stressSummary ? formatCurrency(stressSummary.net) : '–'}</strong>
+                                    {baseSummary && stressSummary && (
+                                        <div className="muted small">Delta vs Basis {formatCurrency(stressSummary.net - baseSummary.net)}</div>
+                                    )}
                                 </div>
                             </div>
-                        </div>
-                        <div className="risk-summary">
-                            <div className="summary-card">
-                                <span className="label">Endwert Basis</span>
-                                <strong>
-                                    {baseSummary?.endValue !== null && baseSummary?.endValue !== undefined
-                                        ? formatCurrency(baseSummary.endValue)
-                                        : '–'}
-                                </strong>
-                            </div>
-                            <div className="summary-card">
-                                <span className="label">Endwert Stress</span>
-                                <strong>
-                                    {stressSummary?.endValue !== null && stressSummary?.endValue !== undefined
-                                        ? formatCurrency(stressSummary.endValue)
-                                        : '–'}
-                                </strong>
-                            </div>
-                            <div className="summary-card">
-                                <span className="label">Delta Vermögen</span>
-                                <strong>
-                                    {baseSummary?.endValue !== null &&
-                                    baseSummary?.endValue !== undefined &&
-                                    stressSummary?.endValue !== null &&
-                                    stressSummary?.endValue !== undefined
-                                        ? formatCurrency(stressSummary.endValue - baseSummary.endValue)
-                                        : '–'}
-                                </strong>
-                            </div>
-                            <div className="summary-card">
-                                <span className="label">Netto Cashflow (Stress)</span>
-                                <strong>{stressSummary ? formatCurrency(stressSummary.net) : '–'}</strong>
-                                {baseSummary && stressSummary && (
-                                    <div className="muted small">Delta vs Basis {formatCurrency(stressSummary.net - baseSummary.net)}</div>
-                                )}
-                            </div>
-                        </div>
-                        </>
-                        )}
-                        <div className="panel">
-                            <div className="panel-header">
-                                <div>
-                                    <p className="eyebrow">Vergleich</p>
-                                    <h3>Basis vs. Stress</h3>
-                                </div>
-                            </div>
-                            <div className="panel-body">
-                                {comparisonTotalChart ? (
-                                    <div className="chart-wrapper">
-                                        <Line
-                                            data={comparisonTotalChart}
-                                            options={{
-                                                responsive: true,
-                                                maintainAspectRatio: false,
-                                                plugins: { legend: { position: 'top' } },
-                                                scales: { y: { ticks: { callback: (v) => formatCurrency(v) } } },
-                                            }}
-                                        />
+                            </>
+                            )}
+                            <div className="panel">
+                                <div className="panel-header">
+                                    <div>
+                                        <p className="eyebrow">Vergleich</p>
+                                        <h3>Basis vs. Stress</h3>
                                     </div>
-                                ) : (
-                                    <p className="placeholder">Keine Vergleichsdaten vorhanden.</p>
-                                )}
-                            </div>
-                            <div className="panel-body">
-                                {comparisonCashflowChart ? (
-                                    <div className="chart-wrapper">
-                                        <Line
-                                            data={comparisonCashflowChart}
-                                            options={{
-                                                responsive: true,
-                                                maintainAspectRatio: false,
-                                                plugins: { legend: { position: 'top' } },
-                                                scales: { y: { ticks: { callback: (v) => formatCurrency(v) } } },
-                                            }}
-                                        />
-                                    </div>
-                                ) : (
-                                    <p className="placeholder">Keine Cashflow-Vergleichsdaten vorhanden.</p>
-                                )}
+                                </div>
+                                <div className="panel-body">
+                                    {comparisonTotalChart ? (
+                                        <div className="chart-wrapper">
+                                            <Line
+                                                data={comparisonTotalChart}
+                                                options={{
+                                                    responsive: true,
+                                                    maintainAspectRatio: false,
+                                                    plugins: { legend: { position: 'top' } },
+                                                    scales: { y: { ticks: { callback: (v) => formatCurrency(v) } } },
+                                                }}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <p className="placeholder">Keine Vergleichsdaten vorhanden.</p>
+                                    )}
+                                </div>
+                                <div className="panel-body">
+                                    {comparisonCashflowChart ? (
+                                        <div className="chart-wrapper">
+                                            <Line
+                                                data={comparisonCashflowChart}
+                                                options={{
+                                                    responsive: true,
+                                                    maintainAspectRatio: false,
+                                                    plugins: { legend: { position: 'top' } },
+                                                    scales: { y: { ticks: { callback: (v) => formatCurrency(v) } } },
+                                                }}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <p className="placeholder">Keine Cashflow-Vergleichsdaten vorhanden.</p>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>
-                </div>
+                )}
             </div>
 
             {isTransactionModalOpen && (
@@ -4915,40 +5799,31 @@ const Simulation = () => {
                     </button>
                 </div>
                 <div className="new-user">
+                    <h4>Passwort ändern</h4>
                     <input
-                        type="text"
-                        placeholder="Benutzername"
-                        value={newUsername}
-                        onChange={(e) => setNewUsername(e.target.value)}
+                        type="password"
+                        placeholder="Aktuelles Passwort"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
                     />
                     <input
                         type="password"
-                        placeholder="Passwort"
-                        value={newUserPassword}
-                        onChange={(e) => setNewUserPassword(e.target.value)}
+                        placeholder="Neues Passwort"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
                     />
                     <input
-                        type="text"
-                        placeholder="Anzeigename (optional)"
-                        value={newUserName}
-                        onChange={(e) => setNewUserName(e.target.value)}
-                    />
-                    <input
-                        type="email"
-                        placeholder="E-Mail (für Registrierung erforderlich)"
-                        value={newUserEmail}
-                        onChange={(e) => setNewUserEmail(e.target.value)}
+                        type="password"
+                        placeholder="Neues Passwort bestätigen"
+                        value={confirmNewPassword}
+                        onChange={(e) => setConfirmNewPassword(e.target.value)}
                     />
                     <div className="user-buttons">
-                        <button onClick={handleRegister}>Registrieren</button>
-                        <button onClick={handleLogin}>Login</button>
-                        <button onClick={loadCurrentUser}>Aktualisieren</button>
-                        <button onClick={handleEncryptExisting} disabled={!vaultUnlocked || encrypting || !selectedUserId}>
-                            {encrypting ? 'Verschlüssele...' : 'Daten jetzt verschlüsseln'}
+                        <button onClick={handleChangePassword} disabled={loading || !selectedUserId}>
+                            Passwort speichern
                         </button>
                     </div>
-                    {authInfo && <p className="muted">{authInfo}</p>}
-                    {encryptMessage && <p className="muted">{encryptMessage}</p>}
+                    {passwordMessage && <p className="muted">{passwordMessage}</p>}
                     {selectedUserId && (
                         <p className="active-user">
                             Eingeloggt als: <code>{selectedUser?.name || selectedUser?.username || selectedUserId}</code>
