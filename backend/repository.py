@@ -1049,6 +1049,8 @@ class WealthRepository:
             docs.append(doc)
         if not docs:
             return 0
+        # Replace the entire table
+        self.db.municipal_tax_rates.delete_many({})
         res = self.db.municipal_tax_rates.insert_many(docs)
         return len(res.inserted_ids)
 
