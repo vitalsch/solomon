@@ -112,6 +112,15 @@ export const loginUser = async (payload) => {
 
 export const getCurrentUser = () => request('/me');
 export const deleteCurrentUser = () => request('/me', { method: 'DELETE' });
+export const requestEmailVerification = (email) =>
+    request('/auth/verify/request', { method: 'POST', body: JSON.stringify({ email }) });
+export const confirmEmailVerification = async (email, code) => {
+    const result = await request('/auth/verify/confirm', { method: 'POST', body: JSON.stringify({ email, code }) });
+    if (result?.token) {
+        setAuthToken(result.token);
+    }
+    return result;
+};
 export const requestPasswordReset = (phone) =>
     request('/auth/password/reset/request', { method: 'POST', body: JSON.stringify({ phone }) });
 export const confirmPasswordReset = async (token, new_password) => {
