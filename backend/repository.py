@@ -498,6 +498,7 @@ class WealthRepository:
         tax_confession: str | None = None,
         tax_confession_partner: str | None = None,
         tax_marital_status: str | None = None,
+        num_children: int | None = None,
         encrypted: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         doc = {
@@ -534,6 +535,7 @@ class WealthRepository:
             "tax_confession": tax_confession,
             "tax_confession_partner": tax_confession_partner,
             "tax_marital_status": tax_marital_status,
+            "num_children": num_children,
             "encrypted": encrypted,
         }
         res = self.db.scenarios.insert_one(doc)
@@ -1128,11 +1130,13 @@ class WealthRepository:
         name: str,
         rows: List[Dict[str, Any]],
         description: Optional[str] = None,
+        child_deduction_per_child: Optional[float] = None,
     ) -> Dict[str, Any]:
         doc = {
             "name": name,
             "description": description,
             "rows": _normalize_tariff_rows(rows),
+            "child_deduction_per_child": _round_two_decimals(child_deduction_per_child),
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
         }
@@ -1141,13 +1145,15 @@ class WealthRepository:
         return _serialize(doc)
 
     def update_federal_tax_table(self, table_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        allowed_fields = {"name", "description", "rows"}
+        allowed_fields = {"name", "description", "rows", "child_deduction_per_child"}
         filtered: Dict[str, Any] = {}
         for key, value in updates.items():
             if key not in allowed_fields or value is None:
                 continue
             if key == "rows":
                 filtered[key] = _normalize_tariff_rows(value)
+            elif key == "child_deduction_per_child":
+                filtered[key] = _round_two_decimals(value)
             else:
                 filtered[key] = value
         if not filtered:

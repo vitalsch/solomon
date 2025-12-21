@@ -1890,6 +1890,23 @@ button.secondary:hover {
   align-items: center;
 }
 
+.json-upload-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.child-deduction {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.child-deduction .stacked {
+  min-width: 180px;
+}
+
 .json-upload {
   position: relative;
   overflow: hidden;

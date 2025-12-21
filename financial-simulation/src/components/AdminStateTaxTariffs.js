@@ -29,6 +29,7 @@ const emptyRowDraft = {
 const scopeLabel = (scope) => (scope === 'wealth' ? 'Vermögen' : 'Einkommen');
 const JSON_IMPORT_HINT =
     'JSON-Array, z.B. [{"threshold":0,"base_amount":0,"per_100_amount":11.5,"note":"optional"}]';
+const CHILD_HINT = 'CHF pro Kind; wird mit Anzahl Kinder multipliziert und von der Bundessteuer abgezogen.';
 
 const formatCurrency = (value) => {
     if (value === null || value === undefined || value === '') {
@@ -64,6 +65,7 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
     const [editingValue, setEditingValue] = useState(null);
     const [editingTariffMeta, setEditingTariffMeta] = useState(null);
     const [rowSortConfigs, setRowSortConfigs] = useState({});
+    const [childDeductionDrafts, setChildDeductionDrafts] = useState({});
 
     const isFederal = mode === 'federal';
     const emptyMessage = useMemo(
@@ -81,7 +83,17 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
             const data = isFederal
                 ? await listFederalTaxTablesAdmin(adminAuth)
                 : await listStateTaxTariffsAdmin(adminAuth);
-            setTariffs((data || []).map(normalizeTariff));
+            const normalized = (data || []).map(normalizeTariff);
+            setTariffs(normalized);
+            if (isFederal) {
+                const map = {};
+                normalized.forEach((tariff) => {
+                    map[tariff.id] = tariff.child_deduction_per_child ?? '';
+                });
+                setChildDeductionDrafts(map);
+            } else {
+                setChildDeductionDrafts({});
+            }
             setRowDrafts({});
             setError('');
         } catch (err) {
@@ -126,6 +138,7 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
                       name: form.name.trim(),
                       description: form.description?.trim() || undefined,
                       rows: [],
+                      child_deduction_per_child: childDeductionDrafts['__new'] || null,
                   })
                 : await createStateTaxTariffAdmin(adminAuth, {
                       name: form.name.trim(),
@@ -135,6 +148,9 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
                       rows: [],
                   });
             setForm(emptyTariffForm);
+            if (isFederal) {
+                setChildDeductionDrafts((prev) => ({ ...prev, __new: '' }));
+            }
             setError('');
             if (created) {
                 setTariffs((prev) => [...prev, normalizeTariff(created)]);
@@ -534,19 +550,73 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
                                     {tariff.description && <p>{tariff.description}</p>}
                                 </div>
                                 <div className="state-tariff-actions">
-                                    <label className="json-upload">
-                                        <input
-                                            type="file"
-                                            accept="application/json"
-                                            onChange={(event) => handleImportRowsFromFile(tariff, event)}
-                                        />
-                                        <span>
-                                            {importingId === tariff.id ? 'Importiere...' : 'JSON importieren'}
+                                    <div className="json-upload-group">
+                                        <label className="json-upload">
+                                            <input
+                                                type="file"
+                                                accept="application/json"
+                                                onChange={(event) => handleImportRowsFromFile(tariff, event)}
+                                            />
+                                            <span>
+                                                {importingId === tariff.id ? 'Importiere...' : 'JSON importieren'}
+                                            </span>
+                                        </label>
+                                        <span className="json-hint" title={JSON_IMPORT_HINT}>
+                                            ?
                                         </span>
-                                    </label>
-                                    <span className="json-hint" title={JSON_IMPORT_HINT}>
-                                        ?
-                                    </span>
+                                    </div>
+                                    {isFederal && (
+                                        <div className="child-deduction">
+                                            <label className="stacked">
+                                                <span>Abzug pro Kind (CHF)</span>
+                                                <input
+                                                    type="number"
+                                                    step="1"
+                                                    value={childDeductionDrafts[tariff.id] ?? ''}
+                                                    onChange={(e) =>
+                                                        setChildDeductionDrafts((prev) => ({
+                                                            ...prev,
+                                                            [tariff.id]: e.target.value,
+                                                        }))
+                                                    }
+                                                    placeholder="z.B. 6500"
+                                                />
+                                            </label>
+                                            <button
+                                                type="button"
+                                                className="secondary"
+                                                onClick={async () => {
+                                                    const value = childDeductionDrafts[tariff.id];
+                                                    try {
+                                                        await updateFederalTaxTableAdmin(adminAuth, tariff.id, {
+                                                            child_deduction_per_child:
+                                                                value === '' || value === null ? null : Number(value),
+                                                        });
+                                                        setTariffs((prev) =>
+                                                            prev.map((entry) =>
+                                                                entry.id === tariff.id
+                                                                    ? normalizeTariff({
+                                                                          ...entry,
+                                                                          child_deduction_per_child:
+                                                                              value === '' || value === null
+                                                                                  ? null
+                                                                                  : Number(value),
+                                                                      })
+                                                                    : entry
+                                                            )
+                                                        );
+                                                    } catch (err) {
+                                                        setError(err?.message || 'Abzug konnte nicht gespeichert werden.');
+                                                    }
+                                                }}
+                                            >
+                                                Speichern
+                                            </button>
+                                            <span className="json-hint" title={CHILD_HINT}>
+                                                ?
+                                            </span>
+                                        </div>
+                                    )}
                                     <button
                                         type="button"
                                         className="danger"

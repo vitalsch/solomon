@@ -185,11 +185,13 @@ def _calc_tariff_table(
     return max(0.0, last["base"] + ((taxable - last["threshold"]) / 100) * per100)
 
 
-def _calc_federal(income: float, table: List[Dict]) -> float:
+def _calc_federal(income: float, table: List[Dict], child_deduction_per_child: float = 0.0, num_children: int = 0) -> float:
+    deduction = max(0.0, child_deduction_per_child or 0.0) * max(0, num_children or 0)
+    taxable_income = max(0.0, (income or 0.0) - deduction)
     key_sample = table[0] if table else {}
     if "threshold" in key_sample or "base_amount" in key_sample:
-        return _calc_tariff_table(income, table, "threshold", "base_amount", "per_100_amount", last_per100_cap=11.5)
-    return _calc_tariff_table(income, table, "income", "base", "per100", last_per100_cap=11.5)
+        return _calc_tariff_table(taxable_income, table, "threshold", "base_amount", "per_100_amount", last_per100_cap=11.5)
+    return _calc_tariff_table(taxable_income, table, "income", "base", "per100", last_per100_cap=11.5)
 
 
 def _collect_yearly_tax(
@@ -298,7 +300,9 @@ def _collect_yearly_tax(
     tables = tax_tables or {}
     state_income_rows = (tables.get("state_income") or {}).get("rows") or []
     state_wealth_rows = (tables.get("state_wealth") or {}).get("rows") or []
-    federal_rows = (tables.get("federal") or {}).get("rows") or []
+    federal_table = tables.get("federal") or {}
+    federal_rows = federal_table.get("rows") or []
+    federal_child_deduction = _safe_number(federal_table.get("child_deduction_per_child"), 0.0)
 
     results = []
     years = sorted(taxable_map.keys() | wealth_per_year.keys())
@@ -326,7 +330,8 @@ def _collect_yearly_tax(
             + base_tax * defaults["church_tax_factor"]
             + personal_tax
         )
-        federal_tax = _calc_federal(net_income, federal_rows)
+        num_children = int(scenario.get("num_children") or 0)
+        federal_tax = _calc_federal(net_income, federal_rows, federal_child_deduction, num_children)
         total_all = tax_total + federal_tax
         results.append(
             {

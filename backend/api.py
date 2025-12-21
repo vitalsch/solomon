@@ -272,6 +272,7 @@ class ScenarioCreate(BaseModel):
     tax_marital_status: Optional[Literal["ledig", "verheiratet", "verwitwet"]] = Field(
         None, description="Familienstand für Steuerberechnung"
     )
+    num_children: Optional[int] = Field(None, ge=0, description="Anzahl Kinder für Steuerabzüge")
     encrypted: Optional[Dict[str, Any]] = Field(
         None, description="Client-seitiger Ciphertext (z. B. AES-GCM Blob)"
     )
@@ -306,6 +307,7 @@ class ScenarioUpdate(BaseModel):
     tax_confession: Optional[Literal["none", "ref", "cath", "christian_cath"]] = None
     tax_confession_partner: Optional[Literal["none", "ref", "cath", "christian_cath"]] = None
     tax_marital_status: Optional[Literal["ledig", "verheiratet", "verwitwet"]] = None
+    num_children: Optional[int] = Field(None, ge=0)
     encrypted: Optional[Dict[str, Any]] = None
 
 
@@ -531,12 +533,16 @@ class FederalTaxTableCreate(BaseModel):
     name: str = Field(..., description="Name der Tabelle (z.B. Ledig)")
     description: Optional[str] = Field(None, description="Optionaler Hinweis")
     rows: List[StateTaxTariffRow] = Field(default_factory=list, description="Tabelleneinträge")
+    child_deduction_per_child: Optional[float] = Field(
+        None, ge=0, description="Abzug pro Kind (CHF), wird mit Anzahl Kinder multipliziert"
+    )
 
 
 class FederalTaxTableUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     rows: Optional[List[StateTaxTariffRow]] = None
+    child_deduction_per_child: Optional[float] = Field(None, ge=0)
 
 
 class TariffRowsImport(BaseModel):
@@ -1346,7 +1352,9 @@ def list_federal_tax_tables(admin=Depends(require_admin)):
 
 @app.post("/admin/federal-tax-tables")
 def create_federal_tax_table(payload: FederalTaxTableCreate, admin=Depends(require_admin)):
-    return repo.create_federal_tax_table(payload.name, payload.rows, payload.description)
+    return repo.create_federal_tax_table(
+        payload.name, payload.rows, payload.description, payload.child_deduction_per_child
+    )
 
 
 @app.patch("/admin/federal-tax-tables/{table_id}")
