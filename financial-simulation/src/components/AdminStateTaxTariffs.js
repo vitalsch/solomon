@@ -27,6 +27,8 @@ const emptyRowDraft = {
 };
 
 const scopeLabel = (scope) => (scope === 'wealth' ? 'Vermögen' : 'Einkommen');
+const JSON_IMPORT_HINT =
+    'JSON-Array, z.B. [{"threshold":0,"base_amount":0,"per_100_amount":11.5,"note":"optional"}]';
 
 const formatCurrency = (value) => {
     if (value === null || value === undefined || value === '') {
@@ -542,6 +544,9 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
                                             {importingId === tariff.id ? 'Importiere...' : 'JSON importieren'}
                                         </span>
                                     </label>
+                                    <span className="json-hint" title={JSON_IMPORT_HINT}>
+                                        ?
+                                    </span>
                                     <button
                                         type="button"
                                         className="danger"
