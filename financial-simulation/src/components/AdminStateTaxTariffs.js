@@ -46,6 +46,11 @@ const parseNumber = (value) => {
     return Number.isNaN(numeric) ? null : numeric;
 };
 
+const normalizeTariff = (tariff = {}) => ({
+    ...tariff,
+    rows: Array.isArray(tariff.rows) ? tariff.rows : [],
+});
+
 function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
     const [tariffs, setTariffs] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -73,7 +78,7 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
             const data = isFederal
                 ? await listFederalTaxTablesAdmin(adminAuth)
                 : await listStateTaxTariffsAdmin(adminAuth);
-            setTariffs(data || []);
+            setTariffs((data || []).map(normalizeTariff));
             setRowDrafts({});
             setError('');
         } catch (err) {
@@ -113,24 +118,26 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
         }
         try {
             setCreating(true);
-            if (isFederal) {
-                await createFederalTaxTableAdmin(adminAuth, {
-                    name: form.name.trim(),
-                    description: form.description?.trim() || undefined,
-                    rows: [],
-                });
-            } else {
-                await createStateTaxTariffAdmin(adminAuth, {
-                    name: form.name.trim(),
-                    scope: form.scope,
-                    canton: form.canton.trim().toUpperCase(),
-                    description: form.description?.trim() || undefined,
-                    rows: [],
-                });
-            }
+            const created = isFederal
+                ? await createFederalTaxTableAdmin(adminAuth, {
+                      name: form.name.trim(),
+                      description: form.description?.trim() || undefined,
+                      rows: [],
+                  })
+                : await createStateTaxTariffAdmin(adminAuth, {
+                      name: form.name.trim(),
+                      scope: form.scope,
+                      canton: form.canton.trim().toUpperCase(),
+                      description: form.description?.trim() || undefined,
+                      rows: [],
+                  });
             setForm(emptyTariffForm);
             setError('');
-            await loadTariffs();
+            if (created) {
+                setTariffs((prev) => [...prev, normalizeTariff(created)]);
+            } else {
+                await loadTariffs();
+            }
         } catch (err) {
             setError(err?.message || 'Konnte Tarif nicht speichern.');
         } finally {
@@ -148,7 +155,7 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
             } else {
                 await deleteStateTaxTariffAdmin(adminAuth, tariff.id);
             }
-            await loadTariffs();
+            setTariffs((prev) => prev.filter((entry) => entry.id !== tariff.id));
         } catch (err) {
             setError(err?.message || 'Tarif konnte nicht gelöscht werden.');
         }
@@ -175,18 +182,17 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
             note: draft.note?.trim() || undefined,
         };
         try {
+            const nextRows = [...(tariff.rows || []), newRow];
             if (isFederal) {
-                await updateFederalTaxTableAdmin(adminAuth, tariff.id, {
-                    rows: [...(tariff.rows || []), newRow],
-                });
+                await updateFederalTaxTableAdmin(adminAuth, tariff.id, { rows: nextRows });
             } else {
-                await updateStateTaxTariffAdmin(adminAuth, tariff.id, {
-                    rows: [...(tariff.rows || []), newRow],
-                });
+                await updateStateTaxTariffAdmin(adminAuth, tariff.id, { rows: nextRows });
             }
             setRowDrafts((prev) => ({ ...prev, [tariff.id]: { ...emptyRowDraft } }));
             setError('');
-            await loadTariffs();
+            setTariffs((prev) =>
+                prev.map((entry) => (entry.id === tariff.id ? normalizeTariff({ ...entry, rows: nextRows }) : entry)),
+            );
         } catch (err) {
             setError(err?.message || 'Zeile konnte nicht hinzugefügt werden.');
         }
@@ -203,7 +209,9 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
             } else {
                 await updateStateTaxTariffAdmin(adminAuth, tariff.id, { rows: updatedRows });
             }
-            await loadTariffs();
+            setTariffs((prev) =>
+                prev.map((entry) => (entry.id === tariff.id ? normalizeTariff({ ...entry, rows: updatedRows }) : entry)),
+            );
         } catch (err) {
             setError(err?.message || 'Zeile konnte nicht entfernt werden.');
         }
@@ -246,7 +254,9 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
                 await updateStateTaxTariffAdmin(adminAuth, tariffId, { rows });
             }
             setEditingValue(null);
-            await loadTariffs();
+            setTariffs((prev) =>
+                prev.map((entry) => (entry.id === tariffId ? normalizeTariff({ ...entry, rows }) : entry)),
+            );
         } catch (err) {
             setError(err?.message || 'Wert konnte nicht gespeichert werden.');
         }
@@ -279,13 +289,19 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
                     throw new Error('JSON muss ein Array von Zeilen sein.');
                 }
                 setImportingId(tariff.id);
-                if (isFederal) {
-                    await importFederalTaxTableRowsAdmin(adminAuth, tariff.id, parsed);
-                } else {
-                    await importStateTaxTariffRowsAdmin(adminAuth, tariff.id, parsed);
-                }
+                const updated = isFederal
+                    ? await importFederalTaxTableRowsAdmin(adminAuth, tariff.id, parsed)
+                    : await importStateTaxTariffRowsAdmin(adminAuth, tariff.id, parsed);
                 setError('');
-                await loadTariffs();
+                if (updated) {
+                    setTariffs((prev) =>
+                        prev.map((entry) =>
+                            entry.id === tariff.id ? normalizeTariff({ ...entry, ...updated }) : entry,
+                        ),
+                    );
+                } else {
+                    await loadTariffs();
+                }
             } catch (err) {
                 setError(err?.message || 'Import fehlgeschlagen (ungültiges JSON).');
             } finally {
@@ -325,9 +341,17 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
             return;
         }
         try {
-            await updateStateTaxTariffAdmin(adminAuth, tariffId, { canton: cantonValue });
+            const updated = await updateStateTaxTariffAdmin(adminAuth, tariffId, { canton: cantonValue });
             setEditingTariffMeta(null);
-            await loadTariffs();
+            if (updated) {
+                setTariffs((prev) =>
+                    prev.map((entry) =>
+                        entry.id === tariffId ? normalizeTariff({ ...entry, ...updated, canton: cantonValue }) : entry,
+                    ),
+                );
+            } else {
+                await loadTariffs();
+            }
         } catch (err) {
             setError(err?.message || 'Kanton konnte nicht gespeichert werden.');
         }
