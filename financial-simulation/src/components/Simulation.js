@@ -200,6 +200,7 @@ const Simulation = ({ onLogout }) => {
     const [selectedStateWealthTariffId, setSelectedStateWealthTariffId] = useState('');
     const [selectedFederalTariffId, setSelectedFederalTariffId] = useState('');
     const [selectedMaritalStatus, setSelectedMaritalStatus] = useState('ledig');
+    const [numChildren, setNumChildren] = useState('');
     const [selectedConfession, setSelectedConfession] = useState('none');
     const [selectedConfessionPartner, setSelectedConfessionPartner] = useState('none');
     const [newScenarioDescription, setNewScenarioDescription] = useState('');
@@ -588,6 +589,11 @@ const Simulation = ({ onLogout }) => {
             setSelectedConfession(scenarioDetails.tax_confession || 'none');
             setSelectedConfessionPartner(scenarioDetails.tax_confession_partner || 'none');
             setSelectedMaritalStatus(scenarioDetails.tax_marital_status || 'ledig');
+            setNumChildren(
+                scenarioDetails.num_children === null || scenarioDetails.num_children === undefined
+                    ? ''
+                    : scenarioDetails.num_children
+            );
         } else {
             setScenarioNameEdit('');
             setInflationRate('');
@@ -601,6 +607,7 @@ const Simulation = ({ onLogout }) => {
             setSelectedConfession('none');
             setSelectedConfessionPartner('none');
             setSelectedMaritalStatus('ledig');
+            setNumChildren('');
         }
     }, [scenarioDetails]);
 
@@ -1665,6 +1672,7 @@ const Simulation = ({ onLogout }) => {
             tax_confession_partner:
                 selectedMaritalStatus === 'verheiratet' ? selectedConfessionPartner || null : null,
             tax_marital_status: selectedMaritalStatus || null,
+            num_children: selectedMaritalStatus === 'verheiratet' && numChildren !== '' ? Number(numChildren) : null,
         }),
         [
             scenarioDescription,
@@ -1678,6 +1686,7 @@ const Simulation = ({ onLogout }) => {
             selectedConfession,
             selectedConfessionPartner,
             selectedMaritalStatus,
+            numChildren,
         ]
     );
 
@@ -4102,6 +4111,19 @@ const Simulation = ({ onLogout }) => {
                                                         <option value="verwitwet">Verwitwet</option>
                                                     </select>
                                                 </label>
+                                                {selectedMaritalStatus === 'verheiratet' && (
+                                                    <label className="stacked">
+                                                        <span>Anzahl Kinder</span>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="1"
+                                                            value={numChildren}
+                                                            onChange={(e) => setNumChildren(e.target.value)}
+                                                            placeholder="0"
+                                                        />
+                                                    </label>
+                                                )}
                                                 <div className="stacked">
                                                     <span>Konfession{selectedMaritalStatus === 'verheiratet' ? ' (Person 1)' : ''}</span>
                                                     <select
