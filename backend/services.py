@@ -186,12 +186,14 @@ def _calc_tariff_table(
 
 
 def _calc_federal(income: float, table: List[Dict], child_deduction_per_child: float = 0.0, num_children: int = 0) -> float:
-    deduction = max(0.0, child_deduction_per_child or 0.0) * max(0, num_children or 0)
-    taxable_income = max(0.0, (income or 0.0) - deduction)
+    base_taxable_income = max(0.0, income or 0.0)
     key_sample = table[0] if table else {}
     if "threshold" in key_sample or "base_amount" in key_sample:
-        return _calc_tariff_table(taxable_income, table, "threshold", "base_amount", "per_100_amount", last_per100_cap=11.5)
-    return _calc_tariff_table(taxable_income, table, "income", "base", "per100", last_per100_cap=11.5)
+        tax_amount = _calc_tariff_table(base_taxable_income, table, "threshold", "base_amount", "per_100_amount", last_per100_cap=11.5)
+    else:
+        tax_amount = _calc_tariff_table(base_taxable_income, table, "income", "base", "per100", last_per100_cap=11.5)
+    deduction = max(0.0, child_deduction_per_child or 0.0) * max(0, num_children or 0)
+    return max(0.0, tax_amount - deduction)
 
 
 def _collect_yearly_tax(

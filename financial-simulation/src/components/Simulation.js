@@ -2758,16 +2758,6 @@ const Simulation = ({ onLogout }) => {
             return '0.00';
         };
 
-        const childrenCount = Math.max(
-            0,
-            Number(
-                numChildren === '' || numChildren === null || numChildren === undefined
-                    ? scenarioDetails?.num_children ?? 0
-                    : numChildren
-            ) || 0
-        );
-        const childDeductionPerChild = Math.max(0, Number(activeFederalTariff?.child_deduction_per_child || 0));
-
         return Array.from(results.values())
             .sort((a, b) => a.year - b.year)
             .map((row) => {
@@ -2796,9 +2786,18 @@ const Simulation = ({ onLogout }) => {
                     baseTax * cantonalTaxFactor +
                     baseTax * churchTaxFactor +
                     personalTax;
+                const childrenCount = Math.max(
+                    0,
+                    Number(
+                        numChildren === '' || numChildren === null || numChildren === undefined
+                            ? scenarioDetails?.num_children ?? 0
+                            : numChildren
+                    ) || 0
+                );
+                const childDeductionPerChild = Math.max(0, Number(activeFederalTariff?.child_deduction_per_child || 0));
                 const childDeductionTotal = childDeductionPerChild * childrenCount;
-                const federalTaxable = Math.max(0, (row.net || 0) - childDeductionTotal);
-                const federalTax = calcTariffTableTax(federalTaxable, federalRows, federalKeyMap, 11.5);
+                const federalGross = calcTariffTableTax(Math.max(0, row.net || 0), federalRows, federalKeyMap, 11.5);
+                const federalTax = Math.max(0, federalGross - childDeductionTotal);
                 return {
                     ...row,
                     wealth,
