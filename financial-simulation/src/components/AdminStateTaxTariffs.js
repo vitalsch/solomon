@@ -237,10 +237,10 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
 
     const sortedRowsForTariff = (tariff) => {
         const cfg = rowSortConfigs[tariff.id] || { key: 'threshold', direction: 'asc' };
-        const list = [...(tariff.rows || [])];
+        const list = (tariff.rows || []).map((row, index) => ({ row, index }));
         list.sort((a, b) => {
-            const va = a[cfg.key];
-            const vb = b[cfg.key];
+            const va = a.row[cfg.key];
+            const vb = b.row[cfg.key];
             if (va === vb) return 0;
             if (va === null || va === undefined) return 1;
             if (vb === null || vb === undefined) return -1;
@@ -602,19 +602,25 @@ function AdminStateTaxTariffs({ adminAuth, onUnauthorized, mode = 'state' }) {
                                                 </td>
                                             </tr>
                                         ) : (
-                                            sortedRowsForTariff(tariff).map((row, idx) => (
-                                                <tr key={`${tariff.id}-row-${idx}`}>
-                                                    <td>{renderRowCell(tariff, row, idx, 'threshold', { isNumeric: true })}</td>
-                                                    <td>{renderRowCell(tariff, row, idx, 'base_amount', { isNumeric: true })}</td>
+                                            sortedRowsForTariff(tariff).map(({ row, index }) => (
+                                                <tr key={`${tariff.id}-row-${index}`}>
                                                     <td>
-                                                        {renderRowCell(tariff, row, idx, 'per_100_amount', { isNumeric: true })}
+                                                        {renderRowCell(tariff, row, index, 'threshold', { isNumeric: true })}
                                                     </td>
-                                                    <td>{renderRowCell(tariff, row, idx, 'note', { placeholder: '—' })}</td>
+                                                    <td>
+                                                        {renderRowCell(tariff, row, index, 'base_amount', { isNumeric: true })}
+                                                    </td>
+                                                    <td>
+                                                        {renderRowCell(tariff, row, index, 'per_100_amount', {
+                                                            isNumeric: true,
+                                                        })}
+                                                    </td>
+                                                    <td>{renderRowCell(tariff, row, index, 'note', { placeholder: '—' })}</td>
                                                     <td>
                                                         <button
                                                             type="button"
                                                             className="danger"
-                                                            onClick={() => handleDeleteRow(tariff, idx)}
+                                                            onClick={() => handleDeleteRow(tariff, index)}
                                                         >
                                                             Entfernen
                                                         </button>
