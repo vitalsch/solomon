@@ -112,21 +112,23 @@ export const loginUser = async (payload) => {
 
 export const getCurrentUser = () => request('/me');
 export const deleteCurrentUser = () => request('/me', { method: 'DELETE' });
-export const requestEmailVerification = (email) =>
-    request('/auth/verify/request', { method: 'POST', body: JSON.stringify({ email }) });
-export const confirmEmailVerification = async (email, code) => {
-    const result = await request('/auth/verify/confirm', { method: 'POST', body: JSON.stringify({ email, code }) });
+export const requestPasswordReset = (phone) =>
+    request('/auth/password/reset/request', { method: 'POST', body: JSON.stringify({ phone }) });
+export const confirmPasswordReset = async (token, new_password) => {
+    const result = await request('/auth/password/reset/confirm', {
+        method: 'POST',
+        body: JSON.stringify({ token, new_password }),
+    });
     if (result?.token) {
         setAuthToken(result.token);
     }
     return result;
 };
-export const requestPasswordReset = (email) =>
-    request('/auth/password/reset/request', { method: 'POST', body: JSON.stringify({ email }) });
-export const confirmPasswordReset = async (token, new_password) => {
-    const result = await request('/auth/password/reset/confirm', {
+
+export const changePassword = async (current_password, new_password) => {
+    const result = await request('/auth/password/change', {
         method: 'POST',
-        body: JSON.stringify({ token, new_password }),
+        body: JSON.stringify({ current_password, new_password }),
     });
     if (result?.token) {
         setAuthToken(result.token);
