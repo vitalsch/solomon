@@ -1898,7 +1898,6 @@ const Simulation = ({ onLogout }) => {
         },
         [
             accounts,
-            accounts.length,
             currentScenarioId,
             handleSimulate,
             loadUserLibrary,
