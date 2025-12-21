@@ -37,7 +37,6 @@ import {
     createStressProfile,
     updateStressProfile,
     deleteStressProfileApi,
-    setAuthToken,
     getAuthToken,
     listTaxCantons,
     listStateTaxRates,
@@ -948,7 +947,7 @@ const Simulation = ({ onLogout }) => {
         } finally {
             setLibraryLoading(false);
         }
-    }, [categorizeTransaction, decryptRecords, scenarios, selectedUserId]);
+    }, [decryptRecords, scenarios, selectedUserId]);
 
     useEffect(() => {
         loadUserLibrary();
@@ -983,7 +982,7 @@ const Simulation = ({ onLogout }) => {
             }
             loadUserLibrary().catch(() => {});
         },
-        [currentScenarioId, decryptRecords, listAssets, loadUserLibrary, maybeEncryptRecord, scenarios]
+        [currentScenarioId, decryptRecords, loadUserLibrary, maybeEncryptRecord, scenarios]
     );
 
     const maybePropagateTransactionUpdate = useCallback(
@@ -1025,7 +1024,7 @@ const Simulation = ({ onLogout }) => {
             }
             loadUserLibrary().catch(() => {});
         },
-        [currentScenarioId, decryptRecords, listTransactions, loadUserLibrary, maybeEncryptRecord, scenarios]
+        [currentScenarioId, decryptRecords, loadUserLibrary, maybeEncryptRecord, scenarios]
     );
 
     const derivedTaxSettings = useMemo(() => {
@@ -1730,16 +1729,7 @@ const Simulation = ({ onLogout }) => {
             return next;
         });
         return updated;
-    }, [
-        currentScenarioId,
-        taxSettingsDirty,
-        buildScenarioSettingsPayload,
-        selectedUserId,
-        scenarioDetails,
-        setSimulationCache,
-        maybeEncryptRecord,
-        setError,
-    ]);
+    }, [currentScenarioId, taxSettingsDirty, buildScenarioSettingsPayload, selectedUserId, scenarioDetails, setSimulationCache, maybeEncryptRecord]);
 
     const handleRenameScenario = useCallback(async () => {
         const name = scenarioNameEdit.trim();
@@ -1907,6 +1897,7 @@ const Simulation = ({ onLogout }) => {
             }
         },
         [
+            accounts,
             accounts.length,
             currentScenarioId,
             handleSimulate,
