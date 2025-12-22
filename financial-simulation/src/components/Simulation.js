@@ -2825,6 +2825,8 @@ const Simulation = ({ onLogout }) => {
         currentSimulation,
         selectedUser,
         derivedTaxSettings,
+        numChildren,
+        scenarioDetails?.num_children,
     ]);
 
     const taxableIncomeMap = useMemo(() => {
